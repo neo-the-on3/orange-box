@@ -11,26 +11,17 @@ PKG="io.github.neotheon3.orangebox.debug"
 ACTIVITY="io.github.neotheon3.orangebox.MainActivity"
 mkdir -p "$OUT"
 
-fail() { echo "SMOKE FAIL: $*" >&2; dump; exit 1; }
+fail() { echo "SMOKE FAIL: $*" >&2; shot zz-failure; dump; exit 1; }
 dump() {
   adb logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
   adb shell dumpsys activity activities > "$OUT/activities.txt" 2>/dev/null || true
 }
-shot() { adb exec-out screencap -p > "$OUT/$1.png" || true; }
-ui_dump() {
-  adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1 || true
-  adb shell cat /sdcard/ui.xml > "$OUT/$1.xml" 2>/dev/null || true
-}
-wait_for_text() { # $1 = text, $2 = dump name
-  for _ in $(seq 1 20); do
-    ui_dump "$2"
-    grep -q "$1" "$OUT/$2.xml" && return 0
-    sleep 1
-  done
-  return 1
-}
+# shellcheck source=scripts/ci/smoke-lib.sh
+source "$(dirname "$0")/smoke-lib.sh"
 
 APK=$(ls "$APK_DIR"/*.apk | head -n1)
+# Keep system "isn't responding" dialogs out of the way where the image allows it.
+adb shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
 echo "Installing $APK"
 adb install -r -g "$APK"
 adb logcat -c
@@ -60,15 +51,7 @@ wait_for_text "Backend: Off" home-off-2 || fail "Could not return to Off"
 shot 04-home-off-again
 
 # 5) Home -> Settings, light then dark theme
-tap_desc() { # $1 = content-desc, $2 = dump name
-  ui_dump "$2"
-  local b
-  b=$(grep -o "content-desc=\"$1\"[^>]*bounds=\"[^\"]*\"" "$OUT/$2.xml" | head -n1 | sed -E 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/')
-  [ -n "$b" ] || return 1
-  read -r x1 y1 x2 y2 <<< "$b"
-  adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))
-}
-tap_desc "Settings" home-for-settings || fail "Settings button not found on Home"
+tap_attr content-desc "Settings" home-for-settings || fail "Settings button not found on Home"
 wait_for_text "Server (advanced)" settings-light || fail "Settings screen did not open"
 shot 05-settings-light
 adb shell cmd uimode night yes > /dev/null 2>&1 || true
@@ -84,7 +67,7 @@ adb shell cmd uimode night no > /dev/null 2>&1 || true
 if compgen -G "scripts/ci/smoke.d/*.sh" > /dev/null; then
   for s in scripts/ci/smoke.d/*.sh; do
     echo "Running $s"
-    PKG="$PKG" ACTIVITY="$ACTIVITY" OUT="$OUT" bash "$s" || fail "$s failed"
+    PKG="$PKG" ACTIVITY="$ACTIVITY" OUT="$OUT" SMOKE_LIB="$(dirname "$0")/smoke-lib.sh" bash "$s" || fail "$s failed"
   done
 fi
 
