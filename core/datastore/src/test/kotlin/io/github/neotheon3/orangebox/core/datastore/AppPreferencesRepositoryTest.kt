@@ -29,5 +29,9 @@ class AppPreferencesRepositoryTest {
         assertEquals(AppPreferences(true, true, true, 7, setOf("a", "b")), repo.preferences.first())
         repo.setActiveVehicle(null)
         assertEquals(null, repo.preferences.first().activeVehicleId)
+        repo.setOnboardingStep("VEHICLE")
+        assertEquals("VEHICLE", repo.preferences.first().onboardingStep)
+        repo.setOnboardingStep(null)
+        assertEquals(null, repo.preferences.first().onboardingStep)
     }
 }

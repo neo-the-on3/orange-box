@@ -1,5 +1,7 @@
 package io.github.neotheon3.orangebox.feature.setup
 
+import androidx.lifecycle.SavedStateHandle
+import io.github.neotheon3.orangebox.core.bluetooth.BluetoothAvailability
 import io.github.neotheon3.orangebox.core.bluetooth.DongleCandidate
 import io.github.neotheon3.orangebox.core.bluetooth.DongleTestResult
 import io.github.neotheon3.orangebox.core.bluetooth.DongleTester
@@ -28,8 +30,10 @@ import org.junit.Test
 internal class FakeDongleProvider(
     var list: List<DongleCandidate> = emptyList(),
     var denied: Boolean = false,
+    var bluetooth: BluetoothAvailability = BluetoothAvailability.ON,
 ) : ObdDongleProvider {
     override val selected = MutableStateFlow<SelectedDongle?>(null)
+    override fun bluetoothAvailability() = bluetooth
     override fun candidates(): List<DongleCandidate> =
         if (denied) throw ObdError.PermissionDenied("android.permission.BLUETOOTH_CONNECT") else list
     override suspend fun select(candidate: DongleCandidate?) { selected.value = candidate?.let { SelectedDongle(it.address, it.name) } }
@@ -65,6 +69,43 @@ class OnboardingViewModelTest {
         vm.finish { done = true }
         assertTrue(done)
         assertTrue(prefs.state.value.onboardingComplete)
+    }
+
+    @Test fun `step survives process death through SavedStateHandle`() = runTest {
+        val prefs = FakeAppPreferencesRepository()
+        val saved = SavedStateHandle()
+        val vm = OnboardingViewModel(prefs, saved)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+        vm.next()
+        vm.onDisclaimerChecked(true)
+        // Recreated after process death: only the saved state is handed back (DataStore wiped here).
+        val restored = OnboardingViewModel(FakeAppPreferencesRepository(), SavedStateHandle(saved.keys().associateWith { saved.get<Any>(it) }))
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { restored.state.collect {} }
+        assertEquals(OnboardingStep.DISCLAIMER, restored.state.value.step)
+        assertTrue(restored.state.value.disclaimerChecked)
+        assertFalse(restored.state.value.restoring)
+    }
+
+    @Test fun `cold start resumes at the step stored in DataStore`() = runTest {
+        val prefs = FakeAppPreferencesRepository()
+        val vm = OnboardingViewModel(prefs)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+        vm.next(); vm.onDisclaimerChecked(true); vm.next(); vm.next()
+        assertEquals(OnboardingStep.VEHICLE, vm.state.value.step)
+        assertEquals("VEHICLE", prefs.state.value.onboardingStep)
+        // Task swiped away: no saved state, same DataStore.
+        val cold = OnboardingViewModel(prefs, SavedStateHandle())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { cold.state.collect {} }
+        assertEquals(OnboardingStep.VEHICLE, cold.state.value.step)
+        cold.finish {}
+        assertEquals(null, prefs.state.value.onboardingStep)
+    }
+
+    @Test fun `a stored step past the disclaimer needs the disclaimer accepted`() {
+        assertEquals(OnboardingStep.DISCLAIMER, OnboardingViewModel.resolveStep("DONGLE", disclaimerAccepted = false))
+        assertEquals(OnboardingStep.DONGLE, OnboardingViewModel.resolveStep("DONGLE", disclaimerAccepted = true))
+        assertEquals(OnboardingStep.WELCOME, OnboardingViewModel.resolveStep("BOGUS", disclaimerAccepted = false))
+        assertEquals(OnboardingStep.WELCOME, OnboardingViewModel.resolveStep(null, disclaimerAccepted = false))
     }
 
     @Test fun `asked permissions are remembered for the permanently-denied check`() = runTest {
@@ -108,6 +149,42 @@ class VehicleSetupViewModelTest {
         assertEquals(setOf(VehicleFormError.MODEL), errors)
     }
 
+    @Test fun `typed form survives process death`() = runTest {
+        val repo = FakeVehicleRepository(listOf(Vehicle(id = 3, name = "Old car", fuel = VehicleFuel.LPG)), activeId = 3)
+        val saved = SavedStateHandle()
+        val vm = VehicleSetupViewModel(repo, saved)
+        val typed = VehicleForm(source = VehicleSource.MANUAL, name = "New van", fuel = VehicleFuel.DIESEL, displacementCc = "1998.6", odometerKm = "12.5")
+        vm.onFormChange(typed)
+        val restored = VehicleSetupViewModel(repo, SavedStateHandle(saved.keys().associateWith { saved.get<Any>(it) }))
+        assertEquals(typed, restored.state.value.form) // not overwritten by the stored "Old car"
+    }
+
+    @Test fun `decimal odometer and engine size are rounded, not multiplied by ten`() = runTest {
+        val repo = FakeVehicleRepository()
+        val vm = VehicleSetupViewModel(repo)
+        vm.onFormChange(VehicleForm(source = VehicleSource.MANUAL, name = "Van", displacementCc = "1598.5", odometerKm = "12.5"))
+        vm.save()
+        assertEquals(13, repo.activeVehicle.first()?.odometerKm)
+        assertEquals(1599, repo.activeVehicle.first()?.displacementCc)
+    }
+
+    @Test fun `number input keeps one decimal separator`() {
+        assertEquals("12.5", NumberInput.sanitize("abc-12.5x"))
+        assertEquals("45210.7", NumberInput.sanitize("45210,7"))
+        assertEquals("1.23", NumberInput.sanitize("1.2.3"))
+        assertEquals("1234567.89", NumberInput.sanitize("123456789.891"))
+        assertEquals("", NumberInput.sanitize("km"))
+        assertEquals(13, NumberInput.parseRounded("12.5"))
+        assertEquals(45210, NumberInput.parseRounded("45210.4"))
+        assertEquals(7, NumberInput.parseRounded("7."))
+        assertEquals(0, NumberInput.parseRounded(".4"))
+        assertEquals(null, NumberInput.parseRounded("."))
+        assertEquals(null, NumberInput.parseRounded(""))
+        // "1.6" typed as litres is 2 cc: rejected with the cc range message rather than silently accepted.
+        val (_, errors) = VehicleFormValidator.validate(VehicleForm(source = VehicleSource.MANUAL, name = "Car", displacementCc = "1.6"))
+        assertEquals(setOf(VehicleFormError.DISPLACEMENT), errors)
+    }
+
     @Test fun `editing loads the active vehicle`() = runTest {
         val repo = FakeVehicleRepository(listOf(Vehicle(id = 3, name = "Old car", fuel = VehicleFuel.LPG)), activeId = 3)
         val vm = VehicleSetupViewModel(repo)
@@ -132,6 +209,16 @@ class DongleSetupViewModelTest {
         vm.refresh()
         assertFalse(vm.state.value.needsPermission)
         assertEquals(listOf(obd), vm.state.value.candidates)
+    }
+
+    @Test fun `bluetooth availability is reported and refreshed`() = runTest {
+        val provider = FakeDongleProvider(emptyList(), bluetooth = BluetoothAvailability.UNAVAILABLE)
+        val vm = DongleSetupViewModel(provider, FakeTester(DongleTestResult.Failure(ObdError.NotPaired())), FakeAppPreferencesRepository())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+        assertEquals(BluetoothAvailability.UNAVAILABLE, vm.state.value.bluetooth)
+        provider.bluetooth = BluetoothAvailability.OFF
+        vm.refresh()
+        assertEquals(BluetoothAvailability.OFF, vm.state.value.bluetooth)
     }
 
     @Test fun `select then test maps results`() = runTest {

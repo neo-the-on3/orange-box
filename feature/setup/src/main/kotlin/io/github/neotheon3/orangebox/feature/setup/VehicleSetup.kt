@@ -32,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -68,14 +69,46 @@ data class VehicleSetupUiState(
     val saved: Boolean = false,
 )
 
+/**
+ * Odometer and engine size accept a decimal part ("12.5", "45210,7"), which is rounded half-up to whole
+ * km / cc when saved. The old digits-only filter turned "12.5" into 125 (#123).
+ */
+object NumberInput {
+    private const val MAX_INT_DIGITS = 7
+    private const val MAX_FRACTION_DIGITS = 2
+
+    /** Keeps digits and the first '.' or ',' (shown as '.'); drops anything else as it's typed or pasted. */
+    fun sanitize(raw: String): String {
+        val out = StringBuilder()
+        var separator = false
+        var intDigits = 0
+        var fractionDigits = 0
+        for (ch in raw) {
+            when {
+                ch in '0'..'9' && !separator && intDigits < MAX_INT_DIGITS -> { out.append(ch); intDigits++ }
+                ch in '0'..'9' && separator && fractionDigits < MAX_FRACTION_DIGITS -> { out.append(ch); fractionDigits++ }
+                (ch == '.' || ch == ',') && !separator -> { separator = true; out.append('.') }
+            }
+        }
+        return out.toString()
+    }
+
+    /** "12.5" → 13, "45210.4" → 45210, "7." → 7; null when there is no number. */
+    fun parseRounded(text: String): Int? {
+        val t = text.trim().replace(',', '.')
+        if (t.isEmpty() || t == ".") return null
+        return t.toBigDecimalOrNull()?.setScale(0, java.math.RoundingMode.HALF_UP)?.toInt()
+    }
+}
+
 object VehicleFormValidator {
     fun validate(form: VehicleForm): Pair<Vehicle?, Set<VehicleFormError>> {
         val errors = mutableSetOf<VehicleFormError>()
         val cc = form.displacementCc.trim().takeIf { it.isNotEmpty() }?.let { t ->
-            t.toIntOrNull()?.takeIf { it in Vehicle.DISPLACEMENT_RANGE } ?: null.also { errors += VehicleFormError.DISPLACEMENT }
+            NumberInput.parseRounded(t)?.takeIf { it in Vehicle.DISPLACEMENT_RANGE } ?: null.also { errors += VehicleFormError.DISPLACEMENT }
         }
         val odo = form.odometerKm.trim().takeIf { it.isNotEmpty() }?.let { t ->
-            t.toIntOrNull()?.takeIf { it in 0..Vehicle.ODOMETER_MAX } ?: null.also { errors += VehicleFormError.ODOMETER }
+            NumberInput.parseRounded(t)?.takeIf { it in 0..Vehicle.ODOMETER_MAX } ?: null.also { errors += VehicleFormError.ODOMETER }
         }
         val vehicle = when (form.source) {
             VehicleSource.CATALOGUE -> {
@@ -100,18 +133,58 @@ object VehicleFormValidator {
     }
 }
 
+/** The typed-in form, kept in [SavedStateHandle] so it survives process death (#122). */
+internal object VehicleFormState {
+    private const val PREFIX = "vehicle_form_"
+
+    fun write(saved: SavedStateHandle, f: VehicleForm) {
+        saved[PREFIX + "id"] = f.id
+        saved[PREFIX + "source"] = f.source.name
+        saved[PREFIX + "maker"] = f.maker
+        saved[PREFIX + "model"] = f.model
+        saved[PREFIX + "name"] = f.name
+        saved[PREFIX + "fuel"] = f.fuel.name
+        saved[PREFIX + "cc"] = f.displacementCc
+        saved[PREFIX + "odo"] = f.odometerKm
+    }
+
+    fun read(saved: SavedStateHandle): VehicleForm? {
+        if (!saved.contains(PREFIX + "source")) return null
+        val d = VehicleForm()
+        return VehicleForm(
+            id = saved.get<Long>(PREFIX + "id") ?: d.id,
+            source = VehicleSource.entries.firstOrNull { it.name == saved.get<String>(PREFIX + "source") } ?: d.source,
+            maker = saved[PREFIX + "maker"],
+            model = saved[PREFIX + "model"],
+            name = saved.get<String>(PREFIX + "name") ?: d.name,
+            fuel = VehicleFuel.entries.firstOrNull { it.name == saved.get<String>(PREFIX + "fuel") } ?: d.fuel,
+            displacementCc = saved.get<String>(PREFIX + "cc") ?: d.displacementCc,
+            odometerKm = saved.get<String>(PREFIX + "odo") ?: d.odometerKm,
+        )
+    }
+}
+
 @HiltViewModel
-class VehicleSetupViewModel @Inject constructor(private val vehicles: VehicleRepository) : ViewModel() {
-    private val _state = MutableStateFlow(VehicleSetupUiState())
+class VehicleSetupViewModel @Inject constructor(
+    private val vehicles: VehicleRepository,
+    private val saved: SavedStateHandle = SavedStateHandle(),
+) : ViewModel() {
+    private val _state = MutableStateFlow(VehicleSetupUiState(form = VehicleFormState.read(saved) ?: VehicleForm()))
     val state: StateFlow<VehicleSetupUiState> = _state.asStateFlow()
 
     init {
-        viewModelScope.launch {
-            vehicles.activeVehicle.first()?.let { v -> _state.update { it.copy(form = VehicleFormValidator.fromVehicle(v)) } }
+        // A restored, half-typed form wins over the stored vehicle.
+        if (VehicleFormState.read(saved) == null) {
+            viewModelScope.launch {
+                vehicles.activeVehicle.first()?.let { v -> _state.update { it.copy(form = VehicleFormValidator.fromVehicle(v)) } }
+            }
         }
     }
 
-    fun onFormChange(form: VehicleForm) = _state.update { it.copy(form = form, errors = emptySet(), saved = false) }
+    fun onFormChange(form: VehicleForm) {
+        VehicleFormState.write(saved, form)
+        _state.update { it.copy(form = form, errors = emptySet(), saved = false) }
+    }
 
     /** Validates, stores and activates the vehicle. */
     fun save() {
@@ -198,10 +271,10 @@ fun VehicleSetupContent(state: VehicleSetupUiState, onFormChange: (VehicleForm) 
 @Composable
 private fun NumberField(label: String, value: String, onChange: (String) -> Unit, tag: String, error: String?) {
     OutlinedTextField(
-        value = value, onValueChange = { v -> onChange(v.filter { it.isDigit() }.take(7)) },
+        value = value, onValueChange = { v -> onChange(NumberInput.sanitize(v)) },
         label = { Text(label) }, singleLine = true, isError = error != null,
         supportingText = error?.let { { Text(it) } },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.fillMaxWidth().testTag(tag),
     )
 }

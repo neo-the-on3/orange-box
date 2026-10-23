@@ -3,6 +3,11 @@ package io.github.neotheon3.orangebox.feature.setup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,6 +35,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,7 +44,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository
 import io.github.neotheon3.orangebox.core.model.AppPreferences
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -52,51 +57,86 @@ data class OnboardingUiState(
     val step: OnboardingStep = OnboardingStep.WELCOME,
     val prefs: AppPreferences = AppPreferences(),
     val disclaimerChecked: Boolean = false,
+    /** True until the saved progress has been read, so a resumed flow doesn't flash the Welcome step. */
+    val restoring: Boolean = false,
 )
 
+/**
+ * Progress survives process death twice over (#122): the step and the checkbox live in [SavedStateHandle]
+ * (restored when Android recreates the task), and the step is also written to DataStore, so a cold start
+ * after the task was swiped away resumes at the same step. Finishing clears it.
+ */
 @HiltViewModel
-class OnboardingViewModel @Inject constructor(private val prefs: AppPreferencesRepository) : ViewModel() {
-    private val step = MutableStateFlow(OnboardingStep.WELCOME)
-    private val checked = MutableStateFlow(false)
+class OnboardingViewModel @Inject constructor(
+    private val prefs: AppPreferencesRepository,
+    private val saved: SavedStateHandle = SavedStateHandle(),
+) : ViewModel() {
+    private val savedStep = saved.getStateFlow<String?>(KEY_STEP, null)
+    private val checked = saved.getStateFlow(KEY_CHECKED, false)
 
-    val state: StateFlow<OnboardingUiState> = combine(step, prefs.preferences, checked) { s, p, c ->
-        OnboardingUiState(s, p, c || p.disclaimerAccepted)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), OnboardingUiState())
+    val state: StateFlow<OnboardingUiState> = combine(savedStep, prefs.preferences, checked) { s, p, c ->
+        val accepted = c || p.disclaimerAccepted
+        OnboardingUiState(resolveStep(s ?: p.onboardingStep, accepted), p, accepted)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), OnboardingUiState(restoring = true))
 
-    fun onDisclaimerChecked(value: Boolean) { checked.value = value }
+    fun onDisclaimerChecked(value: Boolean) { saved[KEY_CHECKED] = value }
 
     fun next() {
-        val current = step.value
+        val s = state.value
+        if (s.restoring) return
+        val current = s.step
         if (current == OnboardingStep.DISCLAIMER) {
-            if (!state.value.disclaimerChecked) return
+            if (!s.disclaimerChecked) return
             viewModelScope.launch { prefs.setDisclaimerAccepted(true) }
         }
         if (current == OnboardingStep.DONE) return
-        step.value = OnboardingStep.entries[current.ordinal + 1]
-        OrangeLog.i(OrangeLog.Areas.APP, "onboarding_step", "step" to step.value.name.lowercase())
+        val target = OnboardingStep.entries[current.ordinal + 1]
+        moveTo(target)
+        OrangeLog.i(OrangeLog.Areas.APP, "onboarding_step", "step" to target.name.lowercase())
     }
 
     fun back(): Boolean {
-        val current = step.value
+        val current = state.value.step
         if (current == OnboardingStep.WELCOME) return false
-        step.value = OnboardingStep.entries[current.ordinal - 1]
+        moveTo(OnboardingStep.entries[current.ordinal - 1])
         return true
+    }
+
+    private fun moveTo(step: OnboardingStep) {
+        saved[KEY_STEP] = step.name
+        viewModelScope.launch { prefs.setOnboardingStep(step.name) }
     }
 
     fun finish(onDone: () -> Unit) {
         viewModelScope.launch {
             prefs.setOnboardingComplete(true)
+            prefs.setOnboardingStep(null)
             OrangeLog.i(OrangeLog.Areas.APP, "onboarding_complete")
             onDone()
         }
     }
 
     fun markAsked(permissions: Collection<String>) { viewModelScope.launch { prefs.markPermissionsAsked(permissions) } }
+
+    internal companion object {
+        const val KEY_STEP = "onboarding_step"
+        const val KEY_CHECKED = "onboarding_disclaimer_checked"
+
+        /**
+         * Unknown names fall back to Welcome; nothing past the disclaimer without accepting it. The checkbox
+         * counts as accepted, since the DataStore write that records it lands a moment later.
+         */
+        fun resolveStep(name: String?, disclaimerAccepted: Boolean): OnboardingStep {
+            val step = OnboardingStep.entries.firstOrNull { it.name == name } ?: OnboardingStep.WELCOME
+            return if (step > OnboardingStep.DISCLAIMER && !disclaimerAccepted) OnboardingStep.DISCLAIMER else step
+        }
+    }
 }
 
 @Composable
 fun OnboardingRoute(onFinished: () -> Unit, viewModel: OnboardingViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    if (state.restoring) return
     androidx.activity.compose.BackHandler(enabled = state.step != OnboardingStep.WELCOME) { viewModel.back() }
     OnboardingScreen(
         state = state,
@@ -141,6 +181,8 @@ fun OnboardingScreen(
     permissions: @Composable () -> Unit,
     vehicle: @Composable (onSaved: () -> Unit) -> Unit,
     dongle: @Composable () -> Unit,
+    /** Insets the bottom action bar keeps clear of (nav bar, cutout, IME). A parameter so tests can fake them. */
+    bottomBarInsets: WindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
 ) {
     val step = state.step
     Scaffold(
@@ -155,7 +197,9 @@ fun OnboardingScreen(
         },
         bottomBar = {
             Row(
-                Modifier.fillMaxWidth().padding(16.dp),
+                // Edge-to-edge: Scaffold doesn't inset a custom bottomBar, so keep the buttons above the
+                // navigation bar (bottom in portrait, side in landscape on 3-button nav) (#119).
+                Modifier.fillMaxWidth().windowInsetsPadding(bottomBarInsets).padding(16.dp).testTag("onboarding_bottom_bar"),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {

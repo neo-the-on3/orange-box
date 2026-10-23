@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!--
+            compose-ui-tooling (debug only) declares PreviewActivity as exported so Android Studio can launch
+            previews on a device. Orange Box doesn't need that, and an exported debug activity lets any app
+            start arbitrary composables, so keep it internal.
+        -->
+        <activity
+            android:name="androidx.compose.ui.tooling.PreviewActivity"
+            android:exported="false"
+            tools:replace="android:exported" />
+    </application>
+</manifest>
