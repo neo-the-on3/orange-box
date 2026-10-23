@@ -1,0 +1,1631 @@
+openapi: 3.1.0
+info:
+  title: Orange Box API
+  version: 1.0.0-draft.1
+  summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
+  description: |
+    Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
+    The app is fully functional without a backend. Its backend mode is **Off** (default), **Fake**
+    (canned responses generated from this spec, no network) or **Remote** (this API).
+
+    This API is a clean redesign. The legacy, reverse-documented contract (RPC over `POST /smart.json`
+    multiplexed by `cmd`, form-encoded JSON strings, client-asserted identity, plain HTTP) is kept only as a
+    reference in `docs/openapi.yaml`. Every operation below carries an `x-legacy-mapping` naming what it
+    replaces. `none` means the operation is new.
+
+    ## Conventions
+    * **Transport**: HTTPS only (TLS 1.2+). Plain HTTP must be refused, not redirected.
+    * **Auth**: `Authorization: Bearer <JWT>` on every operation except `GET /v1/health` and `POST /v1/auth/token`.
+      The member is identified by the token's subject. Member ids are **never** accepted in request bodies or
+      query strings for authorisation.
+    * **Media types**: `application/json` (UTF-8) for requests and responses; `application/merge-patch+json`
+      (RFC 7396) for PATCH; `application/problem+json` (RFC 9457) for every error.
+    * **Compression**: clients may send `Content-Encoding: gzip` on the batch upload operations
+      (`POST /v1/trips/batch`, `POST /v1/telemetry/batches`, `POST /v1/vehicles/{vehicleId}/dtc-reports`). Servers
+      should honour `Accept-Encoding: gzip` on responses.
+    * **Time**: all timestamps are RFC 3339 / ISO-8601 in UTC with a `Z` suffix (e.g. `2026-10-23T14:05:00Z`).
+      Calendar dates (`YYYY-MM-DD`) are interpreted in the IANA time zone passed in the `tz` query parameter where
+      one exists, otherwise UTC.
+    * **Units**: metric units encoded in field names (`distanceKm`, `speedKmh`, `durationS`, `fuelUsedL`,
+      `coolantC`, `batteryV`). Fuel economy is km/L. The app converts for display.
+    * **Ids**: server ids are opaque strings (UUIDv7 recommended). Client-generated ids (`clientTripId`,
+      `clientBatchId`, `clientReportId`, `clientVehicleId`) are UUIDs used for de-duplication.
+    * **Pagination**: cursor based. Request `?limit=` (1-100, default 50) and `?cursor=`; responses return
+      `items` and `nextCursor` (`null` on the last page). Cursors are opaque and may expire (then `400`).
+    * **Concurrency**: mutable resources return `ETag`; `PATCH`/`DELETE` on vehicles and `PATCH /v1/me` require
+      `If-Match` (`428` if missing, `412` if stale). Every resource also exposes `updatedAt`.
+    * **Idempotency**: `Idempotency-Key` header (UUID) is required on batch uploads and accepted on other POSTs.
+      The server stores the key with a request fingerprint and the response for at least 24 h (proposal). A retry
+      with the same key and body returns the original response; the same key with a different body returns
+      `422`; a retry while the first request is still processing returns `409`.
+    * **Rate limits**: responses carry `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds).
+      `429` and `503` carry `Retry-After`. Clients back off exponentially with jitter.
+    * **Tracing**: clients send `X-Request-Id` (UUID); the server echoes it (or generates one) on every response
+      and includes it in problem details.
+
+    ## Versioning policy
+    * The major version is in the path (`/v1`). Within `v1` changes are **additive only**: new endpoints,
+      new optional request fields, new response fields, new enum values. Clients must ignore unknown fields and
+      treat unknown enum values as `other`.
+    * Breaking changes ship as `/v2`; `/v1` stays available for at least 12 months after `/v2` is GA (proposal),
+      announced with `Deprecation` and `Sunset` headers on `/v1` responses.
+    * `info.version` follows SemVer for this document; the app records the spec version it was built against.
+
+    ## Remote-only features
+    Stats, rankings and points (`/v1/stats`, `/v1/rankings`, `/v1/me/points`) exist only in Remote mode.
+    Everything else mirrors data the app already keeps locally; the server is a sync/backup target.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://{host}
+    description: Configured in the app under Settings → Server (advanced). The app appends `/v1/...` paths.
+    variables:
+      host:
+        default: api.example.invalid
+  - url: https://sandbox.example.invalid
+    description: Sandbox environment the backend developer is asked to provide for contract testing (placeholder host).
+security:
+  - bearerAuth: []
+tags:
+  - name: health
+    description: Service liveness
+  - name: auth
+    description: Token exchange and session lifecycle
+  - name: me
+    description: Profile and account lifecycle of the calling member
+  - name: vehicles
+    description: The caller's vehicles
+  - name: catalogue
+    description: Read-only vehicle catalogue (makes → models → variants)
+  - name: reference
+    description: Read-only reference data (countries, regions)
+  - name: trips
+    description: Trip summaries (sync/backup of on-device trips)
+  - name: telemetry
+    description: Batched OBD/location samples and driving events
+  - name: diagnostics
+    description: Diagnostic trouble code (DTC) reports
+  - name: stats
+    description: Remote-only aggregate statistics
+  - name: rankings
+    description: Remote-only leaderboards
+  - name: points
+    description: Remote-only reward points
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness / readiness probe
+      security: []
+      x-legacy-mapping:
+        replaces: none
+        notes: New. Lets the app's Server settings screen test a base URL before switching to Remote mode.
+      responses:
+        '200':
+          description: Service is up
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /v1/auth/token:
+    post:
+      tags: [auth]
+      operationId: createToken
+      summary: Exchange an OIDC ID token (or a refresh token) for an access token
+      description: |
+        `grantType=id_token`: the server verifies the ID token signature against the provider's JWKS, `iss`,
+        `aud` (the app's OAuth client id), `exp` and `nonce` if present, then finds or creates the member keyed by
+        (`iss`, `sub`). Returns a short-lived access JWT (proposal: 15 min) and a rotating refresh token
+        (proposal: 30 days, single use; reuse detection revokes the whole token family).
+
+        `grantType=refresh_token`: rotates the refresh token.
+
+        Alternative deployment (see open questions): the server may skip this exchange and accept the provider's
+        ID token directly as the bearer token. This endpoint is then not implemented.
+      security: []
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=checkMember', '/smart.json cmd=regMember', 'POST /mbrLogin.do cmd=login.json']
+        notes: Legacy identified members by a client-supplied e-mail (`loginId`) with no verification and used a server session cookie. Replaced by verified OIDC + bearer tokens. Registration is implicit on first exchange (`isNewMember=true`).
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TokenRequest'}
+            examples:
+              idToken:
+                value: {grantType: id_token, provider: google, idToken: eyJhbGciOiJSUzI1NiJ9.example.sig, nonce: 5f1c2c1e}
+              refresh:
+                value: {grantType: refresh_token, refreshToken: rt_01HFXK3Q8J6Z}
+      responses:
+        '200':
+          description: Tokens issued
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TokenResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Revoke the caller's refresh token (and its rotation family)
+      x-legacy-mapping:
+        replaces: ['POST /mbrLogin.do cmd=logout.json']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: {type: string}
+      responses:
+        '204': {description: 'Revoked (also returned if already revoked)'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/me:
+    get:
+      tags: [me]
+      operationId: getMe
+      summary: Get the caller's profile
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=checkMember (response SmartMember)']
+        notes: Fields minimised. Legacy phone number, mobile carrier, sex and full birth date are not carried over.
+      responses:
+        '200':
+          description: Profile
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Profile'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    patch:
+      tags: [me]
+      operationId: updateMe
+      summary: Update the caller's profile
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=regMember (profile fields memberNm, countryCd, localCd)']
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {$ref: '#/components/schemas/ProfilePatch'}
+      responses:
+        '200':
+          description: Updated profile
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Profile'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+    delete:
+      tags: [me]
+      operationId: deleteMe
+      summary: Delete the caller's account and all associated data
+      description: |
+        Revokes all tokens immediately and schedules erasure of the profile, vehicles, trips, telemetry, DTC
+        reports, stats, ranking entries and points. Erasure must complete within 30 days (proposal); backups age out
+        on their normal rotation. Repeating the call returns `202` with the existing request.
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=withdrawMember']
+        notes: The legacy client only sent memberNo; the legacy DTO has activeYn/withdrawDate fields. v1 requires real erasure.
+      responses:
+        '202':
+          description: Deletion accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountDeletion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/vehicles:
+    get:
+      tags: [vehicles]
+      operationId: listVehicles
+      summary: List the caller's vehicles
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getMemberCarList']
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: includeArchived
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Page of vehicles
+          headers:
+            RateLimit-Limit: {$ref: '#/components/headers/RateLimit-Limit'}
+            RateLimit-Remaining: {$ref: '#/components/headers/RateLimit-Remaining'}
+            RateLimit-Reset: {$ref: '#/components/headers/RateLimit-Reset'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VehiclePage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [vehicles]
+      operationId: createVehicle
+      summary: Register a vehicle
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=insertCar']
+        notes: The legacy OBD adapter Bluetooth MAC (`obdMac`) is not sent; it stays on the device.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyOptional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VehicleCreate'}
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Vehicle'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+
+  /v1/vehicles/{vehicleId}:
+    parameters:
+      - $ref: '#/components/parameters/VehicleId'
+    get:
+      tags: [vehicles]
+      operationId: getVehicle
+      summary: Get one vehicle
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getMemberCarList (single entry)']
+      responses:
+        '200':
+          description: Vehicle
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Vehicle'}
+        '304': {description: 'Not modified (If-None-Match matched)'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      tags: [vehicles]
+      operationId: updateVehicle
+      summary: Update a vehicle (JSON merge patch, optimistic concurrency)
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=updateCar']
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: {$ref: '#/components/schemas/VehiclePatch'}
+      responses:
+        '200':
+          description: Updated
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Vehicle'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+    delete:
+      tags: [vehicles]
+      operationId: deleteVehicle
+      summary: Delete a vehicle
+      description: Deletes the vehicle. Its trips stay with the member (keeping `vehicleId` as a dangling reference) unless `?cascade=true`.
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=updateCar with activeYn=N']
+        notes: 'Legacy deactivated a car via updateCar(activeYn=N). Archiving (keep, hide) is PATCH with {"archived": true}; DELETE removes it.'
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - name: cascade
+          in: query
+          description: Also delete the vehicle's trips, telemetry and DTC reports.
+          schema: {type: boolean, default: false}
+      responses:
+        '204': {description: 'Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+
+  /v1/catalogue/makes:
+    get:
+      tags: [catalogue]
+      operationId: listMakes
+      summary: List vehicle makes
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getCarModelList targetField=CarMakerCd']
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - {name: q, in: query, description: 'Case-insensitive prefix search on name', schema: {type: string, maxLength: 64}}
+        - {name: market, in: query, description: 'ISO 3166-1 alpha-2 market filter', schema: {$ref: '#/components/schemas/CountryCode'}}
+      responses:
+        '200':
+          description: Page of makes
+          headers:
+            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MakePage'}
+        '304': {description: 'Not modified'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/catalogue/makes/{makeId}/models:
+    get:
+      tags: [catalogue]
+      operationId: listModels
+      summary: List models of a make
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getCarModelList targetField=CarTypeCd', '/smart.json cmd=getCarModelList targetField=CarModelNameCd']
+        notes: Legacy picked body type and model as two cascade steps; v1 returns `bodyType` on each model and allows filtering by it.
+      parameters:
+        - {name: makeId, in: path, required: true, schema: {type: string}}
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - {name: bodyType, in: query, schema: {$ref: '#/components/schemas/BodyType'}}
+        - {name: year, in: query, description: 'Only models available in this model year', schema: {type: integer, minimum: 1980, maximum: 2100}}
+        - {name: q, in: query, schema: {type: string, maxLength: 64}}
+      responses:
+        '200':
+          description: Page of models
+          headers:
+            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ModelPage'}
+        '304': {description: 'Not modified'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/catalogue/variants:
+    get:
+      tags: [catalogue]
+      operationId: listVariants
+      summary: Query concrete variants (fuel, displacement, year)
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getCarModelList targetField=CarSrcCd', '/smart.json cmd=getCarModelList targetField=EngineDisplacement', '/smart.json cmd=getCarModelList targetField=ReleaseYear', '/smart.json cmd=getCarModelList without targetField (GetVehicleModelRequest)']
+        notes: The legacy distinct-column cascade becomes query filters; the app derives each picker step from `facets`.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - {name: makeId, in: query, schema: {type: string}}
+        - {name: modelId, in: query, schema: {type: string}}
+        - {name: fuelType, in: query, schema: {$ref: '#/components/schemas/FuelType'}}
+        - {name: displacementCc, in: query, schema: {type: integer, minimum: 0, maximum: 10000}}
+        - {name: year, in: query, schema: {type: integer, minimum: 1980, maximum: 2100}}
+        - {name: includeFacets, in: query, description: 'Return distinct fuelType/displacementCc/year values for the current filter', schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: Page of variants
+          headers:
+            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VariantPage'}
+        '304': {description: 'Not modified'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/catalogue/variants/{variantId}:
+    get:
+      tags: [catalogue]
+      operationId: getVariant
+      summary: Get one variant
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getCarModelList without targetField (single SmartCarModel)']
+      parameters:
+        - {name: variantId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Variant
+          headers:
+            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Variant'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/reference/countries:
+    get:
+      tags: [reference]
+      operationId: listCountries
+      summary: List supported countries
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getCodeList grpCd=CountryCd']
+      parameters:
+        - {name: lang, in: query, description: 'BCP 47 language for names (falls back to Accept-Language, then en)', schema: {type: string}}
+      responses:
+        '200':
+          description: Countries (small, unpaginated list)
+          headers:
+            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Country'}}
+        '304': {description: 'Not modified'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/reference/countries/{countryCode}/regions:
+    get:
+      tags: [reference]
+      operationId: listRegions
+      summary: List regions of a country
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=getCodeList grpCd=Local{countryCode}']
+      parameters:
+        - {name: countryCode, in: path, required: true, schema: {$ref: '#/components/schemas/CountryCode'}}
+        - {name: lang, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Regions
+          headers:
+            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Region'}}
+        '304': {description: 'Not modified'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/trips/batch:
+    post:
+      tags: [trips]
+      operationId: uploadTrips
+      summary: Upsert a batch of trip summaries (idempotent)
+      description: |
+        Each trip is keyed by its client-generated `clientTripId`. A trip may be sent several times while
+        `state=in_progress` (the app sends periodic snapshots) and finally with `state=completed`; the server
+        upserts by (member, `clientTripId`) and ignores snapshots older than the stored `snapshotAt`.
+        A `completed` trip is immutable except for deletion. Per-item results are returned; the batch as a whole
+        succeeds (`200`) even if some items are rejected.
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=carMessage (msgList[].trip, gathering server)']
+        notes: Legacy sent base64(gzip(JSON)) in a form field with memberNo/carNo in the body, and trip states opened/updating/closed. v1 uses JSON with optional gzip Content-Encoding and identity from the token.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ContentEncoding'
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TripBatch'}
+      responses:
+        '200':
+          description: Per-item results
+          headers:
+            RateLimit-Limit: {$ref: '#/components/headers/RateLimit-Limit'}
+            RateLimit-Remaining: {$ref: '#/components/headers/RateLimit-Remaining'}
+            RateLimit-Reset: {$ref: '#/components/headers/RateLimit-Reset'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BatchResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /v1/trips:
+    get:
+      tags: [trips]
+      operationId: listTrips
+      summary: List trips (newest first)
+      x-legacy-mapping:
+        replaces: none
+        notes: Legacy had no trip-list JSON API; trip history was shown in server-rendered pages (`/m/view.do`, `/m/chart.do`). Used for restore on a new device.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - {name: vehicleId, in: query, schema: {type: string}}
+        - {name: from, in: query, description: 'Trips starting at or after this instant', schema: {type: string, format: date-time}}
+        - {name: to, in: query, description: 'Trips starting before this instant', schema: {type: string, format: date-time}}
+        - {name: updatedSince, in: query, description: 'Incremental sync - only trips changed after this instant', schema: {type: string, format: date-time}}
+      responses:
+        '200':
+          description: Page of trips
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TripPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/trips/days:
+    get:
+      tags: [trips]
+      operationId: listDrivingDays
+      summary: Calendar days on which the caller drove
+      x-legacy-mapping:
+        replaces: ['POST /m/trip.do?cmd=qSelectUserDrivingTripDate']
+      parameters:
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, description: 'Inclusive; max range 366 days', schema: {type: string, format: date}}
+        - $ref: '#/components/parameters/Tz'
+        - {name: vehicleId, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Days with at least one trip
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [date, tripCount]
+                      properties:
+                        date: {type: string, format: date}
+                        tripCount: {type: integer, minimum: 1}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/trips/{tripId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [trips]
+      operationId: getTrip
+      summary: Get one trip summary
+      x-legacy-mapping:
+        replaces: none
+      responses:
+        '200':
+          description: Trip
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [trips]
+      operationId: deleteTrip
+      summary: Delete a trip with its telemetry
+      x-legacy-mapping:
+        replaces: none
+      responses:
+        '204': {description: 'Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/trips/{tripId}/samples:
+    get:
+      tags: [telemetry]
+      operationId: listTripSamples
+      summary: Read back a trip's telemetry samples (chronological)
+      x-legacy-mapping:
+        replaces: none
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 5000, default: 1000}}
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Page of samples
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SamplePage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/trips/{tripId}/events:
+    get:
+      tags: [telemetry]
+      operationId: listTripEvents
+      summary: Read back a trip's driving events
+      x-legacy-mapping:
+        replaces: none
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Page of events
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EventPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/telemetry/batches:
+    post:
+      tags: [telemetry]
+      operationId: uploadTelemetryBatch
+      summary: Upload a batch of telemetry samples and events for one trip
+      description: |
+        Samples and events are appended to the trip identified by `clientTripId` (the trip summary may arrive
+        before or after its telemetry). De-duplication is by `clientBatchId` (and the `Idempotency-Key` header);
+        individual samples are de-duplicated by (`clientTripId`, `t`). Processing may be asynchronous: `202`
+        means durably stored, not necessarily aggregated.
+
+        Size limits (proposal): at most 5,000 samples + 500 events per batch and 1 MiB compressed / 8 MiB
+        uncompressed body; otherwise `413`.
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=carMessage (msgList[].location + msgList[].event, gathering server)']
+        notes: Legacy SmartRecord PID fields (vss, ect, maf, map, iat, tp, fli, auxBat ...) are renamed to unit-bearing names; `video` references (dashcam) are dropped.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ContentEncoding'
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TelemetryBatch'}
+      responses:
+        '202':
+          description: Accepted and durably stored
+          headers:
+            RateLimit-Limit: {$ref: '#/components/headers/RateLimit-Limit'}
+            RateLimit-Remaining: {$ref: '#/components/headers/RateLimit-Remaining'}
+            RateLimit-Reset: {$ref: '#/components/headers/RateLimit-Reset'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TelemetryBatchAck'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /v1/vehicles/{vehicleId}/dtc-reports:
+    parameters:
+      - $ref: '#/components/parameters/VehicleId'
+    post:
+      tags: [diagnostics]
+      operationId: createDtcReport
+      summary: Record a diagnostic trouble code (DTC) read or clear
+      x-legacy-mapping:
+        replaces: ['/smart.json cmd=carMessage (trip.dtcCount/dtcList/pendDtc/permaDtc, event.milWarn/dtc)']
+        notes: Legacy embedded DTCs as strings inside trip and event messages. v1 makes a DTC read/clear a first-class record.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ContentEncoding'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DtcReportCreate'}
+      responses:
+        '201':
+          description: Created (or the existing report for a repeated clientReportId)
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DtcReport'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+    get:
+      tags: [diagnostics]
+      operationId: listDtcReports
+      summary: List DTC reports for a vehicle (newest first)
+      x-legacy-mapping:
+        replaces: none
+        notes: Closest legacy equivalent was the server-rendered `/m/view.do?cmd=vCarDiagList` page.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Page of reports
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DtcReportPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /v1/stats/summary:
+    get:
+      tags: [stats]
+      operationId: getStatsSummary
+      summary: Aggregate driving statistics for a period (Remote-only feature)
+      x-legacy-mapping:
+        replaces: ['POST /api/v2/trip/stats/getRanking.do (caller aggregate fields of Rank)', 'POST /api/v2/trip/stats/getScoreStar.do']
+        notes: The legacy stats charts were server-rendered (`/m/chart.do`) and are not reproducible; v1 returns data only.
+      parameters:
+        - $ref: '#/components/parameters/Period'
+        - {name: date, in: query, description: 'Any date inside the period; defaults to today in `tz`', schema: {type: string, format: date}}
+        - $ref: '#/components/parameters/Tz'
+        - {name: vehicleId, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Aggregates
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StatsSummary'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/rankings/{metric}:
+    get:
+      tags: [rankings]
+      operationId: listRanking
+      summary: Leaderboard for a metric and period (Remote-only feature)
+      description: Only members with `rankingOptIn=true` appear. Entries show the member's chosen `displayName`, never e-mail or login id. Trips with `simulated=true` are excluded.
+      x-legacy-mapping:
+        replaces: ['POST /api/v2/trip/stats/get*RankingTop10.do (7 variants)', 'POST /api/v2/trip/ranking/getBestTripRankingList.do']
+        notes: Legacy ranking DTOs (Rank, MemberEcoData) carry loginId and email of members. v1 must not expose them.
+      parameters:
+        - $ref: '#/components/parameters/Metric'
+        - $ref: '#/components/parameters/Period'
+        - {name: date, in: query, schema: {type: string, format: date}}
+        - $ref: '#/components/parameters/Tz'
+        - {name: regionCode, in: query, schema: {type: string}}
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Page of ranking entries
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RankingPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/rankings/{metric}/me:
+    get:
+      tags: [rankings]
+      operationId: getMyRanking
+      summary: The caller's position for a metric and period (Remote-only feature)
+      x-legacy-mapping:
+        replaces: ['POST /api/v2/trip/stats/getRanking.do (ranking fields of Rank)', 'POST /api/v2/trip/ranking/getBestTripMyRanking.do']
+      parameters:
+        - $ref: '#/components/parameters/Metric'
+        - $ref: '#/components/parameters/Period'
+        - {name: date, in: query, schema: {type: string, format: date}}
+        - $ref: '#/components/parameters/Tz'
+      responses:
+        '200':
+          description: Position
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MyRanking'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404':
+          description: Not ranked for this period (no trips or not opted in)
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
+  /v1/me/points:
+    get:
+      tags: [points]
+      operationId: getPointsBalance
+      summary: Points balance (Remote-only feature)
+      x-legacy-mapping:
+        replaces: ['POST /api/v2/trip/stats/getRanking.do (Rank.memberDrvPt/memberLevPt/memberRankPt/memberEvtPt/memberPtAcc/memberPtUse/memberPtRes/memberPtExp)']
+        notes: How the legacy server earned or expired points is not visible in the client; the rules are for the backend developer to define.
+      responses:
+        '200':
+          description: Balance
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PointsBalance'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /v1/me/points/ledger:
+    get:
+      tags: [points]
+      operationId: listPointsLedger
+      summary: Points history (Remote-only feature)
+      x-legacy-mapping:
+        replaces: none
+        notes: Closest legacy equivalent was the server-rendered `/m/view.do?cmd=vMemberPointLog` page; its content is not known from the client.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Page of ledger entries
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PointsLedgerPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access JWT issued by `POST /v1/auth/token` (RS256/ES256, `iss` = API issuer, `aud` = `orange-box-api`,
+        `sub` = member id, `exp` at most 15 min proposed), or, in the alternative deployment, an OIDC ID token from
+        an allow-listed provider verified against its JWKS. The member is always derived from `sub`.
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous page's `nextCursor`.
+      schema: {type: string, maxLength: 512}
+    VehicleId:
+      name: vehicleId
+      in: path
+      required: true
+      schema: {type: string}
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      description: Server trip id, or the client trip id prefixed with `client:` (e.g. `client:0192f1b2-...`).
+      schema: {type: string}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: ETag from the last GET/PATCH. Missing → 428, stale → 412.
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID chosen by the client per logical upload and reused on every retry of it.
+      schema: {type: string, format: uuid}
+    IdempotencyKeyOptional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: {type: string, format: uuid}
+    ContentEncoding:
+      name: Content-Encoding
+      in: header
+      required: false
+      description: '`gzip` allowed; any other value → 415.'
+      schema: {type: string, enum: [gzip, identity]}
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema: {type: string, format: uuid}
+    Tz:
+      name: tz
+      in: query
+      description: IANA time zone used to bucket calendar days and periods (e.g. `Asia/Kolkata`). Default UTC.
+      schema: {type: string, default: UTC, maxLength: 64}
+    Period:
+      name: period
+      in: query
+      required: true
+      schema: {type: string, enum: [day, week, month, year, all]}
+    Metric:
+      name: metric
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/RankingMetric'}
+
+  headers:
+    X-Request-Id:
+      schema: {type: string}
+    ETag:
+      description: Strong entity tag of the returned representation.
+      schema: {type: string}
+    Location:
+      schema: {type: string, format: uri-reference}
+    NoStore:
+      schema: {type: string, const: no-store}
+    CachePublic:
+      description: Catalogue/reference data is cacheable (proposal - `public, max-age=86400`).
+      schema: {type: string}
+    RateLimit-Limit:
+      schema: {type: integer}
+    RateLimit-Remaining:
+      schema: {type: integer}
+    RateLimit-Reset:
+      description: Seconds until the window resets.
+      schema: {type: integer}
+    Retry-After:
+      description: Seconds to wait before retrying.
+      schema: {type: integer}
+
+  responses:
+    BadRequest:
+      description: Malformed request (syntax, bad query parameter, expired cursor)
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Unauthorized:
+      description: Missing, invalid or expired token
+      headers:
+        WWW-Authenticate:
+          schema: {type: string}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Forbidden:
+      description: Authenticated but not allowed (e.g. account pending deletion, provider not allow-listed)
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    NotFound:
+      description: Resource does not exist or is not owned by the caller
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Conflict:
+      description: Conflicting state (idempotent request still in progress, duplicate client id)
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    PreconditionFailed:
+      description: If-Match did not match the current ETag
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    PreconditionRequired:
+      description: If-Match header missing
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    PayloadTooLarge:
+      description: Body exceeds the batch limits
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    UnsupportedMediaType:
+      description: Unsupported Content-Type or Content-Encoding
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    UnprocessableContent:
+      description: Well-formed but semantically invalid (validation errors, Idempotency-Key reused with a different body)
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example:
+            type: https://api.example.invalid/problems/validation
+            title: Validation failed
+            status: 422
+            detail: 2 fields are invalid
+            instance: /v1/vehicles
+            code: validation_failed
+            requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a10
+            errors:
+              - {pointer: /modelYear, detail: must be between 1980 and 2100}
+              - {pointer: /vin, detail: must be 17 characters}
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        Retry-After: {$ref: '#/components/headers/Retry-After'}
+        RateLimit-Limit: {$ref: '#/components/headers/RateLimit-Limit'}
+        RateLimit-Remaining: {$ref: '#/components/headers/RateLimit-Remaining'}
+        RateLimit-Reset: {$ref: '#/components/headers/RateLimit-Reset'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    ServiceUnavailable:
+      description: Temporarily unavailable / maintenance
+      headers:
+        Retry-After: {$ref: '#/components/headers/Retry-After'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details. Never contains PII, tokens or stack traces.
+      required: [type, title, status]
+      properties:
+        type: {type: string, format: uri-reference, default: about:blank}
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+        detail: {type: string}
+        instance: {type: string, format: uri-reference}
+        code:
+          type: string
+          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `etag_mismatch`, `batch_too_large`).
+        requestId: {type: string}
+        errors:
+          type: array
+          items:
+            type: object
+            required: [pointer, detail]
+            properties:
+              pointer: {type: string, description: 'JSON Pointer (RFC 6901) into the request body'}
+              detail: {type: string}
+    Health:
+      type: object
+      required: [status, apiVersion, time]
+      properties:
+        status: {type: string, enum: [ok, degraded]}
+        apiVersion: {type: string, examples: [1.0.0]}
+        time: {type: string, format: date-time}
+    PageMeta:
+      type: object
+      required: [nextCursor]
+      properties:
+        nextCursor: {type: [string, 'null']}
+
+    TokenRequest:
+      oneOf:
+        - $ref: '#/components/schemas/IdTokenGrant'
+        - $ref: '#/components/schemas/RefreshGrant'
+      discriminator:
+        propertyName: grantType
+        mapping:
+          id_token: '#/components/schemas/IdTokenGrant'
+          refresh_token: '#/components/schemas/RefreshGrant'
+    IdTokenGrant:
+      type: object
+      required: [grantType, provider, idToken]
+      properties:
+        grantType: {type: string, const: id_token}
+        provider: {type: string, enum: [google], description: 'Allow-listed OIDC provider. More may be added.'}
+        idToken: {type: string}
+        nonce: {type: string}
+        device:
+          type: object
+          description: Optional, for session listing. No hardware identifiers.
+          properties:
+            appVersion: {type: string}
+            osVersion: {type: string}
+    RefreshGrant:
+      type: object
+      required: [grantType, refreshToken]
+      properties:
+        grantType: {type: string, const: refresh_token}
+        refreshToken: {type: string}
+    TokenResponse:
+      type: object
+      required: [accessToken, tokenType, expiresIn, refreshToken, memberId, isNewMember]
+      properties:
+        accessToken: {type: string}
+        tokenType: {type: string, const: Bearer}
+        expiresIn: {type: integer, description: 'Seconds'}
+        refreshToken: {type: string}
+        refreshExpiresIn: {type: integer}
+        memberId: {type: string}
+        isNewMember: {type: boolean}
+
+    Profile:
+      type: object
+      required: [id, displayName, createdAt, updatedAt]
+      properties:
+        id: {type: string, readOnly: true}
+        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Shown on leaderboards. Legacy memberNm.'}
+        email: {type: [string, 'null'], format: email, readOnly: true, description: 'From the verified ID token; never used as an identifier.'}
+        countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$', description: 'ISO 3166-1 alpha-2. Legacy countryCd.'}
+        regionCode: {type: [string, 'null'], description: 'ISO 3166-2 subdivision. Legacy localCd.'}
+        rankingOptIn: {type: boolean, default: false}
+        authProvider: {type: string, readOnly: true, description: 'Legacy joinRouteCd'}
+        createdAt: {type: string, format: date-time, readOnly: true}
+        updatedAt: {type: string, format: date-time, readOnly: true}
+    ProfilePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        displayName: {type: string, minLength: 1, maxLength: 40}
+        countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$'}
+        regionCode: {type: [string, 'null']}
+        rankingOptIn: {type: boolean}
+    AccountDeletion:
+      type: object
+      required: [status, requestedAt, completeBy]
+      properties:
+        status: {type: string, enum: [scheduled, completed]}
+        requestedAt: {type: string, format: date-time}
+        completeBy: {type: string, format: date-time}
+
+    CountryCode:
+      type: string
+      pattern: '^[A-Z]{2}$'
+      description: ISO 3166-1 alpha-2
+    FuelType:
+      type: string
+      description: 'Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other. Unknown future values must be tolerated.'
+      enum: [gasoline, diesel, lpg, gasoline_lpg, hybrid, plug_in_hybrid, electric, other]
+    BodyType:
+      type: string
+      description: 'Legacy CarTypeCd.'
+      enum: [micro, subcompact, compact, midsize, fullsize, fullsize_luxury, suv, van, sports, other]
+    RankingMetric:
+      type: string
+      description: 'Legacy *RankingTop10 variants (DrivingScore, EcoSpeed, FuelCut, HarshSpeed, Level, Point, FuelSave) plus best_trip.'
+      enum: [driving_score, eco_speed, fuel_cut, harsh_driving, level, points, fuel_saved, best_trip]
+    EventType:
+      type: string
+      description: 'Legacy EventTpCd plus SmartEvent warning flags, plus overspeed/idling. Dashcam-related events are out of scope.'
+      enum: [connection_warning, battery_warning, low_fuel_warning, mil_on, coolant_temp_warning, harsh_start, harsh_accel, harsh_stop, harsh_brake, overspeed, idling, impact, emergency, other]
+
+    ObdAdapterInfo:
+      type: object
+      description: 'Adapter metadata useful for support. Legacy elmVer/protocol. The Bluetooth MAC (legacy obdMac) is not sent.'
+      properties:
+        elmVersion: {type: string, maxLength: 32}
+        obdProtocol: {type: integer, minimum: 0, maximum: 12, description: 'ELM327 protocol number (ATDPN)'}
+    VehicleWritable:
+      type: object
+      properties:
+        nickname: {type: string, maxLength: 40}
+        variantId: {type: [string, 'null'], description: 'Catalogue variant, or null for manual entry'}
+        make: {type: string, maxLength: 64}
+        model: {type: string, maxLength: 64}
+        fuelType: {$ref: '#/components/schemas/FuelType'}
+        engineDisplacementCc: {type: [integer, 'null'], minimum: 0, maximum: 10000}
+        modelYear: {type: [integer, 'null'], minimum: 1980, maximum: 2100}
+        plateNumber: {type: [string, 'null'], maxLength: 16, description: 'Optional; personal data. Legacy carPlateNo.'}
+        vin: {type: [string, 'null'], pattern: '^[A-HJ-NPR-Z0-9]{17}$', description: Optional; personal data.}
+        odometerKm: {type: [integer, 'null'], minimum: 0}
+        idleStopGo: {type: boolean, description: 'Legacy isgYn'}
+        obdAdapter: {$ref: '#/components/schemas/ObdAdapterInfo'}
+        archived: {type: boolean, description: 'Legacy activeYn=N'}
+    VehicleCreate:
+      allOf:
+        - $ref: '#/components/schemas/VehicleWritable'
+        - type: object
+          required: [make, model, fuelType]
+          properties:
+            clientVehicleId: {type: string, format: uuid, description: 'Local id from the app, for de-duplication'}
+    VehiclePatch:
+      allOf:
+        - $ref: '#/components/schemas/VehicleWritable'
+        - type: object
+          minProperties: 1
+    Vehicle:
+      allOf:
+        - $ref: '#/components/schemas/VehicleWritable'
+        - type: object
+          required: [id, make, model, fuelType, archived, createdAt, updatedAt]
+          properties:
+            id: {type: string, readOnly: true}
+            clientVehicleId: {type: [string, 'null'], format: uuid}
+            createdAt: {type: string, format: date-time, readOnly: true}
+            updatedAt: {type: string, format: date-time, readOnly: true}
+    VehiclePage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Vehicle'}}
+
+    Make:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string}
+    Model:
+      type: object
+      required: [id, makeId, name]
+      properties:
+        id: {type: string}
+        makeId: {type: string}
+        name: {type: string}
+        bodyType: {$ref: '#/components/schemas/BodyType'}
+        firstYear: {type: [integer, 'null']}
+        lastYear: {type: [integer, 'null']}
+    Variant:
+      type: object
+      description: 'Legacy SmartCarModel.'
+      required: [id, makeId, modelId, fuelType]
+      properties:
+        id: {type: string}
+        makeId: {type: string}
+        modelId: {type: string}
+        name: {type: string}
+        fuelType: {$ref: '#/components/schemas/FuelType'}
+        engineDisplacementCc: {type: [integer, 'null']}
+        releaseYear: {type: [integer, 'null']}
+        discontinuedYear: {type: [integer, 'null']}
+        officialFuelEconomyKmPerL: {type: [number, 'null'], description: 'Legacy fuelEconomy (unit inferred as km/L)'}
+        imageUrl: {type: [string, 'null'], format: uri, description: 'Absolute HTTPS URL (legacy carImageFile was a path relative to the service base URL)'}
+    MakePage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Make'}}
+    ModelPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Model'}}
+    VariantPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Variant'}}
+            facets:
+              type: object
+              properties:
+                fuelType: {type: array, items: {$ref: '#/components/schemas/FuelType'}}
+                displacementCc: {type: array, items: {type: integer}}
+                year: {type: array, items: {type: integer}}
+    Country:
+      type: object
+      required: [code, name]
+      properties:
+        code: {$ref: '#/components/schemas/CountryCode'}
+        name: {type: string}
+    Region:
+      type: object
+      required: [code, name]
+      properties:
+        code: {type: string, description: 'ISO 3166-2 (e.g. IN-KA)'}
+        name: {type: string}
+
+    SpeedBand:
+      type: object
+      required: [fromKmh, seconds]
+      properties:
+        fromKmh: {type: integer, minimum: 0}
+        toKmh: {type: [integer, 'null'], description: 'null means open-ended (legacy timeIn110Over)'}
+        seconds: {type: number, minimum: 0}
+    DtcCode:
+      type: string
+      pattern: '^[PCBU][0-9A-F]{4}$'
+    DtcSet:
+      type: object
+      properties:
+        stored: {type: array, items: {$ref: '#/components/schemas/DtcCode'}}
+        pending: {type: array, items: {$ref: '#/components/schemas/DtcCode'}}
+        permanent: {type: array, items: {$ref: '#/components/schemas/DtcCode'}}
+    TripUpload:
+      type: object
+      description: 'Trip summary. Legacy SmartTrip, minus ip/weather/mobileCarrier (unnecessary personal data), fuelEconomyA/B/C and maxHp/maxTorq (meaning or source not documented in the client).'
+      required: [clientTripId, vehicleId, state, startedAt, snapshotAt]
+      properties:
+        clientTripId: {type: string, format: uuid}
+        vehicleId: {type: string, description: 'Server vehicle id'}
+        state: {type: string, enum: [in_progress, completed], description: 'Legacy opened/updating → in_progress, closed → completed'}
+        startedAt: {type: string, format: date-time}
+        endedAt: {type: [string, 'null'], format: date-time}
+        snapshotAt: {type: string, format: date-time, description: 'When the app computed this snapshot; older snapshots are ignored'}
+        durationS: {type: integer, minimum: 0}
+        distanceKm: {type: number, minimum: 0}
+        engineDistanceKm: {type: [number, 'null']}
+        maxSpeedKmh: {type: number}
+        avgSpeedKmh: {type: number}
+        maxRpm: {type: integer}
+        harshAccelCount: {type: integer, minimum: 0}
+        harshBrakeCount: {type: integer, minimum: 0, description: 'Legacy harshDecelCount'}
+        harshStartCount: {type: integer, minimum: 0}
+        harshStopCount: {type: integer, minimum: 0}
+        fuelUsedL: {type: [number, 'null'], description: 'Legacy fuelConsumption'}
+        fuelEconomyKmPerL: {type: [number, 'null']}
+        fuelCutTimeS: {type: number}
+        idleTimeS: {type: number}
+        warmUpTimeS: {type: number}
+        accelTimeS: {type: number}
+        ecoSpeedTimeS: {type: number}
+        overSpeedTimeS: {type: number}
+        speedBands: {type: array, items: {$ref: '#/components/schemas/SpeedBand'}, description: 'Legacy timeIn0To10 … timeIn110Over'}
+        ecoScore: {type: [number, 'null'], description: 'Client-computed (clean-room formula, see docs/telemetry.md). Legacy ecoSafePoint.'}
+        safetyScore: {type: [number, 'null'], description: 'Legacy safePoint'}
+        batteryMaxV: {type: [number, 'null']}
+        batteryAvgV: {type: [number, 'null']}
+        coolantMaxC: {type: [number, 'null']}
+        coolantAvgC: {type: [number, 'null']}
+        dtc: {$ref: '#/components/schemas/DtcSet'}
+        simulated: {type: boolean, default: false, description: 'True when recorded with the debug simulator; excluded from rankings. Legacy simulatedYn.'}
+        app:
+          type: object
+          properties:
+            version: {type: string}
+            os: {type: string, examples: [android]}
+            osVersion: {type: string}
+    Trip:
+      allOf:
+        - $ref: '#/components/schemas/TripUpload'
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id: {type: string}
+            pointsAwarded: {type: [integer, 'null'], description: 'Remote-only'}
+            createdAt: {type: string, format: date-time}
+            updatedAt: {type: string, format: date-time}
+    TripBatch:
+      type: object
+      required: [trips]
+      properties:
+        trips: {type: array, minItems: 1, maxItems: 100, items: {$ref: '#/components/schemas/TripUpload'}}
+    BatchResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [clientId, status]
+            properties:
+              clientId: {type: string, format: uuid}
+              status: {type: string, enum: [created, updated, unchanged, rejected]}
+              id: {type: [string, 'null'], description: 'Server id when accepted'}
+              problem: {$ref: '#/components/schemas/Problem'}
+    TripPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Trip'}}
+
+    Sample:
+      type: object
+      description: 'One OBD/location sample. Legacy SmartRecord - vss→speedKmh, rpm, maf→mafGps, map→mapKpa, iat→intakeAirC, ect→coolantC, loadPct→engineLoadPct, tp→throttlePct, fli→fuelLevelPct, auxBat→batteryV, mil, x/y/zAxis→accel.'
+      required: [t]
+      properties:
+        t: {type: string, format: date-time}
+        lat: {type: [number, 'null'], minimum: -90, maximum: 90}
+        lon: {type: [number, 'null'], minimum: -180, maximum: 180}
+        speedKmh: {type: [number, 'null']}
+        rpm: {type: [number, 'null']}
+        mafGps: {type: [number, 'null'], description: 'g/s'}
+        mapKpa: {type: [number, 'null']}
+        intakeAirC: {type: [number, 'null']}
+        coolantC: {type: [number, 'null']}
+        engineLoadPct: {type: [number, 'null']}
+        throttlePct: {type: [number, 'null']}
+        fuelLevelPct: {type: [number, 'null']}
+        batteryV: {type: [number, 'null']}
+        mil: {type: [boolean, 'null']}
+        accel:
+          type: object
+          description: m/s² in device frame
+          properties:
+            x: {type: number}
+            y: {type: number}
+            z: {type: number}
+        pids:
+          type: object
+          description: Extra SAE J1979 mode 01 values keyed by hex PID (e.g. `"0x0B"`), already scaled to SI units.
+          additionalProperties: {type: number}
+    Event:
+      type: object
+      required: [t, type]
+      properties:
+        t: {type: string, format: date-time}
+        type: {$ref: '#/components/schemas/EventType'}
+        active: {type: boolean, default: true, description: 'Warning started (true) or cleared (false). Legacy ThreeState Y/N.'}
+        lat: {type: [number, 'null']}
+        lon: {type: [number, 'null']}
+        dtc: {type: [string, 'null'], pattern: '^[PCBU][0-9A-F]{4}$'}
+        value: {type: [number, 'null'], description: 'Measured value that triggered the event (e.g. g-force, km/h, V)'}
+    TelemetryBatch:
+      type: object
+      required: [clientBatchId, clientTripId, vehicleId]
+      properties:
+        clientBatchId: {type: string, format: uuid}
+        clientTripId: {type: string, format: uuid}
+        vehicleId: {type: string}
+        samples: {type: array, maxItems: 5000, items: {$ref: '#/components/schemas/Sample'}}
+        events: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/Event'}}
+    TelemetryBatchAck:
+      type: object
+      required: [clientBatchId, status, acceptedSamples, acceptedEvents]
+      properties:
+        clientBatchId: {type: string, format: uuid}
+        status: {type: string, enum: [accepted, duplicate]}
+        acceptedSamples: {type: integer}
+        acceptedEvents: {type: integer}
+        droppedSamples: {type: integer, description: 'Duplicates or out-of-range values dropped'}
+    SamplePage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Sample'}}
+    EventPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/Event'}}
+
+    DtcReportCreate:
+      allOf:
+        - $ref: '#/components/schemas/DtcSet'
+        - type: object
+          required: [clientReportId, kind, readAt, mil]
+          properties:
+            clientReportId: {type: string, format: uuid}
+            kind: {type: string, enum: [read, cleared]}
+            readAt: {type: string, format: date-time}
+            mil: {type: boolean}
+            vin: {type: [string, 'null'], pattern: '^[A-HJ-NPR-Z0-9]{17}$'}
+            clientTripId: {type: [string, 'null'], format: uuid}
+            odometerKm: {type: [integer, 'null']}
+            distanceSinceMilKm: {type: [integer, 'null'], description: 'PID 0x21'}
+    DtcReport:
+      allOf:
+        - $ref: '#/components/schemas/DtcReportCreate'
+        - type: object
+          required: [id, vehicleId, createdAt]
+          properties:
+            id: {type: string}
+            vehicleId: {type: string}
+            createdAt: {type: string, format: date-time}
+    DtcReportPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/DtcReport'}}
+
+    StatsSummary:
+      type: object
+      description: 'Legacy Rank aggregate fields plus ScoreRank stars.'
+      required: [period, from, to, tripCount]
+      properties:
+        period: {type: string, enum: [day, week, month, year, all]}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        vehicleId: {type: [string, 'null']}
+        tripCount: {type: integer}
+        durationS: {type: integer}
+        distanceKm: {type: number}
+        fuelUsedL: {type: [number, 'null']}
+        fuelEconomyKmPerL: {type: [number, 'null']}
+        harshAccelCount: {type: integer}
+        harshBrakeCount: {type: integer}
+        idleTimeS: {type: number}
+        normalSpeedTimeS: {type: number}
+        ecoSpeedTimeS: {type: number}
+        overSpeedTimeS: {type: number}
+        fuelCutTimeS: {type: number}
+        highLoadTimeS: {type: number}
+        maxSpeedKmh: {type: [number, 'null']}
+        drivingScore: {type: [number, 'null'], minimum: 0, maximum: 100}
+        level: {type: [integer, 'null']}
+        scoreStars:
+          type: object
+          description: 0-5 stars per category (legacy *ScoreStar)
+          properties:
+            harshDriving: {type: integer, minimum: 0, maximum: 5}
+            idling: {type: integer, minimum: 0, maximum: 5}
+            normalSpeed: {type: integer, minimum: 0, maximum: 5}
+            ecoSpeed: {type: integer, minimum: 0, maximum: 5}
+            overSpeed: {type: integer, minimum: 0, maximum: 5}
+            highLoad: {type: integer, minimum: 0, maximum: 5}
+            fuelCut: {type: integer, minimum: 0, maximum: 5}
+        fuelCost:
+          type: [object, 'null']
+          properties:
+            amount: {type: number}
+            saved: {type: number}
+            currency: {type: string, pattern: '^[A-Z]{3}$'}
+    RankingEntry:
+      type: object
+      required: [rank, displayName, value, isMe]
+      properties:
+        rank: {type: integer, minimum: 1}
+        displayName: {type: string}
+        regionCode: {type: [string, 'null']}
+        vehicleLabel: {type: [string, 'null'], description: 'e.g. make and model; never plate or VIN'}
+        value: {type: number}
+        isMe: {type: boolean}
+    RankingPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [metric, period, periodStart, items]
+          properties:
+            metric: {$ref: '#/components/schemas/RankingMetric'}
+            period: {type: string}
+            periodStart: {type: string, format: date}
+            items: {type: array, items: {$ref: '#/components/schemas/RankingEntry'}}
+    MyRanking:
+      type: object
+      required: [metric, period, rank, participants, value]
+      properties:
+        metric: {$ref: '#/components/schemas/RankingMetric'}
+        period: {type: string}
+        rank: {type: integer, minimum: 1}
+        participants: {type: integer}
+        value: {type: number}
+        percentile: {type: number, minimum: 0, maximum: 100}
+    PointsBalance:
+      type: object
+      required: [earned, used, remaining]
+      properties:
+        earned: {type: integer, description: 'Legacy memberPtAcc'}
+        used: {type: integer, description: 'Legacy memberPtUse'}
+        remaining: {type: integer, description: 'Legacy memberPtRes'}
+        expiringSoon: {type: integer, description: 'Legacy memberPtExp'}
+        expiringAt: {type: [string, 'null'], format: date-time}
+        byCategory:
+          type: object
+          description: 'Legacy memberDrvPt / memberLevPt / memberRankPt / memberEvtPt'
+          properties:
+            driving: {type: integer}
+            level: {type: integer}
+            ranking: {type: integer}
+            event: {type: integer}
+    PointsLedgerEntry:
+      type: object
+      required: [id, occurredAt, category, amount]
+      properties:
+        id: {type: string}
+        occurredAt: {type: string, format: date-time}
+        category: {type: string, enum: [driving, level, ranking, event, redemption, expiry, adjustment]}
+        amount: {type: integer, description: 'Positive = earned, negative = used or expired'}
+        tripId: {type: [string, 'null']}
+        description: {type: string}
+    PointsLedgerPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/PointsLedgerEntry'}}
