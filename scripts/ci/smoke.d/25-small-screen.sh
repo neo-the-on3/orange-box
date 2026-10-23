@@ -17,4 +17,8 @@ for _ in 1 2 3; do adb shell input swipe 360 1000 360 300 300; sleep 1; done
 wait_for_regex 'text="Distance this session: [0-9.]+ km"' small-home-scrolled 10
 grep -Eq 'text="Economy: ' "$OUT/small-home-scrolled.xml"
 shot 26-home-360x640-scrolled
+restore
+trap - EXIT
+sleep 3
+wait_for_text "Live data" small-home-restored
 echo "small screen smoke OK"
