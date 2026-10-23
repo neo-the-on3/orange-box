@@ -148,6 +148,9 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
             ToggleRow("Unsupported protocol", sim.unsupportedProtocol, "sim_fail_protocol") { v -> actions.update { it.copy(unsupportedProtocol = v) } }
             ToggleRow("Slow responses (1.5 s)", sim.slowResponses, "sim_slow") { v -> actions.update { it.copy(slowResponses = v) } }
             ToggleRow("Garbled responses (~30%)", sim.garbledResponses, "sim_garbled") { v -> actions.update { it.copy(garbledResponses = v) } }
+            ToggleRow("Garbled protocol reply (ATDPN, always)", sim.garbledProtocolReplies, "sim_garbled_atdpn") { v ->
+                actions.update { it.copy(garbledProtocolReplies = v) }
+            }
 
             Section("Backend mode")
             BackendMode.entries.forEach { mode ->

@@ -153,6 +153,11 @@ class SimulatorScreenTest {
         compose.onNodeWithTag("sim_script_status").assertTextContains("No script running")
         assertEquals(listOf("script=city", "script=highway", "script=idle", "script=harsh", "stop"), calls)
     }
+    @Test fun `garbled ATDPN toggle`() {
+        click("sim_garbled_atdpn")
+        assertTrue(sim.garbledProtocolReplies)
+        compose.onNodeWithText("Active failures:", substring = true).assertTextContains("Garbled ATDPN", substring = true)
+    }
     @Test fun `back`() { compose.onNodeWithTag("sim_back").performClick(); assertEquals(listOf("back"), calls) }
 
     @Test fun `status panel shows attempt, countdown, error and link event`() {

@@ -53,6 +53,16 @@ data class TelemetryConfig(
     val harshAccel: Double = 3.0,
     /** Harsh braking threshold, m/s² as a positive number (≈ 0.36 g). */
     val harshBrake: Double = 3.5,
+    /** Acceleration is measured over at least this much sample time, to smooth jitter and stale values, ms. */
+    val accelWindowMillis: Long = 1_000,
+    /** A harsh event ends when |accel| stays below this fraction of its threshold … */
+    val harshReleaseFraction: Double = 0.5,
+    /** … for this long (sample time), ms. */
+    val eventReleaseHoldMillis: Long = 1_000,
+    /** A new event of the same kind can't start sooner than this after the previous one ended, ms. */
+    val eventRearmMillis: Long = 2_000,
+    /** Overspeed ends only below `overspeedKph − overspeedHysteresisKph`. */
+    val overspeedHysteresisKph: Double = 3.0,
     /** Gaps longer than this are not integrated (signal loss), ms. */
     val maxGapMillis: Long = 5_000,
     /** Speed zone upper bounds, km/h. The last zone is open-ended. */

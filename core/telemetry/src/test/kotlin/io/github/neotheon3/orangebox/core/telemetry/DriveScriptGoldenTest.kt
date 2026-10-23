@@ -79,12 +79,13 @@ class DriveScriptGoldenTest {
     }
 
     private companion object {
-        // Recorded 2026-10-23 from this pipeline; distance also matches the analytic integral within 1.5%.
+        // Recorded 2026-10-23, re-recorded 2026-10-24 after windowed acceleration + event hysteresis
+        // (city/harsh eco and highway overspeed changed; harsh counts unchanged at 2/2); distance also matches the analytic integral within 1.5%.
         val GOLDEN = mapOf(
             "idle" to Golden(0.0, 0.02750, idleS = 120.0, fuelCutS = 0.0, ecoS = 0.0, overspeedS = 0.0, harshAccel = 0, harshBrake = 0),
-            "city" to Golden(1.21083, 0.11622, idleS = 31.5, fuelCutS = 13.5, ecoS = 75.0, overspeedS = 0.0, harshAccel = 0, harshBrake = 0),
-            "highway" to Golden(4.78681, 0.24508, idleS = 0.5, fuelCutS = 15.0, ecoS = 0.0, overspeedS = 44.5, harshAccel = 0, harshBrake = 0),
-            "harsh" to Golden(0.45056, 0.04384, idleS = 11.0, fuelCutS = 4.0, ecoS = 20.0, overspeedS = 0.0, harshAccel = 2, harshBrake = 2),
+            "city" to Golden(1.21083, 0.11622, idleS = 31.5, fuelCutS = 13.5, ecoS = 91.0, overspeedS = 0.0, harshAccel = 0, harshBrake = 0),
+            "highway" to Golden(4.78681, 0.24508, idleS = 0.5, fuelCutS = 15.0, ecoS = 0.0, overspeedS = 46.5, harshAccel = 0, harshBrake = 0),
+            "harsh" to Golden(0.45056, 0.04384, idleS = 11.0, fuelCutS = 4.0, ecoS = 19.0, overspeedS = 0.0, harshAccel = 2, harshBrake = 2),
         )
     }
 }
