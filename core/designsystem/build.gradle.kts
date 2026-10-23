@@ -1,25 +1,10 @@
 plugins {
-    alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.orangebox.android.library)
+    alias(libs.plugins.orangebox.android.compose)
 }
 
 android {
     namespace = "io.github.neotheon3.orangebox.core.designsystem"
-    compileSdk = libs.versions.compileSdk.get().toInt()
-    defaultConfig {
-        minSdk = libs.versions.minSdk.get().toInt()
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    buildFeatures {
-        compose = true
-    }
-}
-
-kotlin {
-    jvmToolchain(17)
 }
 
 dependencies {
@@ -29,5 +14,8 @@ dependencies {
     api(libs.compose.material3)
     api(libs.compose.material.icons.core)
     api(libs.compose.ui.tooling.preview)
-    debugApi(libs.compose.ui.tooling)
+
+    testImplementation(project(":core:testing"))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
