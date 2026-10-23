@@ -239,12 +239,12 @@ The copy is "Manual DTC clearance is not recommended.\n\nSure to continue?". Whi
 
 | Orange Box component | Mimics | Module | Issue |
 |---|---|---|---|
-| `DashboardTheme` + `ClusterPanel`, `CenterCard`, `ValueTile`, `Lamp`, `BezelBackground`, `BottomBarButton` (Canvas/vector) | §3 | new `core:dashboard-ui` | M4 design kit issue |
-| Icon set: fuel-drop, overspeed gauge, coolant, battery, eco leaf, accel car, brake car, idling, MIL engine, OBD plug, pin, clock, fuel pump, trip doc, hazard, power, 10 DTC groups | §3, §5 | `core:dashboard-ui` (vector XML authored by us) | M4 design kit issue; DTC icons in M6 issue |
-| `DashboardScreen` (clusters + centre + bottom bar, land/portrait) | §4.1–4.5 | `feature:driving` | #38 |
-| Detail grid pager | §4.6 | `feature:driving` | M4 detail-grid issue |
-| Home **Live data** card | mini cluster (§7) | `feature:home` | M4 Home card issue |
-| `DiagnosticsScreen`, group sheet, vehicle illustration | §5.1–5.2 | `feature:diagnostics` | #48, M6 illustration issue |
+| `DashboardTheme` + `ClusterPanel`, `CenterCard`, `ValueTile`, `Lamp`, `BezelBackground`, `BottomBarButton` (Canvas/vector) | §3 | new `core:dashboard-ui` | #95 (state mapping #99) |
+| Icon set: fuel-drop, overspeed gauge, coolant, battery, eco leaf, accel car, brake car, idling, MIL engine, OBD plug, pin, clock, fuel pump, trip doc, hazard, power, 10 DTC groups | §3, §5 | `core:dashboard-ui` (vector XML authored by us) | #95; DTC icons #100 |
+| `DashboardScreen` (clusters + centre + bottom bar, land/portrait) | §4.1–4.5 | `feature:driving` | #38, bottom bar #98 |
+| Detail grid pager | §4.6 | `feature:driving` | #96 |
+| Home **Live data** card | mini cluster (§7) | `feature:home` | #97 |
+| `DiagnosticsScreen`, group sheet, vehicle illustration | §5.1–5.2 | `feature:diagnostics` | #48, illustration #100 |
 | `DiagnosingDialog` | §5.3 | `feature:diagnostics` | #50 |
 | Clear confirmation | §5.4 | `feature:diagnostics` | #49 |
 | Trip list, trip detail, stats | Material 3 (rule 3); legacy hierarchy only (D3) | `feature:trips` | #42, #44, #46 |
