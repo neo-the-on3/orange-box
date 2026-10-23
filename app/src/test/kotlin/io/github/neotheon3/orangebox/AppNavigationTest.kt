@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
@@ -28,7 +29,36 @@ class AppNavigationTest {
 
     @Before fun inject() = hilt.inject()
 
+    /** First launch: walk the onboarding (accept, skip car and dongle) to reach Home. */
+    private fun walkOnboarding() {
+        compose.waitUntil(5_000) { compose.onAllNodes(androidx.compose.ui.test.hasTestTag("onboarding_next")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("onboarding_welcome").assertIsDisplayed()
+        compose.onNodeWithTag("onboarding_next").performClick()
+        compose.onNodeWithTag("onboarding_disclaimer_accept").performScrollTo().performClick()
+        compose.onNodeWithTag("onboarding_next").performClick()
+        compose.onNodeWithTag("onboarding_permissions").assertIsDisplayed()
+        compose.onNodeWithTag("onboarding_next").performClick()
+        compose.onNodeWithTag("onboarding_skip").performClick() // vehicle
+        compose.onNodeWithTag("onboarding_skip").performClick() // dongle
+        compose.onNodeWithTag("onboarding_finish").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTextCount("Backend: Off") > 0 }
+    }
+
+    @Test fun `first launch walks onboarding, then home opens settings and setup rows`() {
+        walkOnboarding()
+        compose.onNodeWithTag("home_settings").performClick()
+        compose.onNodeWithTag("settings_vehicle").performScrollTo().performClick()
+        compose.onNodeWithTag("vehicle_screen").assertIsDisplayed()
+        compose.onNodeWithTag("setup_back").performClick()
+        compose.onNodeWithTag("settings_dongle").performScrollTo().performClick()
+        compose.onNodeWithTag("dongle_screen").assertIsDisplayed()
+        compose.onNodeWithTag("setup_back").performClick()
+        compose.onNodeWithTag("settings_permissions").performScrollTo().performClick()
+        compose.onNodeWithTag("permissions_screen").assertIsDisplayed()
+    }
+
     @Test fun `home opens settings and back`() {
+        walkOnboarding()
         compose.onNodeWithText("Backend: Off").assertIsDisplayed()
         compose.onNodeWithTag("home_settings").performClick()
         compose.onNodeWithText("Server (advanced)").assertIsDisplayed()

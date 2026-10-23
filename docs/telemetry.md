@@ -110,7 +110,7 @@ value or a short gap can't split one sustained event:
 - overspeed ends below `overspeedKph − overspeedHysteresisKph` (117 km/h); overspeed time counts while the event is active;
 - missing values and gaps of up to 5 s hold the state, and a longer gap (signal lost) ends it.
 
-Start and end are logged under `OrangeBox/Telemetry` (`harsh_accel_start`, `harsh_accel_end` with its duration and peak, and the same for `harsh_brake` and `overspeed`).
+Start and end are logged under `OrangeBox/Telemetry` (`harsh_accel_start`, `harsh_accel_end` with its duration, peak and the value it ended at (for `overspeed_end`, the speed), and the same for `harsh_brake` and `overspeed`).
 
 | Metric | Rule | Default |
 |---|---|---|

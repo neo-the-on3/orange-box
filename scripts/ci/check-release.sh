@@ -14,13 +14,19 @@ if grep -E '^[^ ].*(core\.simulator\.|\.simulator\.Simulator|SimulatedElm327|Deb
   status=1
 fi
 
+# No Google services (Play Services / Firebase / Google Maps) in the app, by decision.
+if grep -E '^(com\.google\.android\.gms|com\.google\.firebase|com\.google\.android\.libraries\.maps)\.' "$MAPPING"; then
+  echo "::error::Google Play Services / Firebase classes found in release mapping"
+  status=1
+fi
+
 tmp=$(mktemp -d)
 unzip -q -o "$APK" 'classes*.dex' -d "$tmp"
-for pattern in "SimulatorDestination" "backend_mode override applied" "Use simulated dongle"; do
+for pattern in "SimulatorDestination" "backend_mode override applied" "onboarding override applied" "Use simulated dongle"; do
   if grep -a -q "$pattern" "$tmp"/classes*.dex; then
     echo "::error::Release dex contains '$pattern'"
     status=1
   fi
 done
-[ "$status" -eq 0 ] && echo "release check OK: no Simulator or debug overrides in $APK"
+[ "$status" -eq 0 ] && echo "release check OK: no Simulator, debug overrides or Google services in $APK"
 exit "$status"

@@ -13,6 +13,14 @@
     <string name="settings_url_not_https">Only https:// URLs are allowed</string>
     <string name="settings_url_malformed">Not a valid URL</string>
     <string name="settings_url_cleared">URL cleared</string>
+    <string name="settings_setup_section">Car and dongle</string>
+    <string name="settings_vehicle">Vehicle</string>
+    <string name="settings_dongle">OBD dongle</string>
+    <string name="settings_not_set">Not set up</string>
+    <string name="settings_permissions">Permissions</string>
+    <string name="settings_permissions_summary">Bluetooth, notifications and location</string>
+    <string name="settings_auto_start">Start when the dongle connects</string>
+    <string name="settings_auto_start_summary">Connect automatically when the paired dongle comes in range.</string>
     <string name="settings_about_section">About</string>
     <string name="settings_about_version">Version %1$s (code %2$d)</string>
     <string name="settings_about_build">Commit %1$s · CI run %2$s</string>

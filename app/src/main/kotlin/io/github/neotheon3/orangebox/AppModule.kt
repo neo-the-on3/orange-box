@@ -8,6 +8,7 @@ import io.github.neotheon3.orangebox.core.common.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.map
 import javax.inject.Singleton
 
 @Module
@@ -42,6 +43,24 @@ object TelemetryModule {
         @ApplicationScope scope: CoroutineScope,
         connection: io.github.neotheon3.orangebox.core.obd.ObdConnection,
         poller: io.github.neotheon3.orangebox.core.obd.pid.PidPoller,
+        vehicles: io.github.neotheon3.orangebox.core.database.VehicleRepository,
     ): io.github.neotheon3.orangebox.core.telemetry.TelemetrySource =
-        io.github.neotheon3.orangebox.core.telemetry.LiveTelemetry(scope, connection, poller)
+        io.github.neotheon3.orangebox.core.telemetry.LiveTelemetry(
+            scope, connection, poller,
+            vehicle = vehicles.activeVehicle.map { it?.let(VehicleProfiles::of) },
+        )
+}
+
+/** Maps the user's car to what the fuel estimate needs. */
+object VehicleProfiles {
+    fun of(v: io.github.neotheon3.orangebox.core.model.Vehicle) = io.github.neotheon3.orangebox.core.telemetry.VehicleProfile(
+        fuelType = when (v.fuel) {
+            io.github.neotheon3.orangebox.core.model.VehicleFuel.PETROL -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.GASOLINE
+            io.github.neotheon3.orangebox.core.model.VehicleFuel.DIESEL -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.DIESEL
+            io.github.neotheon3.orangebox.core.model.VehicleFuel.LPG -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.LPG
+            io.github.neotheon3.orangebox.core.model.VehicleFuel.CNG -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.CNG
+            io.github.neotheon3.orangebox.core.model.VehicleFuel.ETHANOL -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.ETHANOL
+        },
+        displacementLitres = v.displacementCc?.let { it / 1000.0 },
+    )
 }

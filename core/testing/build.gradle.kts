@@ -27,3 +27,7 @@ dependencies {
 dependencies {
     api(project(":core:telemetry"))
 }
+
+dependencies {
+    api(project(":core:database"))
+}

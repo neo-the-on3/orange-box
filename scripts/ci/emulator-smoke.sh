@@ -26,6 +26,26 @@ echo "Installing $APK"
 adb install -r -g "$APK"
 adb logcat -c
 
+# 0) First launch shows onboarding: walk it (accept the notice, skip car and dongle) to reach Home.
+adb shell am start -W -n "$PKG/$ACTIVITY" > /dev/null
+wait_for_text "Welcome to Orange Box" onboarding-welcome || fail "First launch did not show onboarding"
+shot 00-onboarding-welcome
+tap_attr text "Get started" onboarding-welcome-tap || fail "Get started not found"
+wait_for_text "Before you drive" onboarding-disclaimer || fail "Disclaimer step missing"
+tap_attr text "I understand and accept" onboarding-accept || fail "Accept checkbox not found"
+tap_attr text "Continue" onboarding-disclaimer-next || fail "Continue (disclaimer) not found"
+wait_for_text "Permissions" onboarding-permissions || fail "Permissions step missing"
+shot 00-onboarding-permissions
+tap_attr text "Continue" onboarding-permissions-next || fail "Continue (permissions) not found"
+wait_for_text "Your car" onboarding-vehicle || fail "Vehicle step missing"
+tap_attr text "Skip for now" onboarding-vehicle-skip || fail "Skip (vehicle) not found"
+wait_for_text "Pair the ELM327" onboarding-dongle || fail "Dongle step missing"
+tap_attr text "Skip for now" onboarding-dongle-skip || fail "Skip (dongle) not found"
+tap_attr text "Start using Orange Box" onboarding-finish || fail "Finish not found"
+wait_for_text "Backend:" onboarding-home || fail "Onboarding did not end on Home"
+adb logcat -d | grep -q "onboarding_complete" || fail "onboarding_complete log line missing"
+adb shell am force-stop "$PKG"
+
 # 1) Launch with backend_mode=off
 adb shell am start -W -n "$PKG/$ACTIVITY" --es backend_mode off
 wait_for_text "Backend: Off" home-off || fail "Home did not show 'Backend: Off'"

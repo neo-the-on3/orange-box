@@ -233,7 +233,15 @@ private fun AppReadout(state: SimulatorUiState, actions: SimulatorActions) {
                 fun flag(on: Boolean) = if (on) "ON" else "off"
                 Text("Harsh accel: ${flag(i.harshAccel)} · count ${t.harshAccelCount}", modifier = Modifier.testTag("sim_readout_harsh_accel"))
                 Text("Harsh brake: ${flag(i.harshBrake)} · count ${t.harshBrakeCount}", modifier = Modifier.testTag("sim_readout_harsh_brake"))
-                Text("Overspeed: ${flag(i.overspeed)} · ${"%.1f".format(java.util.Locale.US, t.overspeedS)} s", modifier = Modifier.testTag("sim_readout_overspeed"))
+                Text(
+                    "Overspeed: ${flag(i.overspeed)} · ${"%.1f".format(java.util.Locale.US, t.overspeedS)} s · events ${t.overspeedCount}",
+                    modifier = Modifier.testTag("sim_readout_overspeed"),
+                )
+                Text(
+                    "Eco ${"%.1f".format(java.util.Locale.US, t.ecoS)} s · idle ${"%.1f".format(java.util.Locale.US, t.idleS)} s · " +
+                        "fuel cut ${"%.1f".format(java.util.Locale.US, t.fuelCutS)} s",
+                    modifier = Modifier.testTag("sim_readout_times"),
+                )
                 Text(
                     "Accel: " + (i.accelMps2?.let { "%.2f m/s²".format(java.util.Locale.US, it) } ?: "–") +
                         " · fuel cut ${flag(i.fuelCut)} · idle ${flag(i.idling)} · eco ${flag(i.eco)}",
