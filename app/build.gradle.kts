@@ -49,6 +49,14 @@ dependencies {
     implementation(project(":core:designsystem"))
     implementation(project(":feature:home"))
     implementation(project(":feature:settings"))
+    implementation(project(":core:common"))
+    implementation(project(":core:obd"))
+    implementation(project(":core:bluetooth"))
+    // Simulated ELM327 + Simulator screen: debug only, never on the release classpath.
+    debugImplementation(project(":core:simulator"))
+    debugImplementation(libs.androidx.hilt.navigation.compose)
+    debugImplementation(libs.androidx.lifecycle.viewmodel.compose)
+    debugImplementation(libs.androidx.datastore.preferences)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -3,12 +3,10 @@ package io.github.neotheon3.orangebox.feature.home
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,11 +40,17 @@ data class HomeMenuEntry(val label: String, val testTag: String, val onClick: ()
 fun HomeRoute(
     onOpenSettings: () -> Unit,
     extraMenuEntries: List<HomeMenuEntry> = emptyList(),
-    obdContent: (@Composable () -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    HomeScreen(state, onOpenSettings, extraMenuEntries, obdContent)
+    HomeScreen(
+        state = state,
+        onOpenSettings = onOpenSettings,
+        extraMenuEntries = extraMenuEntries,
+        onObdConnect = viewModel::onConnect,
+        onObdRetry = viewModel::onRetry,
+        onObdDisconnect = viewModel::onDisconnect,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,7 +59,9 @@ fun HomeScreen(
     state: HomeUiState,
     onOpenSettings: () -> Unit,
     extraMenuEntries: List<HomeMenuEntry> = emptyList(),
-    obdContent: (@Composable () -> Unit)? = null,
+    onObdConnect: () -> Unit = {},
+    onObdRetry: () -> Unit = {},
+    onObdDisconnect: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -99,12 +105,7 @@ fun HomeScreen(
                     modifier = Modifier.testTag("home_remote_warning"),
                 )
             }
-            Card(modifier = Modifier.fillMaxWidth().testTag("home_obd_card")) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.home_obd_title), style = MaterialTheme.typography.titleMedium)
-                    if (obdContent != null) obdContent() else Text(stringResource(R.string.home_obd_placeholder))
-                }
-            }
+            ObdStatusCard(state.obd, onObdConnect, onObdRetry, onObdDisconnect)
         }
     }
 }

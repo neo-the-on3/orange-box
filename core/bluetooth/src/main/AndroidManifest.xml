@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Classic Bluetooth SPP to bonded OBD dongles. Discovery/scan arrives with pairing (M3). -->
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+
+    <!-- API 24-30 -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <!-- API 31+: runtime permission, checked before every use -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+</manifest>

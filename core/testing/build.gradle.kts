@@ -15,3 +15,11 @@ dependencies {
     api(libs.robolectric)
     api(libs.androidx.test.core)
 }
+
+dependencies {
+    api(testFixtures(project(":core:obd")))
+}
+
+dependencies {
+    api(project(":core:obd"))
+}
