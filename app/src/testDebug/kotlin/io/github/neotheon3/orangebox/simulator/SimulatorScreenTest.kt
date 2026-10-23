@@ -48,6 +48,8 @@ class SimulatorScreenTest {
         override fun injectDtc(code: String) = controller.injectDtc(code).also { ui = ui.copy(sim = controller.state.value) }
         override fun clearDtcs() { controller.clearDtcs(); ui = ui.copy(sim = controller.state.value) }
         override fun setBackendMode(mode: BackendMode) { ui = ui.copy(backendMode = mode) }
+        override fun startScript(id: String) { calls += "script=$id"; controller.update { it.copy(runningScript = id) }; ui = ui.copy(sim = controller.state.value) }
+        override fun stopScript() { calls += "stop"; controller.update { it.copy(runningScript = null) }; ui = ui.copy(sim = controller.state.value) }
         override fun reset() { controller.reset(); ui = ui.copy(sim = controller.state.value); calls += "reset" }
     }
 
@@ -104,6 +106,15 @@ class SimulatorScreenTest {
         click("sim_garbled"); slide("sim_speed", 120f)
         click("sim_reset")
         assertEquals(SimulatorState(), sim)
+    }
+    @Test fun `throttle slider`() { slide("sim_throttle", 35f); assertEquals(35, sim.throttlePercent) }
+    @Test fun `drive scripts start and stop`() {
+        click("sim_script_city")
+        compose.onNodeWithTag("sim_script_status").assertTextContains("City", substring = true)
+        click("sim_script_highway"); click("sim_script_idle"); click("sim_script_harsh")
+        click("sim_script_stop")
+        compose.onNodeWithTag("sim_script_status").assertTextContains("No script running")
+        assertEquals(listOf("script=city", "script=highway", "script=idle", "script=harsh", "stop"), calls)
     }
     @Test fun `back`() { compose.onNodeWithTag("sim_back").performClick(); assertEquals(listOf("back"), calls) }
 

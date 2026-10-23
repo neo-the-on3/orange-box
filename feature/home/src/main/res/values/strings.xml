@@ -32,4 +32,19 @@
     <string name="obd_error_permission">Bluetooth permission needed</string>
     <string name="obd_error_timeout">Adapter did not respond</string>
     <string name="obd_error_io">Connection error</string>
+
+    <string name="live_title">Live data</string>
+    <string name="live_waiting">Reading supported PIDs…</string>
+    <string name="live_speed">Speed: %1$s km/h</string>
+    <string name="live_rpm">RPM: %1$s</string>
+    <string name="live_coolant">Coolant: %1$s °C</string>
+    <string name="live_fuel_level">Fuel level: %1$s %%</string>
+    <string name="live_fuel_flow">Fuel flow: %1$s L/h</string>
+    <string name="live_economy">Economy: %1$s L/100 km</string>
+    <string name="live_trip">Distance this session: %1$s km</string>
+    <string name="live_fuel_cut">Fuel cut (coasting)</string>
+    <string name="warn_coolant">Engine coolant is overheating</string>
+    <string name="warn_low_battery">Battery voltage is low</string>
+    <string name="warn_over_voltage">Charging voltage is too high</string>
+    <string name="warn_low_fuel">Fuel level is low</string>
 </resources>

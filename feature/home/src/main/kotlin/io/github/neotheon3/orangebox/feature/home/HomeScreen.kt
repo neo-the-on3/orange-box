@@ -106,6 +106,7 @@ fun HomeScreen(
                 )
             }
             ObdStatusCard(state.obd, onObdConnect, onObdRetry, onObdDisconnect)
+            if (state.obd is io.github.neotheon3.orangebox.core.obd.ObdConnectionState.Connected) LiveDataCard(state.live)
         }
     }
 }

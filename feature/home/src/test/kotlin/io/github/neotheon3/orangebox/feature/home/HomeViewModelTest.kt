@@ -16,7 +16,7 @@ class HomeViewModelTest {
 
     @Test fun `reflects backend mode and remote warning`() = runTest {
         val repo = FakeBackendConfigRepository()
-        val vm = HomeViewModel(repo, io.github.neotheon3.orangebox.core.testing.FakeObdConnection())
+        val vm = HomeViewModel(repo, io.github.neotheon3.orangebox.core.testing.FakeObdConnection(), io.github.neotheon3.orangebox.core.testing.FakeTelemetrySource())
         vm.uiState.test {
             var s = awaitItem()
             if (s.loading) s = awaitItem()

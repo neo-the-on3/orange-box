@@ -11,6 +11,8 @@ import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvents
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionManager
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
+import io.github.neotheon3.orangebox.core.simulator.DriveScript
+import io.github.neotheon3.orangebox.core.simulator.DriveScriptPlayer
 import io.github.neotheon3.orangebox.core.simulator.SimulatorController
 import io.github.neotheon3.orangebox.core.simulator.SimulatorState
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,6 +39,8 @@ interface SimulatorActions {
     fun injectDtc(code: String): Boolean
     fun clearDtcs()
     fun setBackendMode(mode: BackendMode)
+    fun startScript(id: String)
+    fun stopScript()
     fun reset()
 }
 
@@ -47,6 +51,7 @@ class SimulatorViewModel @Inject constructor(
     private val linkEvents: DongleLinkEvents,
     private val backend: BackendConfigRepository,
     manager: ObdConnectionManager,
+    private val player: DriveScriptPlayer,
 ) : ViewModel(), SimulatorActions {
     val uiState: StateFlow<SimulatorUiState> = combine(
         controller.state, manager.state, manager.lastLinkEvent, backend.config, dongles.selected,
@@ -69,7 +74,11 @@ class SimulatorViewModel @Inject constructor(
     override fun clearDtcs() = controller.clearDtcs()
     override fun setBackendMode(mode: BackendMode) { viewModelScope.launch { backend.setMode(mode) } }
 
+    override fun startScript(id: String) { DriveScript.byId(id)?.let(player::start) }
+    override fun stopScript() = player.stop()
+
     override fun reset() {
+        player.stop()
         val wasSimulated = uiState.value.simulatedSelected
         controller.reset()
         if (wasSimulated) viewModelScope.launch { dongles.select(null) }

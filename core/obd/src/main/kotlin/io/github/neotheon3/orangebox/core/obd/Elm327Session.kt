@@ -95,25 +95,27 @@ class Elm327Session(
         return parseResponse(command(cmd), 0x01, pid, minBytes)
     }
 
-    /** Stored DTCs via mode 03, e.g. `["P0133"]`. Garbled frames are dropped; returns null if nothing readable. */
-    suspend fun readDtcs(): List<String>? {
-        val raw = command("03")
-        if (raw.contains("NO DATA", ignoreCase = true)) return emptyList()
-        val isCan = info?.protocol?.isCan ?: true
-        val codes = mutableListOf<String>()
-        var anyValid = false
-        for (line in raw.lines()) {
-            val bytes = hexBytes(line) ?: continue
-            if (bytes.isEmpty() || bytes[0] != 0x43) continue
-            anyValid = true
-            var data = bytes.drop(1)
-            if (isCan && data.isNotEmpty()) data = data.drop(1) // CAN frames carry a DTC count byte
-            data.chunked(2).filter { it.size == 2 }.forEach { (a, b) ->
-                if (a != 0 || b != 0) codes += decodeDtc(a, b)
-            }
+    /** DTCs of [kind] (mode 03/07/0A), e.g. `["P0133"]`. Null if the response was unreadable. */
+    suspend fun readDtcs(kind: DtcKind = DtcKind.STORED): List<String>? =
+        DtcDecoder.decode(command(kind.command), kind, isCan = info?.protocol?.isCan ?: true)
+
+    /** VIN via mode 09 PID 02. */
+    suspend fun readVin(): VinDecoder.Result = VinDecoder.decode(command("0902"))
+
+    /** Supported mode 01 PIDs, following the 00/20/40/… bitmap chain. */
+    suspend fun readSupportedPids(): io.github.neotheon3.orangebox.core.obd.pid.SupportedPids {
+        val bitmaps = linkedMapOf<Int, IntArray>()
+        for (base in io.github.neotheon3.orangebox.core.obd.pid.SupportedPids.BITMAP_BASES) {
+            val data = requestPid(base, minBytes = 4) ?: break
+            bitmaps[base] = data
+            if (data[3] and 0x01 == 0) break // next bitmap not supported
         }
-        return if (anyValid) codes else null
+        return io.github.neotheon3.orangebox.core.obd.pid.SupportedPids.fromBitmaps(bitmaps)
     }
+
+    /** Reads and decodes one PID; null for unsupported/garbled answers. */
+    suspend fun read(pid: io.github.neotheon3.orangebox.core.obd.pid.ObdPid): Double? =
+        pid.decodeOrNull(requestPid(pid.pid, minBytes = pid.bytes))
 
     /** Clears DTCs and the MIL via mode 04. Returns true if the adapter acknowledged. */
     suspend fun clearDtcs(): Boolean = command("04").lines().any { hexBytes(it)?.firstOrNull() == 0x44 }

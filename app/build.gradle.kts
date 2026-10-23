@@ -52,6 +52,7 @@ dependencies {
     implementation(project(":core:common"))
     implementation(project(":core:obd"))
     implementation(project(":core:bluetooth"))
+    implementation(project(":core:telemetry"))
     // Simulated ELM327 + Simulator screen: debug only, never on the release classpath.
     debugImplementation(project(":core:simulator"))
     debugImplementation(libs.androidx.hilt.navigation.compose)

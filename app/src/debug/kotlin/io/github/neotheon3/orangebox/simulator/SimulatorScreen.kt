@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.neotheon3.orangebox.core.model.BackendMode
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
+import io.github.neotheon3.orangebox.core.simulator.DriveScript
 import io.github.neotheon3.orangebox.core.simulator.SimulatorState
 import kotlin.math.roundToInt
 
@@ -97,11 +98,28 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
                 OutlinedButton(onClick = actions::linkDisconnected, modifier = Modifier.testTag("sim_link_disconnected")) { Text("BT disconnected") }
             }
 
+            Section("Drive scripts")
+            Text(
+                sim.runningScript?.let { id -> "Playing: " + (DriveScript.byId(id)?.label ?: id) } ?: "No script running",
+                modifier = Modifier.testTag("sim_script_status"),
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DriveScript.ALL.forEach { script ->
+                    OutlinedButton(onClick = { actions.startScript(script.id) }, modifier = Modifier.testTag("sim_script_${script.id}")) {
+                        Text(script.label)
+                    }
+                }
+                Button(onClick = actions::stopScript, enabled = sim.runningScript != null, modifier = Modifier.testTag("sim_script_stop")) {
+                    Text("Stop script")
+                }
+            }
+
             Section("Vehicle")
             ToggleRow("Engine on", sim.engineOn, "sim_engine") { v -> actions.update { it.copy(engineOn = v) } }
             SliderRow("Speed", sim.speedKph, "km/h", SimulatorState.SPEED_RANGE, "sim_speed") { v -> actions.update { it.copy(speedKph = v) } }
             SliderRow("RPM", sim.rpm, "rpm", SimulatorState.RPM_RANGE, "sim_rpm") { v -> actions.update { it.copy(rpm = v) } }
             SliderRow("Coolant", sim.coolantC, "°C", SimulatorState.COOLANT_RANGE, "sim_coolant") { v -> actions.update { it.copy(coolantC = v) } }
+            SliderRow("Throttle", sim.throttlePercent, "%", SimulatorState.THROTTLE_RANGE, "sim_throttle") { v -> actions.update { it.copy(throttlePercent = v) } }
             SliderRow("Fuel", sim.fuelPercent, "%", SimulatorState.FUEL_RANGE, "sim_fuel") { v -> actions.update { it.copy(fuelPercent = v) } }
 
             Section("Diagnostics")

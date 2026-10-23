@@ -19,12 +19,15 @@ class SimulatedElm327(private val controller: SimulatorController) {
         return when {
             cmd == "ATZ" -> { searched = false; "ELM327 v1.5" }
             cmd == "ATI" -> "ELM327 v1.5"
-            cmd == "ATRV" -> if (s.engineOn) "14.1V" else "12.4V"
+            cmd == "ATRV" -> "%.1fV".format(java.util.Locale.US, voltage(s))
             cmd == "ATDPN" -> if (searched && !s.unsupportedProtocol) "A6" else "A0"
             cmd.startsWith("AT") -> "OK"
             s.unsupportedProtocol -> "SEARCHING...\nUNABLE TO CONNECT"
-            cmd == "03" -> mode03(s)
+            cmd == "03" -> dtcResponse(0x43, s.dtcs)
+            cmd == "07" -> dtcResponse(0x47, s.pendingDtcs)
+            cmd == "0A" -> dtcResponse(0x4A, emptyList())
             cmd == "04" -> { controller.clearDtcs(); "44" }
+            cmd == "0902" -> vinResponse(SimulatorState.VIN)
             cmd.length == 4 && cmd.startsWith("01") -> mode01(cmd.substring(2), s)
             else -> "?"
         }
@@ -34,27 +37,95 @@ class SimulatedElm327(private val controller: SimulatorController) {
         val pid = pidHex.toIntOrNull(16) ?: return "?"
         val firstSearch = !searched
         searched = true
-        val data = when (pid) {
-            0x00 -> "BE3EB811" // 01-1F supported incl. 01, 04, 05, 0C, 0D, 2F-range flag
-            0x01 -> "%02X076500".format((if (s.milOn) 0x80 else 0) or s.dtcs.size.coerceAtMost(0x7F))
-            0x04 -> "%02X".format(if (s.engineOn) 0x33 else 0)
-            0x05 -> "%02X".format((s.coolantC + 40).coerceIn(0, 255))
-            0x0C -> "%04X".format((s.effectiveRpm * 4).coerceIn(0, 0xFFFF))
-            0x0D -> "%02X".format(if (s.engineOn) s.speedKph.coerceIn(0, 255) else 0)
-            0x20 -> "80000001"
-            0x2F -> "%02X".format((s.fuelPercent * 255 + 50) / 100)
-            else -> return "NO DATA"
+        val data = when {
+            pid in BITMAP_BASES -> bitmap(pid)
+            pid !in SUPPORTED -> return "NO DATA"
+            else -> pidData(pid, s)
         }
         val line = "41%02X%s".format(pid, data)
         return if (firstSearch) "SEARCHING...\n$line" else line
     }
 
-    private fun mode03(s: SimulatorState): String {
-        if (s.dtcs.isEmpty()) return "4300"
-        val sb = StringBuilder("43%02X".format(s.dtcs.size))
-        s.dtcs.mapNotNull { Elm327Session.encodeDtc(it) }.forEach { (a, b) -> sb.append("%02X%02X".format(a, b)) }
-        return sb.toString()
+    private fun pidData(pid: Int, s: SimulatorState): String {
+        val m = EngineModel(s)
+        return when (pid) {
+            0x01 -> "%02X076500".format((if (s.milOn) 0x80 else 0) or s.dtcs.size.coerceAtMost(0x7F))
+            0x03 -> "%02X00".format(m.fuelSystemStatus)
+            0x04 -> "%02X".format(pctByte(m.loadPercent))
+            0x05 -> "%02X".format((s.coolantC + 40).coerceIn(0, 255))
+            0x0B -> "%02X".format(m.mapKpa.toInt().coerceIn(0, 255))
+            0x0C -> "%04X".format((s.effectiveRpm * 4).coerceIn(0, 0xFFFF))
+            0x0D -> "%02X".format(if (s.engineOn) s.speedKph.coerceIn(0, 255) else 0)
+            0x0F -> "%02X".format(INTAKE_C + 40)
+            0x10 -> "%04X".format((m.mafGps * 100).toInt().coerceIn(0, 0xFFFF))
+            0x11 -> "%02X".format(pctByte(s.throttlePercent.toDouble()))
+            0x2F -> "%02X".format(pctByte(s.fuelPercent.toDouble()))
+            0x33 -> "%02X".format(BARO_KPA)
+            0x42 -> "%04X".format((voltage(s) * 1000).toInt())
+            0x46 -> "%02X".format(AMBIENT_C + 40)
+            0x51 -> "01" // gasoline
+            0x5C -> "%02X".format((s.coolantC + 5 + 40).coerceIn(0, 255))
+            else -> return "NO DATA"
+        }
     }
+
+    private fun voltage(s: SimulatorState) = if (s.engineOn) 14.1 else 12.4
+
+    private fun bitmap(base: Int): String {
+        var bits = 0L
+        for (pid in SUPPORTED) if (pid in base + 1..base + 32) bits = bits or (1L shl (32 - (pid - base)))
+        if (BITMAP_BASES.any { it == base + 0x20 } && SUPPORTED.any { it > base + 0x20 }) bits = bits or 1L
+        return "%08X".format(bits)
+    }
+
+    /** CAN: single frame up to 7 bytes, otherwise ISO-TP multi-frame as printed by the ELM327 (CAF on, headers off). */
+    private fun dtcResponse(header: Int, codes: List<String>): String {
+        val payload = mutableListOf(header, codes.size)
+        codes.mapNotNull { Elm327Session.encodeDtc(it) }.forEach { (a, b) -> payload += a; payload += b }
+        return canMessage(payload)
+    }
+
+    private fun vinResponse(vin: String): String = canMessage(listOf(0x49, 0x02, 0x01) + vin.map { it.code })
+
+    companion object {
+        val BITMAP_BASES = setOf(0x00, 0x20, 0x40)
+        val SUPPORTED = sortedSetOf(0x01, 0x03, 0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2F, 0x33, 0x42, 0x46, 0x51, 0x5C)
+        const val INTAKE_C = 30
+        const val AMBIENT_C = 22
+        const val BARO_KPA = 101
+
+        private fun pctByte(p: Double) = (p * 255 / 100).toInt().coerceIn(0, 255)
+
+        fun canMessage(payload: List<Int>): String {
+            fun hex(bytes: List<Int>) = bytes.joinToString("") { "%02X".format(it) }
+            if (payload.size <= 7) return hex(payload)
+            val sb = StringBuilder("%03X".format(payload.size))
+            sb.append("\n0:").append(hex(payload.take(6)))
+            payload.drop(6).chunked(7).forEachIndexed { i, chunk ->
+                sb.append("\n").append("%X".format((i + 1) % 16)).append(":").append(hex(chunk + List(7 - chunk.size) { 0 }))
+            }
+            return sb.toString()
+        }
+    }
+}
+
+/**
+ * Toy engine model so derived metrics behave plausibly: a 1.6 L petrol engine.
+ * MAF ≈ RPM/120 · 1.6 L · 1.18 g/L · VE, with VE rising from 0.2 (closed throttle) to 1.0 (wide open).
+ * Closed throttle above 20 km/h and 1100 rpm reports decel fuel cut (PID 03 = 0x04).
+ */
+internal class EngineModel(s: SimulatorState) {
+    private val rpm = s.effectiveRpm.toDouble()
+    val fuelCut = s.engineOn && s.throttlePercent == 0 && s.speedKph >= 20 && rpm >= 1100
+    val fuelSystemStatus = when {
+        !s.engineOn -> 0x00
+        fuelCut -> 0x04
+        else -> 0x02
+    }
+    private val ve = if (fuelCut) 0.12 else 0.2 + 0.8 * s.throttlePercent / 100.0
+    val mafGps = if (!s.engineOn) 0.0 else rpm / 120.0 * 1.6 * 1.18 * ve
+    val loadPercent = if (!s.engineOn) 0.0 else if (fuelCut) 2.0 else (15.0 + 0.85 * s.throttlePercent).coerceAtMost(100.0)
+    val mapKpa = if (!s.engineOn) SimulatedElm327.BARO_KPA.toDouble() else 28.0 + 0.73 * s.throttlePercent
 }
 
 /**
