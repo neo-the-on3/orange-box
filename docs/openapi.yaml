@@ -1,0 +1,891 @@
+openapi: 3.1.0
+info:
+  title: CarooLive Connected-Car Backend (reverse-documented from client code)
+  version: 0.1.0-derived
+  summary: Backend contract inferred strictly from the Android client at github.com/Pokevian/caroolive-app (commit c358d9c, 2017-09-04).
+  description: |
+    This spec documents ONLY what the legacy Android client sends and parses. It is derived from:
+      - app/src/main/java/com/pokevian/app/smartfleet/setting/ServerUrl.java   (all URLs)
+      - app/src/main/java/com/pokevian/app/smartfleet/request/*.java           (request builders)
+      - app/src/main/java/com/pokevian/app/smartfleet/volley/GsonRequest.java  (transport: always HTTP POST, form-encoded, Gson, 5 s timeout, 2 retries)
+      - app/src/main/java/com/pokevian/app/smartfleet/service/DataUploadService.java (telemetry upload)
+      - app/libs/caroo-smart-model_1.3.14.jar (closed DTO jar; field names recovered from class files, Gson serialises field names verbatim)
+
+    IMPORTANT CHARACTERISTICS OF THE LEGACY API
+      * RPC style, not REST. Most calls go to a single URL (`/smart.json`) and are multiplexed by a form field `cmd`.
+        The payload is a form field `data` that contains a JSON *string*. Because OpenAPI cannot key operations
+        on a body field, each command is modelled as one `oneOf` branch with `cmd` as a `const`, and the
+        full command catalogue is also listed in `x-commands`.
+      * Dates inside `data` JSON use the Gson pattern `yyyy-MM-dd HH:mm:ss` in device-local time (no zone) —
+        GsonRequest.GsonDateTypeAdapter.
+      * Enum-typed fields are serialised by Gson as the Java enum constant name (e.g. `"Y"`, `"opened"`).
+      * Success is signalled in-band: `SmartResponse.result == "OK"` (else `"ERROR"`), HTTP status is not inspected.
+      * Authentication: there is NO password or token. The client calls `checkMember` with a `loginId`
+        (the Google/Facebook account e-mail) and then `POST /mbrLogin.do cmd=login.json`, which establishes a
+        server session cookie that is copied into the WebView CookieManager (SignInRequest.sessionLogin).
+        Most `/smart.json` calls carry no credentials at all other than `memberNo` in the body.
+        A re-implementation MUST NOT copy this scheme (see `x-security-notes`).
+      * Two hosts/ports: service server (`:9801`) and gathering (telemetry) server (`:9701`). Both originals were
+        plain HTTP to a raw IP and were unreachable when tested on 2026-10-23.
+      * Many user-facing "connected" screens are server-rendered HTML pages shown in a WebView with a JS bridge
+        (`androidInterface`). They are listed under `x-webview-pages`, not as JSON operations.
+  license:
+    name: Apache-2.0 (spec text). The described legacy service is proprietary to Pokevian Inc.
+    identifier: Apache-2.0
+x-security-notes:
+  - Identity is asserted by the client (loginId = e-mail) with no server-side verification of a Google/Facebook token.
+  - Transport is cleartext HTTP; the client also installs a trust-all SSLContext (VolleySingleton.trustAllSSLContext).
+  - memberNo in request bodies is trusted by the server for authorisation (inferred).
+  - Recommendation for a new server - require OAuth2/OIDC bearer tokens (verify Google ID token server-side), HTTPS only, derive memberNo from the token.
+servers:
+  - url: http://14.63.216.111:9801
+    description: Legacy SERVICE server (ServerUrl.SERVICE_SERVER_BASE_URL). Unreachable as of 2026-10-23.
+  - url: http://14.63.216.111:9701
+    description: Legacy GATHERING (telemetry) server (ServerUrl.GATHERING_SERVER_BASE_URL); only `/smart.json` with cmd=carMessage is sent here. Unreachable as of 2026-10-23.
+  - url: '{baseUrl}'
+    description: Configurable base URL for a re-implemented server.
+    variables:
+      baseUrl:
+        default: https://api.example.invalid
+tags:
+  - name: rpc
+    description: Command-multiplexed endpoint /smart.json
+  - name: session
+    description: Web-session login/logout used to seed WebView cookies
+  - name: stats
+    description: Ranking / statistics JSON endpoints (/api/v2/...)
+  - name: web-json
+    description: JSON endpoints that live under the web (/m/...) controllers and require the session cookie
+x-commands:
+  # cmd value -> request DTO (inside `data`) -> response DTO ; source file (legacy repo) ; used by legacy UI
+  - cmd: checkMember
+    server: service
+    request: "SmartMember{loginId}"
+    response: "SmartMember"
+    source: "request/SignInRequest.java"
+    used: true
+  - cmd: regMember
+    server: service
+    request: "SmartMember"
+    response: "SmartResponse(memberNo)"
+    source: "request/SignUpRequest.java"
+    used: true
+  - cmd: withdrawMember
+    server: service
+    request: "SmartMember{memberNo}"
+    response: "SmartResponse"
+    source: "request/WithdrawalRequest.java"
+    used: true
+  - cmd: getMemberCarList
+    server: service
+    request: "SmartMemberCarList{memberNo}"
+    response: "SmartMemberCarList"
+    source: "request/GetVehicleListRequest.java"
+    used: true
+  - cmd: insertCar
+    server: service
+    request: "SmartCar"
+    response: "SmartResponse"
+    source: "request/RegisterVehicleRequest.java"
+    used: true
+  - cmd: updateCar
+    server: service
+    request: "SmartCar"
+    response: "SmartResponse"
+    source: "request/UpdateVehicleRequest.java + RegisterVehicleRequest.java (deactivate old car with activeYn=N)"
+    used: true
+  - cmd: getCarModelList
+    server: service
+    request: "SmartCarModelList{searchParam}"
+    response: "SmartCarModelList"
+    source: "request/GetVehicle{Maker,Type,Model,Fuel,Displacement,ReleaseYear}ListRequest.java + GetVehicleModelRequest.java"
+    used: true
+  - cmd: getCodeList
+    server: service
+    request: "SmartCodeList{grpCd}"
+    response: "SmartCodeList"
+    source: "request/GetCountryCodeListRequest.java (grpCd=CountryCd), GetRegionCodeListRequest.java (grpCd=Local<country>)"
+    used: true
+  - cmd: carMessage
+    server: gathering
+    request: "base64(gzip(JSON SmartMessageList))"
+    response: "SmartResponse"
+    source: "service/DataUploadService.java (+TripManager.java)"
+    used: true
+paths:
+  /smart.json:
+    post:
+      tags: [rpc]
+      operationId: smartRpc
+      summary: Command-multiplexed RPC endpoint (service server; also gathering server for cmd=carMessage)
+      description: |
+        Every request is `application/x-www-form-urlencoded` with fields `cmd` and `data` (JSON string).
+        For `cmd=carMessage` the request goes to the GATHERING server, `data` is base64(gzip(UTF-8 JSON)) and `zipFlag=Y`
+        (util/GZipUtils.compress). Responses are JSON; the shape depends on `cmd` (see `x-commands`).
+        Client does not send any auth header (VolleyHeaders are never populated for these calls).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/Cmd_checkMember'
+                - $ref: '#/components/schemas/Cmd_regMember'
+                - $ref: '#/components/schemas/Cmd_withdrawMember'
+                - $ref: '#/components/schemas/Cmd_getMemberCarList'
+                - $ref: '#/components/schemas/Cmd_insertCar'
+                - $ref: '#/components/schemas/Cmd_updateCar'
+                - $ref: '#/components/schemas/Cmd_getCarModelList'
+                - $ref: '#/components/schemas/Cmd_getCodeList'
+                - $ref: '#/components/schemas/Cmd_carMessage'
+              discriminator:
+                propertyName: cmd
+      responses:
+        '200':
+          description: In-band result. Check `result` (top level for SmartResponse, or `response.result` for list/member wrappers).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SmartResponse'
+                  - $ref: '#/components/schemas/SmartMember'
+                  - $ref: '#/components/schemas/SmartMemberCarList'
+                  - $ref: '#/components/schemas/SmartCarModelList'
+                  - $ref: '#/components/schemas/SmartCodeList'
+  /mbrLogin.do:
+    post:
+      tags: [session]
+      operationId: webSession
+      summary: Create or destroy the web session (cookie) used by WebView pages and cookie-queue requests
+      description: |
+        `cmd=login.json` with `data` = MemberSession{loginId} (SignInRequest.sessionLogin, sent via Apache DefaultHttpClient);
+        the client harvests all Set-Cookie values and copies them into android.webkit.CookieManager and Volley's cookie store.
+        `cmd=logout.json` (no data) returns SmartResponse (SignOutRequest.java).
+        x-inferred: cookie name is not visible in client code (likely a Java servlet JSESSIONID).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - type: object
+                  required: [cmd, data]
+                  properties:
+                    cmd: {const: login.json}
+                    data:
+                      type: string
+                      contentMediaType: application/json
+                      contentSchema: {$ref: '#/components/schemas/MemberSession'}
+                - type: object
+                  required: [cmd]
+                  properties:
+                    cmd: {const: logout.json}
+      responses:
+        '200':
+          description: login.json - response body is ignored by the client, only cookies matter. logout.json - SmartResponse.
+          headers:
+            Set-Cookie:
+              description: Session cookie (x-inferred name).
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SmartResponse'}
+  /api/v2/trip/stats/getRanking.do:
+    post:
+      tags: [stats]
+      operationId: getRanking
+      summary: Member ranking (request/GetRankingRequest.java; used by ui/rank/GetRankingDialogFragment & GetWeeklyRankingDialogFragment)
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [memberNo]
+              properties:
+                memberNo: {type: string}
+                period: {type: string, description: 'x-inferred values; the only literal seen in client code is "weekly"'}
+                date: {type: string, pattern: '^[0-9]{8}$', description: yyyyMMdd}
+      responses:
+        '200':
+          description: Array of Rank
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Rank'}}
+  /api/v2/trip/stats/getScoreStar.do:
+    post:
+      tags: [stats]
+      operationId: getScoreStar
+      x-used-by-app: false
+      summary: Driving-pattern score stars (request/GetScoreStarRequest.java - class exists but is not referenced by any UI)
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                memberNo: {type: string}
+                period: {type: string}
+                date: {type: string, description: yyyyMMdd}
+      responses:
+        '200':
+          description: ScoreRank
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ScoreRank'}
+  /api/v2/trip/ranking/getBestTripRankingList.do:
+    post:
+      tags: [stats]
+      operationId: getBestTripRankingList
+      x-used-by-app: false
+      summary: Best-trip ranking list (request/GetBestTripListRequest.java - unused by UI)
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                date: {type: string, description: yyyyMMdd}
+                period: {type: string}
+                limit: {type: string}
+      responses:
+        '200':
+          description: Array of MemberEcoData
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/MemberEcoData'}}
+  /api/v2/trip/ranking/getBestTripMyRanking.do:
+    post:
+      tags: [stats]
+      operationId: getBestTripMyRanking
+      x-used-by-app: false
+      summary: Caller's best-trip ranking (request/GetBestTripRequest.java - unused by UI)
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                date: {type: string}
+                period: {type: string}
+                memberNo: {type: string}
+      responses:
+        '200':
+          description: MemberEcoData
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MemberEcoData'}
+  /api/v2/trip/stats/{top10Kind}:
+    post:
+      tags: [stats]
+      operationId: getTop10Ranking
+      x-used-by-app: false
+      summary: Top-10 rankings (ServerUrl.GET_RANKING_TOP10_*; built by request/GetRankingListRequest.java, which no UI references)
+      parameters:
+        - name: top10Kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - getDrivingScoreRankingTop10.do
+              - getEcoSpeedRankingTop10.do
+              - getFuelCutRankingTop10.do
+              - getHarshSpeedRankingTop10.do
+              - getLevelRankingTop10.do
+              - getPointRankingTop10.do
+              - getFuelSaveRankingTop10.do
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                period: {type: string, description: '"weekly" for weekly variant'}
+                date: {type: string, description: yyyyMMdd}
+                order: {type: string, description: '"acc" for accumulated order variant'}
+      responses:
+        '200':
+          description: Array of ScoreRank
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/ScoreRank'}}
+  /m/trip.do:
+    post:
+      tags: [web-json]
+      operationId: getDrivingDates
+      summary: Dates on which the member has trips (cmd=qSelectUserDrivingTripDate as URL query; request/GetDrivingDateRequest.java; cookie session via getRequestQueueForCookie)
+      parameters:
+        - name: cmd
+          in: query
+          required: true
+          schema: {const: qSelectUserDrivingTripDate}
+      security: [{sessionCookie: []}]
+      responses:
+        '200':
+          description: DrivingDate
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DrivingDate'}
+  /m/board.do:
+    post:
+      tags: [web-json]
+      operationId: getNoticeCategories
+      x-used-by-app: false
+      summary: Notice board categories (cmd=qSelectCategoryList; request/GetNoticeCategoryRequest.java - call site commented out in TripMonitorFragment)
+      parameters:
+        - name: cmd
+          in: query
+          required: true
+          schema: {const: qSelectCategoryList}
+      security: [{sessionCookie: []}]
+      responses:
+        '200':
+          description: NoticeCategory
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NoticeCategory'}
+x-webview-pages:
+  description: Server-rendered HTML pages loaded in WebViews (ui/tripmonitor/*, ui/web/*, ui/common/WebViewFragment, ui/main/MainActivity). Require session cookie. JS bridge object `androidInterface` exposes sessionClosed(), onReady(url), onStart(url), onComplete(url); app calls back into page JS (e.g. `javascript:getUserEcoData(date, "day")`, `javascript:setCategory()`). Not reproducible from client code; the rewrite should replace them with native screens over local data.
+  pages:
+    - /m/view.do?cmd=vDashboard
+    - /m/view.do?cmd=vWeekRanking
+    - /m/view.do?cmd=vEventObd
+    - /m/view.do?cmd=vMemberPointLog
+    - /m/view.do?cmd=vCarStatusCheck
+    - /m/view.do?cmd=vDrivingPattern
+    - /m/view.do?cmd=vMemberRanking
+    - /m/view.do?cmd=vHallOfFamePoint
+    - /m/view.do?cmd=vCarDiagList
+    - /m/view.do?cmd=vInfoMaximizeMap   # referenced by substring only
+    - /m/view.do?cmd=vObdPurchase       # referenced by substring only
+    - /m/chart.do?cmd=vDrivingStatisticsChart
+    - /m/chart.do?cmd=vEcoChart
+    - /m/chart.do?cmd=vFuelEconomyChart
+    - /m/chart.do?cmd=vFuelCostsChart
+    - /m/chart.do?cmd=vDrivingRatiosChart
+    - /m/board.do?cmd=vBoard
+    - /web/contractDetail_01.html  # privacy terms
+    - /web/contractDetail_02.html  # service terms
+    - /web/contractDetail_03.html  # location terms
+    - /index.do                    # web login page; navigation here == session closed
+  other-assets:
+    - '{SERVICE_SERVER_BASE_URL}{SmartCar.carImageFile}  # vehicle image (model/Vehicle.java:222)'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: x-inferred cookie name. Obtained from POST /mbrLogin.do cmd=login.json.
+  schemas:
+    # ---------- command envelopes ----------
+    Cmd_checkMember:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: checkMember}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartMember'}, description: 'Only loginId is set.'}
+    Cmd_regMember:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: regMember}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartMember'}, description: 'Fields set by model/Account.toServerBean - memberNo, loginId, memberNm, email(=loginId), sexCd, birthDate, countryCd, localCd, joinRouteCd, activeYn, appVer. Response SmartResponse carries the new memberNo.'}
+    Cmd_withdrawMember:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: withdrawMember}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartMember'}, description: 'Only memberNo is set.'}
+    Cmd_getMemberCarList:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: getMemberCarList}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartMemberCarList'}, description: 'Only memberNo is set.'}
+    Cmd_insertCar:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: insertCar}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartCar'}}
+    Cmd_updateCar:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: updateCar}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartCar'}, description: 'Also used with only memberNo, carNo and activeYn=N to deactivate a previous car.'}
+    Cmd_getCarModelList:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: getCarModelList}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartCarModelList'}, description: 'searchParam narrows a cascading picker. targetField selects which distinct column is returned - maker -> type -> model -> fuel(carSrcCd) -> displacement -> releaseYear. Without targetField (GetVehicleModelRequest) the server returns the matching concrete model(s).'}
+    Cmd_getCodeList:
+      type: object
+      required: [cmd, data]
+      properties:
+        cmd: {const: getCodeList}
+        data: {type: string, contentMediaType: application/json, contentSchema: {$ref: '#/components/schemas/SmartCodeList'}, description: 'grpCd = "CountryCd" (CodeUtils.getGrpCodeName(CountryCd.class), x-inferred literal) or "Local" + countryCode, e.g. "LocalKR".'}
+    Cmd_carMessage:
+      type: object
+      required: [cmd, data, zipFlag]
+      properties:
+        cmd: {const: carMessage}
+        data:
+          type: string
+          contentEncoding: base64
+          description: base64( gzip( UTF-8 JSON of SmartMessageList ) ). Sent to the GATHERING server.
+          x-decoded-schema: {$ref: '#/components/schemas/SmartMessageList'}
+        zipFlag: {const: 'Y'}
+    # ---------- shared enums ----------
+    TwoState: {type: string, enum: ['Y', 'N']}
+    ThreeState: {type: string, enum: ['Y', 'N', 'U']}
+    GsonDate:
+      type: string
+      pattern: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$'
+      description: 'yyyy-MM-dd HH:mm:ss, device-local time, no zone (GsonRequest.GsonDateTypeAdapter).'
+    EventTpCd: {type: string, enum: [connectionWarn, auxBatteryWarn, lowFuelWarn, milWarn, coolantTempWarn, collision, harshStart, harshAccel, harshStop, harshDecel, emergency]}
+    JoinRouteCd: {type: string, enum: [google, facebook]}
+    CarSrcCd: {type: string, enum: [gasoline, diesel, lpg, electric, hybrid, gasolineLpg]}
+    CarTypeCd: {type: string, enum: [micro, subCompact, compact, midSize, fullSize, fullSizeLuxury, suv, van, sports]}
+    CarMakerCd: {type: string, enum: [hyundai, kia, ssangyong, gmDaewoo, renaultSamsung, chevrolet, toyota, volkswagen, nissan, lexus, infiniti, ford, peugeot, honda, bmw, audi, mercedesBenz, volvo, mini]}
+    TargetField: {type: string, enum: [CarMakerCd, CarTypeCd, CarModelNameCd, CarSrcCd, EngineDisplacement, ReleaseYear]}
+    TripState: {type: string, enum: [opened, updating, closed]}
+    # ---------- DTOs from caroo-smart-model_1.3.14.jar ----------
+    SmartModel:
+      type: object
+      description: Base class of all Smart* DTOs.
+      properties:
+        memberNo: {type: string}
+        carNo: {type: string}
+        aesKey: {type: string, description: never set by client}
+        regId: {type: string}
+        modId: {type: string}
+        regDate: {$ref: '#/components/schemas/GsonDate'}
+    SmartResponse:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            result: {type: string, enum: ['OK', 'ERROR']}
+            errMessage: {type: string}
+            tripNo: {type: string}
+    SmartMember:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            loginId: {type: string, description: Google account name or Facebook e-mail}
+            pwd: {type: string, description: never set by client}
+            memberNm: {type: string}
+            email: {type: string}
+            hpNo: {type: string}
+            sexCd: {type: string, enum: [male, female]}
+            sexCdName: {type: string}
+            birthDate: {$ref: '#/components/schemas/GsonDate'}
+            countryCd: {type: string, description: 'e.g. KR, US'}
+            countryCdName: {type: string}
+            localCd: {type: string}
+            localCdName: {type: string}
+            mobileCarrier: {type: string}
+            joinRouteCd: {$ref: '#/components/schemas/JoinRouteCd'}
+            joinDate: {$ref: '#/components/schemas/GsonDate'}
+            activeYn: {$ref: '#/components/schemas/TwoState'}
+            withdrawDate: {$ref: '#/components/schemas/GsonDate'}
+            appVer: {type: string}
+            carImageFile: {type: string}
+            response: {$ref: '#/components/schemas/SmartResponse'}
+    MemberSession:
+      type: object
+      properties:
+        memberNo: {type: string}
+        loginId: {type: string, description: only field set by client}
+        pwd: {type: string}
+        memberNm: {type: string}
+        joinRouteCd: {$ref: '#/components/schemas/JoinRouteCd'}
+        regDate: {$ref: '#/components/schemas/GsonDate'}
+        email: {type: string}
+        avatarImage: {type: string}
+    SmartCarModel:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            carModelNo: {type: integer}
+            carMakerCd: {type: string}
+            carMakerName: {type: string}
+            carTypeCd: {type: string}
+            carTypeName: {type: string}
+            carModelNameCd: {type: string, description: 'CarModelNameCd enum (~700 values) in jar; treat as opaque string'}
+            carModelName: {type: string}
+            carSrcCd: {type: string, description: fuel source, see CarSrcCd}
+            carFuelCd: {type: string}
+            carSrcName: {type: string}
+            engineDisplacement: {type: integer, description: cc}
+            fuelEconomy: {type: number, description: official km/L (x-inferred unit)}
+            releaseYear: {type: integer}
+            discontinuedYear: {type: integer}
+            targetField: {$ref: '#/components/schemas/TargetField'}
+    SmartCarModelList:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            searchParam: {$ref: '#/components/schemas/SmartCarModel'}
+            smartCarModelList: {type: array, items: {$ref: '#/components/schemas/SmartCarModel'}}
+            response: {$ref: '#/components/schemas/SmartResponse'}
+    SmartCar:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            carPlateNo: {type: string}
+            vin: {type: string}
+            carModel: {$ref: '#/components/schemas/SmartCarModel'}
+            odometer: {type: integer, description: km}
+            engineDistance: {type: integer, description: 'km, from PID 0x31 (x-inferred)'}
+            year: {type: integer}
+            activeYn: {$ref: '#/components/schemas/TwoState'}
+            isgYn: {$ref: '#/components/schemas/TwoState', description: idle-stop-and-go equipped}
+            carImageFile: {type: string, description: path relative to service base URL}
+            elmVer: {type: string, description: ELM327 firmware version}
+            obdMac: {type: string, description: Bluetooth MAC of OBD adapter}
+            protocol: {type: integer, description: ELM327 OBD protocol number}
+    SmartMemberCarList:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            carList: {type: array, items: {$ref: '#/components/schemas/SmartCar'}}
+            response: {$ref: '#/components/schemas/SmartResponse'}
+    SmartCode:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            code: {type: string}
+            codeName: {type: string}
+    SmartCodeList:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            grpCd: {type: string}
+            smartCodeList: {type: array, items: {$ref: '#/components/schemas/SmartCode'}}
+            response: {$ref: '#/components/schemas/SmartResponse'}
+    SmartMessageList:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          description: memberNo and carNo are set on the list; each message carries either a trip or a location (+ optional event). The legacy `video` member (dashcam/YouTube clip reference) is intentionally omitted - dashcam is out of scope for orange-box.
+          properties:
+            msgList: {type: array, items: {$ref: '#/components/schemas/SmartMessage'}}
+    SmartMessage:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            trip: {$ref: '#/components/schemas/SmartTrip'}
+            location: {$ref: '#/components/schemas/SmartRecord'}
+            event: {$ref: '#/components/schemas/SmartEvent'}
+    SmartTrip:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          description: 'Trip summary, uploaded periodically while driving (TripManager.uploadTrip) once distance >= 1 km. Fields set by client - see model/VehicleData.VehicleTrip.toServerBean. Units x-inferred - time in s, distance in km, economy in km/L.'
+          properties:
+            tripNo: {type: integer, format: int64}
+            state: {$ref: '#/components/schemas/TripState'}
+            fromDate: {$ref: '#/components/schemas/GsonDate'}
+            toDate: {$ref: '#/components/schemas/GsonDate'}
+            drivingTime: {type: integer}
+            drivingDistance: {type: number}
+            engineDistance: {type: integer}
+            maxSpeed: {type: integer}
+            avgSpeed: {type: integer}
+            maxEngineRpm: {type: integer}
+            harshAccelCount: {type: integer}
+            harshDecelCount: {type: integer}
+            harshStartCount: {type: integer}
+            harshStopCount: {type: integer}
+            fuelEconomy: {type: number}
+            fuelConsumption: {type: number}
+            fuelCut: {type: number}
+            timeInWarmUp: {type: number}
+            timeInIdle: {type: number}
+            timeInAccel: {type: number}
+            timeIn0To10: {type: number}
+            timeIn10To20: {type: number}
+            timeIn20To30: {type: number}
+            timeIn30To40: {type: number}
+            timeIn40To50: {type: number}
+            timeIn50To60: {type: number}
+            timeIn60To70: {type: number}
+            timeIn70To80: {type: number}
+            timeIn80To90: {type: number}
+            timeIn90To100: {type: number}
+            timeIn100To110: {type: number}
+            timeIn110Over: {type: number}
+            mobileCarrier: {type: string}
+            weather: {type: string}
+            ip: {type: string}
+            ecoSafePoint: {type: number}
+            safePoint: {type: number}
+            dispYn: {$ref: '#/components/schemas/TwoState'}
+            simulatedYn: {$ref: '#/components/schemas/TwoState'}
+            drivingPoint: {type: number}
+            fuelEconomyA: {type: number}
+            fuelEconomyB: {type: number}
+            fuelEconomyC: {type: number}
+            appVer: {type: string}
+            devOs: {type: string}
+            devOsVer: {type: string}
+            maxHp: {type: number}
+            maxTorq: {type: number}
+            maxHpRpm: {type: integer}
+            maxAuxV: {type: number}
+            avgAuxV: {type: number}
+            maxEct: {type: number}
+            avgEct: {type: number}
+            dtcCount: {type: integer}
+            dtcList: {type: string}
+            pendDtc: {type: string}
+            permaDtc: {type: string}
+    SmartRecord:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          description: 'Location / OBD sample. Names mirror SAE J1979 PIDs (vss=speed, ect=coolant temp, maf, map, iat, tp, fli=fuel level, auxBat=ATRV voltage ...). Client fills reportDate, latitude, longitude, vss and selected PIDs.'
+          properties:
+            reportDate: {$ref: '#/components/schemas/GsonDate'}
+            latitude: {type: string}
+            longitude: {type: string}
+            rpm: {type: number}
+            vss: {type: integer}
+            map: {type: integer}
+            iat: {type: integer}
+            maf: {type: number}
+            cer: {type: number}
+            fss1: {type: integer}
+            sftB1: {type: number}
+            loadPct: {type: number}
+            loadAbs: {type: number}
+            tp: {type: number}
+            tpRel: {type: number}
+            accelD: {type: number}
+            mil: {$ref: '#/components/schemas/TwoState'}
+            ect: {type: integer}
+            dist: {type: integer}
+            auxBat: {type: number}
+            fli: {type: number}
+            recordNo: {type: integer, format: int64}
+            dtc: {type: string}
+            xAxis: {type: number}
+            yAxis: {type: number}
+            zAxis: {type: number}
+            lftB1: {type: number}
+            ta: {type: number}
+            o2sPresent: {type: integer}
+            o2s2VB1: {type: number}
+            o2s2FtB1: {type: number}
+            obdStd: {type: integer}
+            runtime: {type: integer}
+            distMil: {type: integer}
+            frpD: {type: integer}
+            baro: {type: integer}
+            aat: {type: integer}
+            fuelType: {type: integer}
+            supportPid00: {type: integer}
+            fp: {type: integer}
+            o2s1VB1: {type: number}
+            o2s1FtB1: {type: number}
+            supportPid20: {type: integer}
+            o2s1WrLambdaEr: {type: integer}
+            o2s1WrLambdaV: {type: integer}
+            supportPid40: {type: integer}
+            eot: {type: integer}
+            validPids: {type: string}
+            diffVss: {type: number}
+            diffTime: {type: integer}
+    SmartEvent:
+      allOf:
+        - $ref: '#/components/schemas/SmartModel'
+        - type: object
+          properties:
+            connectionWarn: {$ref: '#/components/schemas/ThreeState'}
+            auxBatteryWarn: {$ref: '#/components/schemas/ThreeState'}
+            lowFuelWarn: {$ref: '#/components/schemas/ThreeState'}
+            coolantTempWarn: {$ref: '#/components/schemas/ThreeState'}
+            milWarn: {$ref: '#/components/schemas/ThreeState'}
+            dtc: {type: string}
+            eventTpCdList: {type: array, items: {$ref: '#/components/schemas/EventTpCd'}}
+            latitude: {type: string}
+            longitude: {type: string}
+    # ---------- app-side DTOs (app/src/main/java/.../model) ----------
+    Rank:
+      type: object
+      description: model/Rank.java
+      properties:
+        memberNo: {type: string}
+        tripCount: {type: integer}
+        runTime: {type: integer}
+        runDistance: {type: number}
+        fuelConsumption: {type: number}
+        fuelEconomy: {type: number}
+        harshAccelCount: {type: integer}
+        harshBrakeCount: {type: integer}
+        idlingTime: {type: number}
+        normalSpeedTime: {type: number}
+        ecoSpeedTime: {type: number}
+        overSpeedTime: {type: number}
+        fuelCutTime: {type: number}
+        highLoadTime: {type: number}
+        drivingPoint: {type: number}
+        drivingScore: {type: number}
+        drivingLevel: {type: integer}
+        scoreCount: {type: integer}
+        fuelCost: {type: [number, 'null']}
+        fuelCostSaved: {type: [number, 'null']}
+        fuelCostSaveTk: {type: [number, 'null']}
+        fuelCostTk: {type: [number, 'null']}
+        loginId: {type: string}
+        memberNm: {type: string}
+        email: {type: string}
+        localCd: {type: string}
+        localCdName: {type: string}
+        carNo: {type: string}
+        carMakerCd: {type: string}
+        carMakerName: {type: string}
+        carModelCd: {type: string}
+        carModelName: {type: string}
+        carSrcName: {type: string}
+        carFuelCd: {type: string}
+        maxSpeed: {type: [number, 'null']}
+        drivingScoreRanking: {type: integer}
+        harshSpeedRanking: {type: integer}
+        ecoSpeedRanking: {type: integer}
+        fuelCutRanking: {type: integer}
+        memberDrvPt: {type: [integer, 'null'], description: accumulated driving point}
+        memberLevPt: {type: [integer, 'null'], description: accumulated level point}
+        memberRankPt: {type: [integer, 'null'], description: accumulated ranking point}
+        memberEvtPt: {type: [integer, 'null'], description: accumulated event point}
+        memberPtAcc: {type: [integer, 'null'], description: total points earned}
+        memberPtUse: {type: [integer, 'null'], description: total points used}
+        memberPtRes: {type: [integer, 'null'], description: points remaining}
+        memberPtExp: {type: [integer, 'null'], description: points expiring}
+    ScoreRank:
+      allOf:
+        - $ref: '#/components/schemas/Rank'
+        - type: object
+          description: model/ScoreRank.java
+          properties:
+            harshSpeedScoreStar: {type: integer}
+            idlingScoreStar: {type: integer}
+            normalSpeedScoreStar: {type: integer}
+            ecoSpeedScoreStar: {type: integer}
+            overSpeedScoreStar: {type: integer}
+            highLoadScoreStar: {type: integer}
+            fuelCutScoreStar: {type: integer}
+    MemberEcoData:
+      type: object
+      description: From caroo-smart-model jar (com.pokevian.caroo.common.model.MemberEcoData extends EcoData). Only used by unused best-trip requests.
+      properties:
+        date: {type: string}
+        carNo: {type: string}
+        carSrcCd: {$ref: '#/components/schemas/CarSrcCd'}
+        tripNo: {type: string}
+        cnt: {type: integer}
+        drivingTime: {type: integer}
+        drivingDistance: {type: number}
+        fuelConsumption: {type: number}
+        maxSpeed: {type: integer}
+        avgSpeed: {type: number}
+        harshAccelCount: {type: integer}
+        harshDecelCount: {type: integer}
+        timeInIdelTime: {type: number}
+        lowSpeedTime: {type: number}
+        normalSpeedTime: {type: number}
+        economyTime: {type: number}
+        overSpeedTime: {type: number}
+        fuelCutTime: {type: number}
+        timeInAccel: {type: number}
+        overMaxSpeedCount: {type: integer}
+        maxEngineRpmCount: {type: integer}
+        oilPrice: {type: integer}
+        drivingDay: {type: string}
+        drivingHour: {type: string}
+        drivingMin: {type: string}
+        analysisData: {type: object, additionalProperties: true}
+        safeEco: {type: integer}
+        safe: {type: integer}
+        loginId: {type: string}
+        memberNo: {type: string}
+        memberNm: {type: string}
+        email: {type: string}
+        fuelEconomy: {type: number}
+        carModelNmCd: {type: string}
+        carTypeCd: {$ref: '#/components/schemas/CarTypeCd'}
+        engineDisplacement: {type: integer}
+        officalFuelEconomy: {type: number}
+        avgDrivingDistance: {type: number}
+    DrivingDate:
+      type: object
+      description: model/tripmonitor/DrivingDate.java
+      properties:
+        loginId: {type: string}
+        mod_id: {type: string}
+        cmd: {type: string}
+        reg_id: {type: string}
+        memberNo: {type: string}
+        data:
+          type: object
+          properties:
+            IsSelectUserEcoDate:
+              type: array
+              items:
+                type: object
+                properties:
+                  date: {type: string, description: x-inferred format}
+    NoticeCategory:
+      type: object
+      description: model/tripmonitor/NoticeCategory.java (upper-case DB-column style keys)
+      properties:
+        cmd: {type: string}
+        mod_id: {type: string}
+        board_tp_cd: {type: string}
+        reg_id: {type: string}
+        board_no: {type: string}
+        boardInfo:
+          type: object
+          properties:
+            MEM_COMMENT_YN: {type: string}
+            FILE_UPLOAD_YN: {type: string}
+            USE_YN: {type: string}
+            BOARD_TP_CD: {type: string}
+            REG_ID: {type: string}
+            SMS_REPLY_YN: {type: string}
+            CATEGORY_YN: {type: string}
+            MEM_WRITE_YN: {type: string}
+            REG_DATE: {type: string}
+            BOARD_NM: {type: string}
+            BOARD_ID: {type: string}
+            EMAIL_REPLY_YN: {type: string}
+            BOARD_NO: {type: string}
+            MOD_DATE: {type: string}
+            MOD_ID: {type: string}
+            EDITER_YN: {type: string}
+        categoryList:
+          type: array
+          items:
+            type: object
+            properties:
+              REG_DATE: {type: string}
+              REG_ID: {type: string}
+              BOARD_NO: {type: string}
+              MOD_DATE: {type: string}
+              MOD_ID: {type: string}
+              CATEGORY_NM: {type: string}
+              ORDER_SEQ: {type: string}
+              ARTICLE_CNT: {type: string}
+              CATEGORY_NO: {type: string}
