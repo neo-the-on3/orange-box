@@ -1,0 +1,19 @@
+package io.github.neotheon3.orangebox.feature.home
+
+import androidx.compose.runtime.Composable
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.compose.composable
+import kotlinx.serialization.Serializable
+
+@Serializable
+data object HomeDestination
+
+fun NavGraphBuilder.homeScreen(
+    onOpenSettings: () -> Unit,
+    extraMenuEntries: @Composable () -> List<HomeMenuEntry> = { emptyList() },
+    obdContent: (@Composable () -> Unit)? = null,
+) {
+    composable<HomeDestination> {
+        HomeRoute(onOpenSettings = onOpenSettings, extraMenuEntries = extraMenuEntries(), obdContent = obdContent)
+    }
+}

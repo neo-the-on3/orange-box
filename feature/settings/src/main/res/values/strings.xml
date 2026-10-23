@@ -1,0 +1,16 @@
+<resources>
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_backend_section">Server (advanced)</string>
+    <string name="settings_backend_help">Orange Box works fully offline. A server is optional.</string>
+    <string name="settings_mode_off">Off (local only, default)</string>
+    <string name="settings_mode_fake">Fake (canned responses, no network)</string>
+    <string name="settings_mode_remote">Remote (HTTPS server)</string>
+    <string name="settings_base_url">Server base URL</string>
+    <string name="settings_base_url_hint">https://api.example.com</string>
+    <string name="settings_save_url">Save URL</string>
+    <string name="settings_url_saved">Saved</string>
+    <string name="settings_url_not_https">Only https:// URLs are allowed</string>
+    <string name="settings_url_malformed">Not a valid URL</string>
+    <string name="settings_url_cleared">URL cleared</string>
+</resources>

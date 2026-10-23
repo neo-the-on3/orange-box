@@ -1,0 +1,47 @@
+package io.github.neotheon3.orangebox
+
+import android.content.Intent
+import android.util.Log
+import dagger.Binds
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
+import io.github.neotheon3.orangebox.core.model.BackendMode
+import kotlinx.coroutines.runBlocking
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/** Debug-only: honours `--es backend_mode off|fake|remote` on the launch intent. */
+@Singleton
+class DebugLaunchOverrides @Inject constructor(
+    private val backendConfigRepository: BackendConfigRepository,
+) : LaunchOverrides {
+    override fun apply(intent: Intent?): BackendMode? {
+        val raw = intent?.getStringExtra(LaunchExtras.BACKEND_MODE) ?: return null
+        val mode = LaunchExtras.resolveBackendMode(raw)
+        if (mode == null) {
+            Log.w(TAG, "Ignoring invalid backend_mode extra '$raw'; keeping saved mode")
+            return null
+        }
+        // Tiny DataStore write; blocking keeps the first frame consistent with the requested mode.
+        runBlocking { backendConfigRepository.setMode(mode) }
+        Log.i(TAG, "backend_mode override applied: ${mode.wireName}")
+        return mode
+    }
+
+    private companion object { const val TAG = "OrangeBox" }
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class DebugLaunchModule {
+    @Binds abstract fun bindLaunchOverrides(impl: DebugLaunchOverrides): LaunchOverrides
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+object DebugEntriesModule {
+    @Provides fun provideDebugEntries(): DebugEntries = NoDebugEntries
+}

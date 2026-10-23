@@ -8,7 +8,7 @@ Approach: a **clean-room re-implementation** of CarooLive's OBD-II features. No 
 | Topic | Decision |
 |---|---|
 | Package / name / icon | `io.github.neotheon3.orangebox`, "Orange Box", new simple adaptive icon (vector) |
-| minSdk / target | **minSdk 24** (Android Tester's API 25 armeabi-v7a emulator must install it), compile/target 36. Pure Kotlin, **no native libs**. Behaviours for API 26+ (notification channels, FGS start), 31+ (BLUETOOTH_CONNECT/SCAN, exact alarms), 33+ (POST_NOTIFICATIONS) and 34+ (FGS types) are version-gated |
+| minSdk / target | **minSdk 24** (Android Tester's API 25 armeabi-v7a emulator must install it), compile/target 36. Pure Kotlin, **no native libs of our own** (AndroidX ships tiny `libandroidx.graphics.path.so` / `libdatastore_shared_counter.so` for all ABIs incl. armeabi-v7a). Behaviours for API 26+ (notification channels, FGS start), 31+ (BLUETOOTH_CONNECT/SCAN, exact alarms), 33+ (POST_NOTIFICATIONS) and 34+ (FGS types) are version-gated |
 | Dashcam | **Dropped entirely** (no camera, recording, video list/player, impact-triggered clips, YouTube) |
 | Maps | Keyless: osmdroid or MapLibre (decided when the trip-detail milestone starts) |
 | DI | Hilt |
@@ -31,7 +31,7 @@ Approach: a **clean-room re-implementation** of CarooLive's OBD-II features. No 
 | KSP | 2.3.x (KSP2, independent of Kotlin version) for Hilt + Room |
 | Compose BOM | 2026.09.00 |
 | JDK | 17 (Temurin) |
-| compileSdk / targetSdk / minSdk | 36 / 36 / 24 |
+| compileSdk / targetSdk / minSdk | **37** / 36 / 24 (current stable AndroidX, e.g. core 1.19 / Compose 1.12 / lifecycle 2.11, requires compileSdk 37; targetSdk stays 36 to meet Play without opting into Android 17 behaviour) |
 | Libraries | Hilt 2.60.x, hilt-navigation-compose, navigation-compose (type-safe routes), lifecycle 2.11, activity-compose 1.13, DataStore, Room (from M4), WorkManager (Remote uploads), kotlinx-coroutines, kotlinx-serialization-json, Retrofit + OkHttp (Remote mode only), JUnit4, Turbine, Robolectric, androidx.test |
 
 ## 2. Architecture
