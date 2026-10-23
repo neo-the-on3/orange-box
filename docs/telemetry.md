@@ -98,7 +98,19 @@ if the car reports it, otherwise from `TelemetryConfig.defaultFuelType`.
 `fuel / distance · 100`, from 0.1 km of distance onwards. Distance is `∫ speed dt`, fuel is `∫ flow dt`,
 and CO₂ = fuel · factor.
 
-**Acceleration** is `Δspeed / 3.6 / Δt` (m/s²) between consecutive samples.
+**Acceleration** is `Δspeed / 3.6 / Δt` (m/s²) between the newest sample and the latest one at least
+`accelWindowMillis` (1 s) older, using **sample timestamps** (the time SPEED was requested), not arrival
+time. Samples whose timestamp isn't after the last accepted one (duplicates, late or out-of-order) are
+ignored.
+
+**Events** (harsh acceleration, harsh braking, overspeed) use hysteresis so jitter, a stale repeated
+value or a short gap can't split one sustained event:
+- an event starts when the value reaches its threshold, and no sooner than `eventRearmMillis` (2 s) after the previous event of that kind ended;
+- a harsh event ends only after |accel| stays below `harshReleaseFraction` (50 %) of its threshold for `eventReleaseHoldMillis` (1 s);
+- overspeed ends below `overspeedKph − overspeedHysteresisKph` (117 km/h); overspeed time counts while the event is active;
+- missing values and gaps of up to 5 s hold the state, and a longer gap (signal lost) ends it.
+
+Start and end are logged under `OrangeBox/Telemetry` (`harsh_accel_start`, `harsh_accel_end` with its duration and peak, and the same for `harsh_brake` and `overspeed`).
 
 | Metric | Rule | Default |
 |---|---|---|
@@ -106,7 +118,7 @@ and CO₂ = fuel · factor.
 | Idling | stationary and RPM > 0 | – |
 | Fuel cut | speed ≥ 20 km/h, RPM ≥ 1000, and throttle (or load) ≤ 8 %; with no throttle/load, PID 03 = 0x04 | 20 km/h, 1000 rpm, 8 % |
 | Eco | moving, RPM ≤ 2500 and abs(accel) ≤ 1.5 m/s² | 2500 rpm, 1.5 m/s² |
-| Overspeed | speed > 120 km/h | 120 km/h |
+| Overspeed | speed > 120 km/h; ends below 117 km/h (hysteresis) | 120 km/h, 3 km/h |
 | Harsh acceleration | accel ≥ 3.0 m/s² (≈ 0.31 g), counted once per event | 3.0 m/s² |
 | Harsh braking | −accel ≥ 3.5 m/s² (≈ 0.36 g), counted once per event | 3.5 m/s² |
 | Speed zones | stationary, ≤30, ≤60, ≤90, ≤120, >120 km/h | `speedZones` |
@@ -129,8 +141,8 @@ engine is a 1.6 L petrol: `MAF ≈ RPM/120 · 1.6 · 1.18 · VE`, with VE from 0
 | Script | km | L | L/100 km | idle s | fuel-cut s | eco s | overspeed s | harsh accel/brake |
 |---|---|---|---|---|---|---|---|---|
 | idle | 0 | 0.0275 | – | 120 | 0 | 0 | 0 | 0/0 |
-| city | 1.211 | 0.116 | 9.6 | 31.5 | 13.5 | 75 | 0 | 0/0 |
-| highway | 4.787 | 0.245 | 5.1 | 0.5 | 15 | 0 | 44.5 | 0/0 |
-| harsh | 0.451 | 0.044 | 9.7 | 11 | 4 | 20 | 0 | 2/2 |
+| city | 1.211 | 0.116 | 9.6 | 31.5 | 13.5 | 91 | 0 | 0/0 |
+| highway | 4.787 | 0.245 | 5.1 | 0.5 | 15 | 0 | 46.5 | 0/0 |
+| harsh | 0.451 | 0.044 | 9.7 | 11 | 4 | 19 | 0 | 2/2 |
 
 The distances also match the analytic integral of each script to within 1.5 % (PID 0D is whole km/h).

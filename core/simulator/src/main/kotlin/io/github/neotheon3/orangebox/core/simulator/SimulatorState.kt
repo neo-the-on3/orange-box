@@ -25,6 +25,8 @@ data class SimulatorState(
     val unsupportedProtocol: Boolean = false,
     val slowResponses: Boolean = false,
     val garbledResponses: Boolean = false,
+    /** Every ATDPN reply is garbage, so the protocol can never be determined (tests the fail-after-re-queries path). */
+    val garbledProtocolReplies: Boolean = false,
     /** Name of the drive script being played; not persisted (playback does not resume after restart). */
     @kotlinx.serialization.Transient val runningScript: String? = null,
 ) {
@@ -36,6 +38,7 @@ data class SimulatorState(
             if (unsupportedProtocol) add("Unsupported protocol")
             if (slowResponses) add("Slow (1.5 s)")
             if (garbledResponses) add("Garbled (~30%)")
+            if (garbledProtocolReplies) add("Garbled ATDPN (always)")
         }
 
     /** RPM the dongle reports: 0 with the engine off. */

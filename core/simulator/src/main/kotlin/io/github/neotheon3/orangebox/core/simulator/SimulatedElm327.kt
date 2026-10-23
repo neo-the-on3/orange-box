@@ -20,6 +20,7 @@ class SimulatedElm327(private val controller: SimulatorController) {
             cmd == "ATZ" -> { searched = false; "ELM327 v1.5" }
             cmd == "ATI" -> "ELM327 v1.5"
             cmd == "ATRV" -> "%.1fV".format(java.util.Locale.US, voltage(s))
+            cmd == "ATDPN" && s.garbledProtocolReplies -> "A#"
             cmd == "ATDPN" -> if (searched && !s.unsupportedProtocol) "A6" else "A0"
             cmd.startsWith("AT") -> "OK"
             s.unsupportedProtocol -> "SEARCHING...\nUNABLE TO CONNECT"

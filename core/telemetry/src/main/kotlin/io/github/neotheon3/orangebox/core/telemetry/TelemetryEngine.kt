@@ -4,6 +4,7 @@ import io.github.neotheon3.orangebox.core.obd.pid.FuelSystemStatus
 import io.github.neotheon3.orangebox.core.obd.pid.FuelType
 import io.github.neotheon3.orangebox.core.obd.pid.ObdPid
 import io.github.neotheon3.orangebox.core.obd.pid.VehicleSample
+import io.github.neotheon3.orangebox.core.common.OrangeLog
 import kotlin.math.abs
 
 enum class Warning { COOLANT_OVERHEAT, LOW_BATTERY, OVER_VOLTAGE, LOW_FUEL }
@@ -19,16 +20,16 @@ data class InstantTelemetry(
     val fuelFlowLph: Double?,
     /** L/100 km; null when (nearly) stationary. */
     val economyLPer100Km: Double?,
-    /** Acceleration from consecutive speed samples, m/s². */
+    /** Acceleration over the last ≥ [TelemetryConfig.accelWindowMillis] of samples, m/s². */
     val accelMps2: Double?,
     val fuelCut: Boolean,
     val idling: Boolean,
     val eco: Boolean,
     val overspeed: Boolean,
     val warnings: Set<Warning>,
-    /** Acceleration at this sample is at or above the harsh-acceleration threshold. */
+    /** A harsh-acceleration event is in progress (with hysteresis, see [TelemetryConfig]). */
     val harshAccel: Boolean = false,
-    /** Deceleration at this sample is at or above the harsh-braking threshold. */
+    /** A harsh-braking event is in progress. */
     val harshBrake: Boolean = false,
 )
 
@@ -44,6 +45,7 @@ data class TripTotals(
     val overspeedS: Double = 0.0,
     val harshAccelCount: Int = 0,
     val harshBrakeCount: Int = 0,
+    val overspeedCount: Int = 0,
     /** Seconds per speed zone: [0] stationary, then one per [TelemetryConfig.speedZones] bound, then open-ended. */
     val speedZoneS: List<Double> = emptyList(),
     val maxSpeedKph: Double = 0.0,
@@ -57,32 +59,74 @@ data class TelemetrySnapshot(val timestampMillis: Long, val instant: InstantTele
 
 /**
  * Clean-room derived metrics from decoded PIDs. Formulas: docs/telemetry.md. Deterministic and
- * single-threaded: feed samples in time order with [onSample].
+ * single-threaded. Uses sample timestamps only: duplicate or out-of-order samples (timestamp not after
+ * the last accepted one) are ignored and return the previous snapshot.
  */
 class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
     private var last: Pending? = null
     private var trip = emptyTrip()
-    private var harshAccelActive = false
-    private var harshBrakeActive = false
+    private var lastSnapshot: TelemetrySnapshot? = null
+    private val speedHistory = ArrayDeque<Pair<Long, Double>>()
+    private val harshAccelEvent = EventDetector(
+        "harsh_accel", config.harshAccel, config.harshAccel * config.harshReleaseFraction,
+        config.eventReleaseHoldMillis, config.eventRearmMillis, "m/s2",
+    )
+    private val harshBrakeEvent = EventDetector(
+        "harsh_brake", config.harshBrake, config.harshBrake * config.harshReleaseFraction,
+        config.eventReleaseHoldMillis, config.eventRearmMillis, "m/s2",
+    )
+    private val overspeedEvent = EventDetector(
+        "overspeed", config.overspeedKph + 1e-9, config.overspeedKph - config.overspeedHysteresisKph, 0, 0, "km/h",
+    )
 
     private data class Pending(val t: Long, val speed: Double?, val flow: Double?, val instant: InstantTelemetry)
 
     fun reset() {
         last = null
+        lastSnapshot = null
         trip = emptyTrip()
-        harshAccelActive = false
-        harshBrakeActive = false
+        speedHistory.clear()
+        harshAccelEvent.reset()
+        harshBrakeEvent.reset()
+        overspeedEvent.reset()
+    }
+
+    /**
+     * Acceleration from the newest speed and the latest one at least [TelemetryConfig.accelWindowMillis]
+     * older (or the oldest available if it spans ≥ half the window). Null until there is enough history.
+     */
+    private fun windowedAccel(t: Long, speed: Double?): Double? {
+        if (speed == null) return null
+        speedHistory.addLast(t to speed)
+        while (speedHistory.size > 2 && speedHistory[1].first <= t - config.accelWindowMillis) speedHistory.removeFirst()
+        val (t0, v0) = speedHistory.first()
+        val span = t - t0
+        if (span < config.accelWindowMillis / 2) return null
+        return (speed - v0) / 3.6 / (span / 1000.0)
     }
 
     private fun emptyTrip() = TripTotals(speedZoneS = List(config.speedZones.size + 2) { 0.0 })
 
     fun onSample(sample: VehicleSample): TelemetrySnapshot {
+        val t = sample.timestampMillis
+        val prev = last
+        if (prev != null && t <= prev.t) {
+            OrangeLog.d(OrangeLog.Areas.TELEMETRY, "sample_ignored", "reason" to if (t == prev.t) "duplicate" else "out_of_order", "late_ms" to prev.t - t)
+            return lastSnapshot!!
+        }
         val speed = sample[ObdPid.SPEED]
         val rpm = sample[ObdPid.RPM]
-        val prev = last
-        val dtS = prev?.let { (sample.timestampMillis - it.t) / 1000.0 }?.takeIf { it > 0 && it * 1000 <= config.maxGapMillis }
+        val gap = prev != null && t - prev.t > config.maxGapMillis
+        if (gap) {
+            speedHistory.clear()
+            harshAccelEvent.signalLost(t); harshBrakeEvent.signalLost(t); overspeedEvent.signalLost(t)
+        }
+        val dtS = prev?.let { (t - it.t) / 1000.0 }?.takeIf { !gap }
 
-        val accel = if (dtS != null && speed != null && prev.speed != null) (speed - prev.speed) / 3.6 / dtS else null
+        val accel = windowedAccel(t, speed)
+        val newAccel = harshAccelEvent.update(t, accel)
+        val newBrake = harshBrakeEvent.update(t, accel?.let { -it })
+        val newOverspeed = overspeedEvent.update(t, speed)
         val load = sample[ObdPid.THROTTLE] ?: sample[ObdPid.ENGINE_LOAD]
         val status = sample[ObdPid.FUEL_SYSTEM_STATUS]?.toInt()
         // Low pedal/load when known; otherwise trust the ECU's "open loop / decel fuel cut" status.
@@ -93,7 +137,7 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val moving = speed != null && speed >= config.stationaryKph
         val idling = speed != null && !moving && rpm != null && rpm > 0
         val eco = moving && rpm != null && rpm <= config.ecoMaxRpm && (accel == null || abs(accel) <= config.ecoMaxAccel)
-        val overspeed = speed != null && speed > config.overspeedKph
+        val overspeed = overspeedEvent.active
         val economy = if (speed != null && flow != null && speed >= config.economyMinKph) flow / speed * 100.0 else null
 
         val instant = InstantTelemetry(
@@ -103,18 +147,23 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             fuelFlowLph = flow, economyLPer100Km = economy, accelMps2 = accel,
             fuelCut = fuelCut, idling = idling, eco = eco, overspeed = overspeed,
             warnings = warnings(sample),
-            harshAccel = accel != null && accel >= config.harshAccel,
-            harshBrake = accel != null && -accel >= config.harshBrake,
+            harshAccel = harshAccelEvent.active,
+            harshBrake = harshBrakeEvent.active,
         )
 
-        if (dtS != null) integrate(prev, dtS, speed, flow, instant, accel)
-        if (speed != null) trip = trip.copy(maxSpeedKph = maxOf(trip.maxSpeedKph, speed))
-        last = Pending(sample.timestampMillis, speed, flow, instant)
-        return TelemetrySnapshot(sample.timestampMillis, instant, trip)
+        if (dtS != null && prev != null) integrate(prev, dtS, speed, flow)
+        trip = trip.copy(
+            harshAccelCount = trip.harshAccelCount + if (newAccel) 1 else 0,
+            harshBrakeCount = trip.harshBrakeCount + if (newBrake) 1 else 0,
+            overspeedCount = trip.overspeedCount + if (newOverspeed) 1 else 0,
+            maxSpeedKph = speed?.let { maxOf(trip.maxSpeedKph, it) } ?: trip.maxSpeedKph,
+        )
+        last = Pending(t, speed, flow, instant)
+        return TelemetrySnapshot(t, instant, trip).also { lastSnapshot = it }
     }
 
     /** Integrates the interval (prev → now) with the trapezoid rule; state flags use the previous sample. */
-    private fun integrate(prev: Pending, dtS: Double, speed: Double?, flow: Double?, now: InstantTelemetry, accel: Double?) {
+    private fun integrate(prev: Pending, dtS: Double, speed: Double?, flow: Double?) {
         val fuel = props()
         val avgSpeed = avg(prev.speed, speed)
         val avgFlow = avg(prev.flow, flow)
@@ -124,16 +173,6 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val zones = trip.speedZoneS.toMutableList()
         p.speedKph?.let { zones[zoneIndex(it)] += dtS }
 
-        var ha = trip.harshAccelCount
-        var hb = trip.harshBrakeCount
-        if (accel != null) {
-            val accelNow = accel >= config.harshAccel
-            val brakeNow = -accel >= config.harshBrake
-            if (accelNow && !harshAccelActive) ha++
-            if (brakeNow && !harshBrakeActive) hb++
-            harshAccelActive = accelNow
-            harshBrakeActive = brakeNow
-        }
         trip = trip.copy(
             durationS = trip.durationS + dtS,
             distanceKm = trip.distanceKm + distance,
@@ -143,8 +182,6 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             fuelCutS = trip.fuelCutS + if (p.fuelCut) dtS else 0.0,
             ecoS = trip.ecoS + if (p.eco) dtS else 0.0,
             overspeedS = trip.overspeedS + if (p.overspeed) dtS else 0.0,
-            harshAccelCount = ha,
-            harshBrakeCount = hb,
             speedZoneS = zones,
         )
     }

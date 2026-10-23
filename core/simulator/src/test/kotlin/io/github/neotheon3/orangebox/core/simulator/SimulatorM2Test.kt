@@ -125,4 +125,25 @@ class SimulatorM2Test {
         c.setVin("BAD")
         assertTrue(s.readVin() is VinDecoder.Result.Invalid)
     }
+
+    @Test fun `forced garbled ATDPN fails init with a clear protocol error`() = runTest {
+        val c = SimulatorController(SimulatorState(garbledProtocolReplies = true))
+        val t = SimulatedElm327Transport(c).also { it.open() }
+        try {
+            Elm327Session(t).initialize()
+            org.junit.Assert.fail("expected ObdError.Io")
+        } catch (e: io.github.neotheon3.orangebox.core.obd.ObdError.Io) {
+            assertTrue(e.message!!.contains("protocol"))
+        }
+    }
+
+    @Test fun `forced garbled ATDPN ends in Failed after the retry policy`() = runTest {
+        val c = SimulatorController(SimulatorState(garbledProtocolReplies = true))
+        val m = io.github.neotheon3.orangebox.core.obd.ObdConnectionManager(backgroundScope, { SimulatedElm327Transport(c) })
+        m.connect()
+        advanceTimeBy(120_000); runCurrent()
+        val failed = m.state.value as io.github.neotheon3.orangebox.core.obd.ObdConnectionState.Failed
+        assertTrue(failed.attempts > 1)
+        assertTrue(failed.reason.message!!.contains("Could not determine the vehicle protocol"))
+    }
 }

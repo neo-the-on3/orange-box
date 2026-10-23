@@ -117,6 +117,7 @@ Reachable from Home's overflow/menu on debug builds. On release builds the activ
 | Unsupported protocol | `ATSP0`/`0100` replies `UNABLE TO CONNECT` → `Failed(UnsupportedProtocol)` |
 | Slow responses | Adds a 1.5 s delay per response |
 | Garbled responses | Corrupts about 30% of responses (the session drops invalid frames) |
+| Garbled protocol reply (ATDPN, always) | Every `ATDPN` reply is garbage. `connect` re-queries 3 times, fails with "Could not determine the vehicle protocol (ATDPN unreadable)", retries on the back-off schedule and ends in Failed |
 | Backend mode Off / Fake / Remote | Writes `BackendConfig` |
 | Reset simulator | Restores defaults. Simulator state persists in DataStore across restarts; the screen shows the active failure toggles prominently |
 | Status panel | Live `ObdConnectionState`, attempt n/5, next retry countdown, last error, last link event |

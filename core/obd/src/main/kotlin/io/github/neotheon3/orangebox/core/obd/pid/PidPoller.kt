@@ -63,13 +63,21 @@ class PidPoller(
         var tick = 0L
         while (true) {
             val toRead = if (tick % config.slowEvery == 0L) fast + slow else fast
+            // Timestamp = when SPEED was requested (else the start of the tick), not when the whole
+            // tick finished: under load a tick can take much longer, which skewed acceleration.
+            var sampledAt = clock()
             val ok = try {
-                connection.withSession { s -> toRead.forEach { pid -> s.read(pid)?.let { values[pid] = it } } } != null
+                connection.withSession { s ->
+                    toRead.forEach { pid ->
+                        if (pid == ObdPid.SPEED) sampledAt = clock()
+                        s.read(pid)?.let { values[pid] = it }
+                    }
+                } != null
             } catch (e: ObdError) {
                 false // link failure: the connection manager notices and leaves Connected
             }
             if (!ok) return@flow
-            emit(VehicleSample(clock(), values.toMap()))
+            emit(VehicleSample(sampledAt, values.toMap()))
             tick++
             delay(config.fastIntervalMillis)
         }
