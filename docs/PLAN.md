@@ -10,9 +10,10 @@ Approach: a **clean-room re-implementation** of CarooLive's OBD-II features. No 
 | Package / name / icon | `io.github.neotheon3.orangebox`, "Orange Box", new simple adaptive icon (vector) |
 | minSdk / target | **minSdk 24** (Android Tester's API 25 armeabi-v7a emulator must install it), compile/target 36. Pure Kotlin, **no native libs of our own** (AndroidX ships tiny `libandroidx.graphics.path.so` / `libdatastore_shared_counter.so` for all ABIs incl. armeabi-v7a). Behaviours for API 26+ (notification channels, FGS start), 31+ (BLUETOOTH_CONNECT/SCAN, exact alarms), 33+ (POST_NOTIFICATIONS) and 34+ (FGS types) are version-gated |
 | Dashcam | **Dropped entirely** (no camera, recording, video list/player, impact-triggered clips, YouTube) |
+| Google services | **None** (Kiran, 2026-10-24): no Play Services / `com.google.android.gms`, no Firebase, no Google Maps, no Google sign-in. Location via `android.location.LocationManager`. AndroidX, Material, Hilt/Dagger and Compose are fine |
 | Maps | Keyless: osmdroid or MapLibre (decided when the trip-detail milestone starts) |
 | DI | Hilt |
-| Sign-in | Out of v1 |
+| Sign-in | Not in the offline app. M9 (Remote backend) uses **email + OTP**; no Google or social sign-in |
 | Dropped from v1 | Floating overlay, call hang-up, silent crash call/SMS, push (GCM/FingerPush), social login, YouTube upload, server web pages |
 | Crash prompt | Kept as a prompt that opens the **dialer / SMS app** with prefilled data (no CALL_PHONE / SEND_SMS permissions) |
 | Rankings / points | Remote mode only. Stats are rebuilt locally from trips |
@@ -45,7 +46,7 @@ Approach: a **clean-room re-implementation** of CarooLive's OBD-II features. No 
   - `ObdConnectionManager`: state machine `Idle → Connecting(attempt n) → Initializing → Connected → Failed(reason)`, with **exponential backoff 2, 4, 8, 16, 30 s and max 5 attempts**. After that it enters the `Failed` state and waits for a manual `retry()`. Blocked/unpaired and unsupported-protocol errors fail right away (they count as terminal, so there's no retry storm).
   - `Elm327Session`: AT init (`ATZ, ATE0, ATL0, ATS0, ATH0, ATSP0`), `ATDPN`, `ATRV`, `0100` probe, request/response with timeout. Garbled or out-of-range frames are dropped, not propagated.
   - `DongleLinkEvents`: a single flow fed by the real `ACL_CONNECTED/ACL_DISCONNECTED` receiver **and** by the Simulator's "dongle connected / disconnected" buttons, so the auto-start path is the same.
-  - From M2: `PidDecoder` (SAE J1979), `TelemetryEngine` (derived metrics), `LocationSource`, `MotionSource` (accelerometer, for the crash prompt).
+  - From M2: `PidDecoder` (SAE J1979), `TelemetryEngine` (derived metrics), `LocationSource` (platform `LocationManager`, no Play Services), `MotionSource` (accelerometer, for the crash prompt).
 - **Foreground service** `DrivingService` (type `connectedDevice`, plus `location` while recording a trip) from M4.
 - **Persistence**: DataStore (settings, backend mode, simulator state). Room for vehicles, trips, samples, DTC history (from M3/M4).
 
@@ -87,7 +88,7 @@ Modules are added when a milestone first needs them. M0 creates only the ones it
 | **M0** | Scaffold: Gradle (KTS, version catalog), modules, Hilt, navigation, theme, icon, backend-mode setting + debug intent extra, placeholder Home + Settings, unit tests, CI (build/lint/unit + API 34 emulator smoke with screenshots/logcat) |
 | **M1** | `core:obd` transport abstraction, ELM327 session, `ObdConnectionManager` (backoff 2/4/8/16/30 s, max 5, Failed + Retry), `SimulatedElm327`, `DongleLinkEvents`, debug **Simulator screen** with all toggles, OBD status + Retry on Home. Unit tests for backoff, protocol and the simulator |
 | **M2** | PID decoder (≈40 PIDs), DTC read (03/07/0A) / clear (04), VIN (0902), `TelemetryEngine` (fuel flow/economy, fuel-cut, idling, eco/overspeed, harsh accel/brake, speed zones, CO₂, warnings), scripted simulator drives |
-| **M3** | Onboarding + runtime permissions (BT, location, notifications; version-gated), vehicle setup (local catalogue + manual), dongle pairing incl. simulated, opt-in auto-start via `DongleLinkEvents` |
+| **M3** | Onboarding + runtime permissions (BT, location, notifications; version-gated), vehicle setup (local catalogue + manual), dongle pairing incl. simulated, opt-in auto-start via `DongleLinkEvents`. **Done**: `feature:setup` (Material 3) + `core:database` (Room, `vehicles` v1, exported schema + migration test); Settings rows for vehicle / dongle / permissions / auto-start; debug extra `onboarding=skip\|reset` |
 | **M4** | `DrivingService` FGS + notification "Start driving" (no background activity launch; full-screen intent only if permitted), driving dashboard **mimicking the legacy CarooLive dashboard** (clusters, centre FUEL/TRIP cards, Detailed Info. grid; own artwork, see `docs/ui/LEGACY_OBD_UI.md`), Home Live data card as a mini dashboard, trip recording (Room) |
 | **M5** | Trips: history (calendar, **Material 3**), detail (keyless map, metrics, speed-zone chart), aggregate stats (local; Material 3 with legacy hierarchy) |
 | **M6** | Diagnostics **mimicking the legacy screen** (10 DTC-group lamps, vehicle illustration, message bar), group detail, clear with confirmation, "Car Diagnosing…" prompt at drive start |

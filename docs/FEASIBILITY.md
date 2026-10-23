@@ -37,11 +37,11 @@ _All paths below are relative to that clone unless stated._
 | `libs/caroo-smart-model_1.3.14.jar` (80 classes, not obfuscated) | Server DTOs/enums | Field names recovered → `analysis/smart-model-fields.txt`. Re-model as Kotlin `@Serializable` |
 | `jniLibs/armeabi/libnative_buffer.so`, `libnative_file.so`, `libcolor_correction.so` | **ELF32 ARMv5TE only**, loaded by blackbox/mp4 jars | `armeabi` was removed in NDK r17, and Play requires 64-bit. They cannot ship. Not needed with CameraX/MediaCodec |
 | `libs/gcm.jar`, `libs/fingerpush2.2.9.jar` | GCM (shut down 2019) + FingerPush (Korean push SaaS) | Dead. Drop, or FCM later (optional) |
-| `play-services:6.1.71` (monolithic), Google+ `Plus.API` sign-in | Google sign-in via Google+ (`ui/common/GoogleAuthFragment.java`) | **Google+ API shut down**. Use Credential Manager + Sign in with Google if auth is kept |
+| `play-services:6.1.71` (monolithic), Google+ `Plus.API` sign-in | Google sign-in via Google+ (`ui/common/GoogleAuthFragment.java`) | **Google+ API shut down**. ~~Use Credential Manager + Sign in with Google~~ Superseded 2026-10-24: no Google services; M9 uses email + OTP |
 | `facebook-android-sdk:4.6.0` | FB login | Ancient. Drop or update (optional) |
 | `google-api-services-youtube v3`, `google-api-client-android 1.19` | Upload of event clips to YouTube (`service/YoutubeUploadService.java`) | Possible with modern OAuth, but needs a Google Cloud project and verification. Recommend dropping or replacing with the system share sheet |
 | Volley 1.0.19 (mcxiaoke fork), Apache HttpClient, Gson | Networking | Replace with Retrofit/OkHttp or Ktor + kotlinx.serialization |
-| Google Maps v2 (`ui/video/PlayerMapFragment.java`) | Trip route on video playback | Maps Compose (needs a key) **or** osmdroid/MapLibre (no key) |
+| Google Maps v2 (`ui/video/PlayerMapFragment.java`) | Trip route on video playback | osmdroid or MapLibre (no key). Google Maps is ruled out (no Google services, 2026-10-24) |
 | Caldroid (vendored) | Calendar picker for trip dates | Replace with Compose Material3 DatePicker / custom calendar |
 
 ### 2.2 Hardware / platform integrations (from manifest + code)

@@ -29,6 +29,7 @@ internal class EventDetector(
     /** Feeds one value. Returns true when a new event starts. */
     fun update(t: Long, value: Double?): Boolean {
         if (value == null) return false
+        lastValue = value
         if (!active) {
             val rearmed = endedAt?.let { t - it >= rearmMillis } ?: true
             if (value >= startAt && rearmed) {
@@ -52,6 +53,9 @@ internal class EventDetector(
     }
 
     /** The signal was lost (long gap): close an open event without counting a new one. */
+    /** Last non-null value seen; logged at the end (e.g. the speed when overspeed ends). */
+    private var lastValue = 0.0
+
     fun signalLost(t: Long) {
         if (active) end(t, reason = "signal_lost")
     }
@@ -68,7 +72,8 @@ internal class EventDetector(
         belowSince = null
         OrangeLog.i(
             OrangeLog.Areas.TELEMETRY, "${name}_end",
-            "duration_s" to fmt((t - startedAt) / 1000.0), "peak" to fmt(peak), "unit" to unit, "reason" to reason,
+            "duration_s" to fmt((t - startedAt) / 1000.0), "peak" to fmt(peak), "value" to fmt(lastValue), "unit" to unit,
+            "reason" to reason,
         )
     }
 

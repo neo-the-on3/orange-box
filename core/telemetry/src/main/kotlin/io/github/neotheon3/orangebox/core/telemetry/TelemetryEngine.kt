@@ -188,7 +188,10 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
 
     private var reportedFuelType: FuelType? = null
 
-    private fun props(): FuelProperties = FuelProperties.of(reportedFuelType ?: config.defaultFuelType)
+    /** The user's vehicle (M3 setup). The car's own PID 51 report still wins for fuel type. */
+    @Volatile var vehicle: VehicleProfile? = null
+
+    private fun props(): FuelProperties = FuelProperties.of(reportedFuelType ?: vehicle?.fuelType ?: config.defaultFuelType)
 
     /**
      * Fuel flow, L/h, in order of preference: PID 5E (engine fuel rate), MAF (PID 10),
@@ -208,7 +211,7 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val map = sample[ObdPid.INTAKE_MAP] ?: return null
         val iat = sample[ObdPid.INTAKE_TEMP] ?: return null
         val r = rpm ?: return null
-        val displacementM3 = config.displacementLitres / 1000.0
+        val displacementM3 = (vehicle?.displacementLitres ?: config.displacementLitres) / 1000.0
         val airDensity = map * 1000.0 * MOLAR_MASS_AIR / (GAS_CONSTANT * (iat + 273.15)) // kg/m³
         return r / 120.0 * displacementM3 * config.volumetricEfficiency * airDensity * 1000.0
     }
@@ -238,3 +241,6 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         const val MOLAR_MASS_AIR = 0.0289647 // kg/mol
     }
 }
+
+/** What the engine needs to know about the car when the ECU doesn't say. */
+data class VehicleProfile(val fuelType: FuelType?, val displacementLitres: Double?)

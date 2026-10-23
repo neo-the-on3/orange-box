@@ -126,4 +126,18 @@ class HarshEventRobustnessTest {
         assertEquals(2, events.count { it.contains("harsh_brake_end") })
         org.junit.Assert.assertTrue(events.all { Regex("^OrangeBox/Telemetry harsh_(accel|brake)_(start|end) [a-z_]+=").containsMatchIn(it) })
     }
+
+    @Test fun `overspeed end logs the speed it ended at`() {
+        val lines = mutableListOf<String>()
+        io.github.neotheon3.orangebox.core.common.OrangeLog.sink =
+            io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, tag, msg, _ -> lines += "$tag $msg" }
+        try {
+            val e = TelemetryEngine()
+            listOf(100.0, 125.0, 130.0, 116.0).forEachIndexed { k, v -> e.onSample(sample(k * 1000L, v)) }
+        } finally {
+            io.github.neotheon3.orangebox.core.common.OrangeLog.sink = io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, _, _, _ -> }
+        }
+        val end = lines.single { it.contains("overspeed_end") }
+        org.junit.Assert.assertTrue(end, end.contains("value=116") && end.contains("peak=130") && end.contains("unit=km/h"))
+    }
 }

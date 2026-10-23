@@ -1,6 +1,7 @@
 package io.github.neotheon3.orangebox.core.telemetry
 
 import io.github.neotheon3.orangebox.core.obd.pid.FuelSystemStatus
+import io.github.neotheon3.orangebox.core.obd.pid.FuelType
 import io.github.neotheon3.orangebox.core.obd.pid.ObdPid
 import io.github.neotheon3.orangebox.core.obd.pid.VehicleSample
 import org.junit.Assert.assertEquals
@@ -145,5 +146,20 @@ class TelemetryEngineTest {
         e.onSample(s(0, ObdPid.SPEED to 50.0)); e.onSample(s(1000, ObdPid.SPEED to 50.0))
         e.reset()
         assertEquals(0.0, e.onSample(s(2000, ObdPid.SPEED to 50.0)).trip.distanceKm, 0.0)
+    }
+
+    @Test fun `vehicle profile sets fuel type and displacement, but PID 51 still wins`() {
+        val maf = s(0, ObdPid.MAF to 10.0, ObdPid.RPM to 2000.0, ObdPid.SPEED to 50.0, ObdPid.THROTTLE to 20.0)
+        val petrol = TelemetryEngine().onSample(maf).instant.fuelFlowLph!!
+        val diesel = TelemetryEngine().also { it.vehicle = VehicleProfile(FuelType.DIESEL, null) }.onSample(maf).instant.fuelFlowLph!!
+        assertTrue("diesel AFR/density differ", kotlin.math.abs(petrol - diesel) > 0.1)
+        val reported = TelemetryEngine().also { it.vehicle = VehicleProfile(FuelType.DIESEL, null) }
+            .onSample(s(0, ObdPid.MAF to 10.0, ObdPid.FUEL_TYPE to 1.0, ObdPid.RPM to 2000.0, ObdPid.SPEED to 50.0, ObdPid.THROTTLE to 20.0))
+        assertEquals(petrol, reported.instant.fuelFlowLph!!, 1e-9)
+
+        val sd = s(0, ObdPid.INTAKE_MAP to 60.0, ObdPid.INTAKE_TEMP to 30.0, ObdPid.RPM to 3000.0, ObdPid.SPEED to 50.0, ObdPid.THROTTLE to 20.0)
+        val small = TelemetryEngine().onSample(sd).instant.fuelFlowLph!!
+        val big = TelemetryEngine().also { it.vehicle = VehicleProfile(null, 3.2) }.onSample(sd).instant.fuelFlowLph!!
+        assertEquals(2.0, big / small, 1e-9)
     }
 }

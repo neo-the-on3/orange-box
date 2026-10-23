@@ -36,4 +36,7 @@ abstract class BackendConfigModule {
 
     @Binds
     abstract fun bindDongleSelectionRepository(impl: DataStoreDongleSelectionRepository): DongleSelectionRepository
+
+    @Binds
+    abstract fun bindAppPreferencesRepository(impl: DataStoreAppPreferencesRepository): AppPreferencesRepository
 }

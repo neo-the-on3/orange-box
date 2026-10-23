@@ -32,6 +32,8 @@ class ObdConnectionManager(
     private val policy: RetryPolicy = RetryPolicy(),
     private val heartbeatMillis: Long = 5_000,
     private val sessionFactory: (ObdTransport) -> Elm327Session = { Elm327Session(it) },
+    /** Settings "connect automatically when the dongle connects" (off by default in the app). */
+    private val autoStartEnabled: () -> Boolean = { true },
 ) : ObdConnection {
     private val _state = MutableStateFlow<ObdConnectionState>(ObdConnectionState.Idle)
     override val state: StateFlow<ObdConnectionState> = _state.asStateFlow()
@@ -69,8 +71,10 @@ class ObdConnectionManager(
                 _lastLinkEvent.value = event
                 when (event) {
                     is DongleLinkEvent.Connected -> {
-                        OrangeLog.i(AREA, "link_up", "state" to _state.value::class.simpleName)
-                        if (isIdleOrFailed()) connect()
+                        val state = _state.value
+                        val decision = AutoStartPolicy.onLinkUp(state, autoStartEnabled())
+                        OrangeLog.i(AREA, "link_up", "state" to state::class.simpleName, "decision" to decision.name.lowercase())
+                        if (decision != AutoStartPolicy.Decision.IGNORE) connect()
                     }
                     is DongleLinkEvent.Disconnected -> {
                         OrangeLog.i(AREA, "link_down", "state" to _state.value::class.simpleName)
@@ -214,5 +218,19 @@ class ObdConnectionManager(
     private suspend fun Job.cancelAndJoinQuietly() {
         cancel()
         join()
+    }
+}
+
+/**
+ * What a link-up for the selected dongle does. Resuming after [ObdConnectionState.LinkLost] always
+ * happens (the user had a session going); starting from Idle or Failed is the opt-in auto-start.
+ */
+object AutoStartPolicy {
+    enum class Decision { RESUME, AUTO_START, IGNORE }
+
+    fun onLinkUp(state: ObdConnectionState, autoStartEnabled: Boolean): Decision = when (state) {
+        ObdConnectionState.LinkLost -> Decision.RESUME
+        ObdConnectionState.Idle, is ObdConnectionState.Failed -> if (autoStartEnabled) Decision.AUTO_START else Decision.IGNORE
+        else -> Decision.IGNORE // already connecting or connected
     }
 }

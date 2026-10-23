@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.feature.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -17,10 +19,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.HorizontalDivider
@@ -39,7 +43,13 @@ import io.github.neotheon3.orangebox.core.model.BackendMode
 import io.github.neotheon3.orangebox.core.model.BaseUrlValidator
 
 @Composable
-fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsRoute(
+    onBack: () -> Unit,
+    onOpenVehicle: () -> Unit = {},
+    onOpenDongle: () -> Unit = {},
+    onOpenPermissions: () -> Unit = {},
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     SettingsScreen(
         state = state,
@@ -47,6 +57,10 @@ fun SettingsRoute(onBack: () -> Unit, viewModel: SettingsViewModel = hiltViewMod
         onModeSelected = viewModel::onModeSelected,
         onUrlChanged = viewModel::onUrlChanged,
         onSaveUrl = viewModel::onSaveUrl,
+        onOpenVehicle = onOpenVehicle,
+        onOpenDongle = onOpenDongle,
+        onOpenPermissions = onOpenPermissions,
+        onAutoStartChanged = viewModel::onAutoStartChanged,
     )
 }
 
@@ -58,6 +72,10 @@ fun SettingsScreen(
     onModeSelected: (BackendMode) -> Unit,
     onUrlChanged: (String) -> Unit,
     onSaveUrl: () -> Unit,
+    onOpenVehicle: () -> Unit = {},
+    onOpenDongle: () -> Unit = {},
+    onOpenPermissions: () -> Unit = {},
+    onAutoStartChanged: (Boolean) -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -135,6 +153,25 @@ fun SettingsScreen(
                 }
             }
             HorizontalDivider()
+            Text(stringResource(R.string.settings_setup_section), style = MaterialTheme.typography.titleMedium)
+            SetupRow(
+                stringResource(R.string.settings_vehicle), state.vehicleName ?: stringResource(R.string.settings_not_set),
+                onOpenVehicle, "settings_vehicle",
+            )
+            SetupRow(
+                stringResource(R.string.settings_dongle), state.dongleName ?: stringResource(R.string.settings_not_set),
+                onOpenDongle, "settings_dongle",
+            )
+            SetupRow(stringResource(R.string.settings_permissions), stringResource(R.string.settings_permissions_summary), onOpenPermissions, "settings_permissions")
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.settings_auto_start)) },
+                supportingContent = { Text(stringResource(R.string.settings_auto_start_summary)) },
+                trailingContent = { Switch(checked = state.autoStart, onCheckedChange = null) },
+                modifier = Modifier
+                    .toggleable(value = state.autoStart, onValueChange = onAutoStartChanged, role = Role.Switch)
+                    .testTag("settings_auto_start"),
+            )
+            HorizontalDivider()
             Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
             Text(
                 stringResource(R.string.settings_about_version, state.version.versionName, state.version.versionCode),
@@ -147,4 +184,13 @@ fun SettingsScreen(
             )
         }
     }
+}
+
+@Composable
+private fun SetupRow(title: String, summary: String, onClick: () -> Unit, tag: String) {
+    ListItem(
+        headlineContent = { Text(title) },
+        supportingContent = { Text(summary) },
+        modifier = Modifier.clickable(onClick = onClick, role = Role.Button).testTag(tag),
+    )
 }

@@ -1,0 +1,19 @@
+package io.github.neotheon3.orangebox.core.testing
+
+import io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository
+import io.github.neotheon3.orangebox.core.model.AppPreferences
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+
+class FakeAppPreferencesRepository(initial: AppPreferences = AppPreferences()) : AppPreferencesRepository {
+    val state = MutableStateFlow(initial)
+    override val preferences: StateFlow<AppPreferences> = state
+
+    override suspend fun setDisclaimerAccepted(accepted: Boolean) { state.value = state.value.copy(disclaimerAccepted = accepted) }
+    override suspend fun setOnboardingComplete(complete: Boolean) { state.value = state.value.copy(onboardingComplete = complete) }
+    override suspend fun setAutoStartOnDongleConnect(enabled: Boolean) { state.value = state.value.copy(autoStartOnDongleConnect = enabled) }
+    override suspend fun setActiveVehicle(id: Long?) { state.value = state.value.copy(activeVehicleId = id) }
+    override suspend fun markPermissionsAsked(permissions: Collection<String>) {
+        state.value = state.value.copy(askedPermissions = state.value.askedPermissions + permissions)
+    }
+}

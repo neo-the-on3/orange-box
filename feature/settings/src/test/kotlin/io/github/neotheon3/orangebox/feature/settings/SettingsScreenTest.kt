@@ -1,6 +1,7 @@
 package io.github.neotheon3.orangebox.feature.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -54,5 +55,26 @@ class SettingsScreenTest {
         }
         compose.onNodeWithTag("settings_about_version").performScrollTo().assertTextContains("Version 0.1.0.9-abc1234-ci57-debug (code 9)")
         compose.onNodeWithTag("settings_about_build").assertTextContains("Commit abc1234 · CI run 57")
+    }
+
+    @Test fun `setup rows open their screens and the auto-start switch toggles`() {
+        val opened = mutableListOf<String>()
+        var autoStart: Boolean? = null
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(vehicleName = "Swift", dongleName = null, autoStart = false),
+                    onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                    onOpenVehicle = { opened += "vehicle" }, onOpenDongle = { opened += "dongle" },
+                    onOpenPermissions = { opened += "permissions" }, onAutoStartChanged = { autoStart = it },
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_vehicle").performScrollTo().assertTextContains("Swift", substring = true).performClick()
+        compose.onNodeWithTag("settings_dongle").performScrollTo().assertTextContains("Not set up", substring = true).performClick()
+        compose.onNodeWithTag("settings_permissions").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_auto_start").performScrollTo().assertIsOff().performClick()
+        assertEquals(listOf("vehicle", "dongle", "permissions"), opened)
+        assertEquals(true, autoStart)
     }
 }

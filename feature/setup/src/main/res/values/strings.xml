@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">Welcome to Orange Box</string>
+    <string name="onboarding_welcome_body">Orange Box reads your car\'s OBD-II port through a Bluetooth ELM327 dongle and shows live data, trips and fault codes.</string>
+    <string name="onboarding_welcome_points">• Works fully offline; a server is optional.\n• Setup takes about a minute: accept the notice, allow permissions, add your car and pick your dongle.\n• You can skip the car and dongle and set them up later in Settings.</string>
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_continue">Continue</string>
+    <string name="onboarding_skip">Skip for now</string>
+    <string name="onboarding_finish">Start using Orange Box</string>
+    <string name="onboarding_disclaimer_title">Before you drive</string>
+    <string name="onboarding_disclaimer_body">Never interact with the app while driving. Set it up while parked and keep your eyes on the road.\n\nReadings come from your car\'s computer and a third-party adapter. They can be late, missing or wrong, and fuel figures are estimates. Don\'t rely on Orange Box for safety-critical decisions.\n\nClearing fault codes turns off the check-engine light but does not fix the fault behind it.</string>
+    <string name="onboarding_disclaimer_accept">I understand and accept</string>
+    <string name="onboarding_permissions_title">Permissions</string>
+    <string name="onboarding_permissions_body">Grant what you need now; each permission can be changed later in Settings.</string>
+    <string name="onboarding_vehicle_title">Your car</string>
+    <string name="onboarding_vehicle_body">Fuel type and engine size improve the fuel estimate on cars without a mass-airflow sensor.</string>
+    <string name="onboarding_dongle_title">OBD dongle</string>
+    <string name="onboarding_dongle_body">Pair the ELM327 dongle in Android\'s Bluetooth settings first, then pick it here and test it with the engine running.</string>
+    <string name="onboarding_done_title">All set</string>
+    <string name="onboarding_done_body">You can change your car, dongle and permissions any time from Settings.</string>
+    <string name="setup_back">Back</string>
+
+    <!-- Permissions -->
+    <string name="permissions_none_needed">This Android version needs no runtime permissions for Orange Box.</string>
+    <string name="permission_optional">Optional</string>
+    <string name="permission_allow">Allow</string>
+    <string name="permission_open_settings">Open settings</string>
+    <string name="permission_permanently_denied_help">Android won\'t ask again. Open the app settings and allow it under Permissions.</string>
+    <string name="permission_bluetooth_title">Nearby devices (Bluetooth)</string>
+    <string name="permission_bluetooth_rationale">Required to list your paired OBD dongle and connect to it.</string>
+    <string name="permission_notifications_title">Notifications</string>
+    <string name="permission_notifications_rationale">Shows a notification while a drive is being recorded, so you can see and stop it.</string>
+    <string name="permission_location_title">Location</string>
+    <string name="permission_location_rationale">Draws your route on the trip map. Without it, trips are recorded without a route.</string>
+    <string name="permission_status_granted">Allowed</string>
+    <string name="permission_status_not_asked">Not asked yet</string>
+    <string name="permission_status_denied">Denied</string>
+    <string name="permission_status_permanently_denied">Denied, won\'t ask again</string>
+
+    <!-- Vehicle -->
+    <string name="vehicle_title">Vehicle</string>
+    <string name="vehicle_from_list">From list</string>
+    <string name="vehicle_manual">Enter manually</string>
+    <string name="vehicle_maker">Maker</string>
+    <string name="vehicle_model">Model</string>
+    <string name="vehicle_name">Name</string>
+    <string name="vehicle_fuel">Fuel</string>
+    <string name="vehicle_displacement">Engine size (cc, optional)</string>
+    <string name="vehicle_odometer">Odometer (km, optional)</string>
+    <string name="vehicle_save">Save vehicle</string>
+    <string name="vehicle_saved">Vehicle saved</string>
+    <string name="vehicle_error_name">Enter a name</string>
+    <string name="vehicle_error_model">Pick a maker and model</string>
+    <string name="vehicle_error_displacement">Enter 50 to 10000 cc</string>
+    <string name="vehicle_error_odometer">Enter 0 to 2000000 km</string>
+    <string name="fuel_petrol">Petrol</string>
+    <string name="fuel_diesel">Diesel</string>
+    <string name="fuel_lpg">LPG</string>
+    <string name="fuel_cng">CNG</string>
+    <string name="fuel_ethanol">Ethanol / flex</string>
+
+    <!-- Dongle -->
+    <string name="dongle_title">OBD dongle</string>
+    <string name="dongle_needs_permission">Allow Nearby devices to list your paired dongles.</string>
+    <string name="dongle_none_paired">No paired Bluetooth devices. Pair your dongle in Bluetooth settings (PIN is usually 1234 or 0000).</string>
+    <string name="dongle_simulated">Simulated, for testing without a car</string>
+    <string name="dongle_open_bt_settings">Open Bluetooth settings</string>
+    <string name="dongle_test">Test connection</string>
+    <string name="dongle_testing">Testing… keep the engine running.</string>
+    <string name="dongle_test_ok">Connected to %1$s using %2$s.</string>
+    <string name="dongle_test_already">Already connected (%1$s).</string>
+    <string name="dongle_test_failed">Test failed: %1$s</string>
+    <string name="dongle_repair_help">The dongle isn\'t paired any more. Pair it again in Bluetooth settings, then come back.</string>
+    <string name="dongle_unsupported_help">The adapter answered but couldn\'t talk to the car. Check the ignition is on.</string>
+    <string name="dongle_other_help">Check the dongle is plugged in, the ignition is on and no other app is connected to it.</string>
+    <string name="auto_start_title">Start when the dongle connects</string>
+    <string name="auto_start_summary">Connect automatically when the paired dongle comes in range.</string>
+</resources>

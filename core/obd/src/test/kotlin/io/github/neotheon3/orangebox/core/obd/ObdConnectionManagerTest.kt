@@ -171,4 +171,37 @@ class ObdConnectionManagerTest {
         assertEquals(ObdConnectionState.Idle, m.state.value)
         assertEquals(1, t.closeCount)
     }
+
+    @Test fun `auto-start policy`() {
+        val failed = ObdConnectionState.Failed(ObdError.Io("x"), 6)
+        assertEquals(AutoStartPolicy.Decision.RESUME, AutoStartPolicy.onLinkUp(ObdConnectionState.LinkLost, false))
+        assertEquals(AutoStartPolicy.Decision.AUTO_START, AutoStartPolicy.onLinkUp(ObdConnectionState.Idle, true))
+        assertEquals(AutoStartPolicy.Decision.IGNORE, AutoStartPolicy.onLinkUp(ObdConnectionState.Idle, false))
+        assertEquals(AutoStartPolicy.Decision.AUTO_START, AutoStartPolicy.onLinkUp(failed, true))
+        assertEquals(AutoStartPolicy.Decision.IGNORE, AutoStartPolicy.onLinkUp(failed, false))
+        assertEquals(AutoStartPolicy.Decision.IGNORE, AutoStartPolicy.onLinkUp(ObdConnectionState.Connecting(0, 5), true))
+    }
+
+    @Test fun `link up from Idle connects only when auto-start is on, but always resumes after LinkLost`() = runTest {
+        val events = MutableSharedFlow<DongleLinkEvent>()
+        var enabled = false
+        val transports = mutableListOf<FakeObdTransport>()
+        val m = ObdConnectionManager(
+            backgroundScope, { FakeObdTransport().also { transports += it } }, linkEvents = events, autoStartEnabled = { enabled },
+        )
+        runCurrent()
+        events.emit(DongleLinkEvent.Connected("AA")); runCurrent()
+        assertEquals(ObdConnectionState.Idle, m.state.value)
+        assertEquals(0, transports.size)
+
+        enabled = true
+        events.emit(DongleLinkEvent.Connected("AA")); runCurrent()
+        assertTrue(m.state.value is ObdConnectionState.Connected)
+
+        enabled = false
+        events.emit(DongleLinkEvent.Disconnected("AA")); runCurrent()
+        assertEquals(ObdConnectionState.LinkLost, m.state.value)
+        events.emit(DongleLinkEvent.Connected("AA")); runCurrent()
+        assertTrue("resume after link loss ignores the toggle", m.state.value is ObdConnectionState.Connected)
+    }
 }
