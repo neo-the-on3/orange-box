@@ -6,8 +6,7 @@ set -euo pipefail
 # shellcheck source=scripts/ci/smoke-lib.sh
 source "${SMOKE_LIB:-scripts/ci/smoke-lib.sh}"
 
-tap_attr content-desc "More" live-more
-tap_attr text "Simulator" live-menu
+open_simulator live-more
 tap_attr text "Highway" live-script
 wait_for_regex 'Playing: Highway' live-playing
 shot 20-simulator-highway-playing

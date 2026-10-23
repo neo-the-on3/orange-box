@@ -67,3 +67,20 @@ tap_attr() {
   echo "node $1=\"$2\" not found" >&2
   return 1
 }
+
+# Home overflow -> Simulator, retrying the menu tap (it can be lost during a configuration change).
+open_simulator() {
+  local name="${1:-open-sim}"
+  for _ in 1 2 3; do
+    tap_attr content-desc "More" "$name-more" || true
+    sleep 1
+    ui_dump "$name-menu"
+    if grep -q 'text="Simulator"' "$OUT/$name-menu.xml"; then
+      tap_attr text "Simulator" "$name-menu" && return 0
+    fi
+    adb shell input keyevent KEYCODE_ESCAPE || true
+    sleep 2
+  done
+  echo "could not open the Simulator from Home" >&2
+  return 1
+}
