@@ -111,6 +111,14 @@ value or a short gap can't split one sustained event:
 - missing values and gaps of up to 5 s hold the state, and a longer gap (signal lost) ends it.
 
 Start and end are logged under `OrangeBox/Telemetry` (`harsh_accel_start`, `harsh_accel_end` with its duration, peak and the value it ended at (for `overspeed_end`, the speed), and the same for `harsh_brake` and `overspeed`).
+`overspeed_end` also repeats the release speed as `speed_kmh`, for example:
+
+```
+OrangeBox/Telemetry overspeed_end duration_s=2.00 peak=130.00 value=116.00 speed_kmh=116.00 unit=km/h reason=released
+```
+
+In debug builds the Simulator's "App readout (debug)" card shows the trip's cumulative eco time as
+`Eco driving (trip): 91.0 s`, to compare with the eco column of the goldens below.
 
 | Metric | Rule | Default |
 |---|---|---|

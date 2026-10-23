@@ -18,6 +18,8 @@ internal class EventDetector(
     private val releaseHoldMillis: Long,
     private val rearmMillis: Long,
     private val unit: String,
+    /** Extra key the end line repeats the last value under, e.g. `speed_kmh` for overspeed. */
+    private val endValueKey: String? = null,
 ) {
     var active = false
         private set
@@ -52,10 +54,10 @@ internal class EventDetector(
         return false
     }
 
-    /** The signal was lost (long gap): close an open event without counting a new one. */
     /** Last non-null value seen; logged at the end (e.g. the speed when overspeed ends). */
     private var lastValue = 0.0
 
+    /** The signal was lost (long gap): close an open event without counting a new one. */
     fun signalLost(t: Long) {
         if (active) end(t, reason = "signal_lost")
     }
@@ -70,11 +72,15 @@ internal class EventDetector(
         active = false
         endedAt = t
         belowSince = null
-        OrangeLog.i(
-            OrangeLog.Areas.TELEMETRY, "${name}_end",
-            "duration_s" to fmt((t - startedAt) / 1000.0), "peak" to fmt(peak), "value" to fmt(lastValue), "unit" to unit,
-            "reason" to reason,
-        )
+        val fields = buildList {
+            add("duration_s" to fmt((t - startedAt) / 1000.0))
+            add("peak" to fmt(peak))
+            add("value" to fmt(lastValue))
+            endValueKey?.let { add(it to fmt(lastValue)) }
+            add("unit" to unit)
+            add("reason" to reason)
+        }
+        OrangeLog.i(OrangeLog.Areas.TELEMETRY, "${name}_end", *fields.toTypedArray())
     }
 
     private fun fmt(v: Double) = String.format(Locale.US, "%.2f", v)

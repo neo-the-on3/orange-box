@@ -120,6 +120,19 @@ class SimulatorScreenTest {
         compose.onNodeWithTag("sim_readout_telemetry").assertTextContains("not connected", substring = true)
     }
 
+    @Test fun `app readout shows cumulative eco seconds for the trip`() {
+        val instant = io.github.neotheon3.orangebox.core.telemetry.InstantTelemetry(
+            speedKph = 0.0, rpm = 800.0, coolantC = 90.0, fuelLevelPercent = 50.0, voltage = 14.0,
+            fuelFlowLph = 0.8, economyLPer100Km = null, accelMps2 = 0.0,
+            fuelCut = false, idling = true, eco = false, overspeed = false, warnings = emptySet(),
+        )
+        val trip = io.github.neotheon3.orangebox.core.telemetry.TripTotals(ecoS = 91.0, idleS = 31.5, fuelCutS = 13.5)
+        ui = ui.copy(telemetry = io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot(0L, instant, trip))
+        compose.onNodeWithTag("sim_readout_eco").performScrollTo().assertTextContains("Eco driving (trip): 91.0 s")
+        compose.onNodeWithTag("sim_readout_times").assertTextContains("Idle 31.5 s · fuel cut 13.5 s")
+        assertEquals("Eco driving (trip): 19.0 s", ecoReadout(19.0))
+    }
+
     @Test fun `invalid dtc is rejected with supporting text`() {
         compose.onNodeWithTag("sim_dtc_input").performScrollTo().performTextReplacement("XYZ12")
         click("sim_dtc_inject")

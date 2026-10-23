@@ -220,6 +220,9 @@ private fun VinEditor(current: String, actions: SimulatorActions) {
     }
 }
 
+/** Cumulative eco-driving time this trip, compared with the docs/telemetry.md goldens (City 91 s, Harsh 19 s). */
+internal fun ecoReadout(ecoS: Double): String = "Eco driving (trip): ${"%.1f".format(java.util.Locale.US, ecoS)} s"
+
 @Composable
 private fun AppReadout(state: SimulatorUiState, actions: SimulatorActions) {
     Card(Modifier.fillMaxWidth().testTag("sim_readout")) {
@@ -237,8 +240,9 @@ private fun AppReadout(state: SimulatorUiState, actions: SimulatorActions) {
                     "Overspeed: ${flag(i.overspeed)} · ${"%.1f".format(java.util.Locale.US, t.overspeedS)} s · events ${t.overspeedCount}",
                     modifier = Modifier.testTag("sim_readout_overspeed"),
                 )
+                Text(ecoReadout(t.ecoS), modifier = Modifier.testTag("sim_readout_eco"))
                 Text(
-                    "Eco ${"%.1f".format(java.util.Locale.US, t.ecoS)} s · idle ${"%.1f".format(java.util.Locale.US, t.idleS)} s · " +
+                    "Idle ${"%.1f".format(java.util.Locale.US, t.idleS)} s · " +
                         "fuel cut ${"%.1f".format(java.util.Locale.US, t.fuelCutS)} s",
                     modifier = Modifier.testTag("sim_readout_times"),
                 )
