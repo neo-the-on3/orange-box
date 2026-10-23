@@ -90,8 +90,11 @@ fi
 
 # No crashes for our package
 adb logcat -d > "$OUT/logcat.txt"
-if grep -E "FATAL EXCEPTION|AndroidRuntime: Process: $PKG" "$OUT/logcat.txt" > "$OUT/crashes.txt"; then
-  fail "crash detected (see crashes.txt)"
+# Only our process counts: system apps on the Google APIs image (e.g. Gmail) sometimes crash at boot.
+grep -A2 "FATAL EXCEPTION" "$OUT/logcat.txt" > "$OUT/all-crashes.txt" || true
+if grep -q "AndroidRuntime: Process: $PKG," "$OUT/all-crashes.txt"; then
+  grep -B1 -A40 "AndroidRuntime: Process: $PKG," "$OUT/logcat.txt" > "$OUT/crashes.txt" || true
+  fail "crash detected in $PKG (see crashes.txt)"
 fi
 adb shell pidof "$PKG" > /dev/null || fail "app process is not running"
 dump
