@@ -67,6 +67,23 @@ class DriveScriptGoldenTest {
     @Test fun highway() = check(DriveScript.HIGHWAY, GOLDEN.getValue("highway"))
     @Test fun harsh() = check(DriveScript.HARSH, GOLDEN.getValue("harsh"))
 
+    @Test fun `highway overspeed ends below the 117 km per h release point`() = runTest {
+        val lines = mutableListOf<String>()
+        io.github.neotheon3.orangebox.core.common.OrangeLog.sink =
+            io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, tag, msg, _ -> lines += "$tag $msg" }
+        try {
+            run(DriveScript.HIGHWAY)
+        } finally {
+            io.github.neotheon3.orangebox.core.common.OrangeLog.sink = io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, _, _, _ -> }
+        }
+        val ends = lines.filter { it.startsWith("OrangeBox/Telemetry overspeed_end ") }
+        assertTrue(lines.toString(), ends.isNotEmpty())
+        for (end in ends) {
+            val speed = Regex(" speed_kmh=([0-9.]+) ").find(end)!!.groupValues[1].toDouble()
+            assertTrue(end, speed < 117.0)
+        }
+    }
+
     @Test fun `scripts are plausible`() = runTest {
         val idle = run(DriveScript.IDLE)
         // 120 s idling at ~2.5 g/s MAF → ≈ 0.82 L/h → ≈ 0.027 L

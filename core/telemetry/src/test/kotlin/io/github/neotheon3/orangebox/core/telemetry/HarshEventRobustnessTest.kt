@@ -139,5 +139,37 @@ class HarshEventRobustnessTest {
         }
         val end = lines.single { it.contains("overspeed_end") }
         org.junit.Assert.assertTrue(end, end.contains("value=116") && end.contains("peak=130") && end.contains("unit=km/h"))
+        assertEquals(
+            "OrangeBox/Telemetry overspeed_end duration_s=2.00 peak=130.00 value=116.00 speed_kmh=116.00 unit=km/h reason=released",
+            end,
+        )
+    }
+
+    @Test fun `overspeed holds at 118 and releases below 117 with the release speed logged`() {
+        val lines = mutableListOf<String>()
+        io.github.neotheon3.orangebox.core.common.OrangeLog.sink =
+            io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, tag, msg, _ -> lines += "$tag $msg" }
+        try {
+            val e = TelemetryEngine()
+            listOf(100.0, 125.0, 118.0, 117.0, 116.0).forEachIndexed { k, v -> e.onSample(sample(k * 1000L, v)) }
+        } finally {
+            io.github.neotheon3.orangebox.core.common.OrangeLog.sink = io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, _, _, _ -> }
+        }
+        val end = lines.single { it.contains("overspeed_end") }
+        org.junit.Assert.assertTrue(end, end.contains(" speed_kmh=116.00 ") && end.contains("duration_s=3.00"))
+    }
+
+    @Test fun `harsh end lines carry no speed field`() {
+        val lines = mutableListOf<String>()
+        io.github.neotheon3.orangebox.core.common.OrangeLog.sink =
+            io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, tag, msg, _ -> lines += "$tag $msg" }
+        try {
+            run(clean)
+        } finally {
+            io.github.neotheon3.orangebox.core.common.OrangeLog.sink = io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, _, _, _ -> }
+        }
+        val ends = lines.filter { it.startsWith("OrangeBox/Telemetry harsh_") && it.contains("_end ") }
+        org.junit.Assert.assertTrue(ends.isNotEmpty())
+        org.junit.Assert.assertTrue(ends.toString(), ends.none { it.contains("speed_kmh=") })
     }
 }

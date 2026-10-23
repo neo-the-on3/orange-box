@@ -77,6 +77,7 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
     )
     private val overspeedEvent = EventDetector(
         "overspeed", config.overspeedKph + 1e-9, config.overspeedKph - config.overspeedHysteresisKph, 0, 0, "km/h",
+        endValueKey = "speed_kmh",
     )
 
     private data class Pending(val t: Long, val speed: Double?, val flow: Double?, val instant: InstantTelemetry)
