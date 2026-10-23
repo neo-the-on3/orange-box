@@ -71,7 +71,7 @@ class ObdConnectionManager(
     }
 
     /** Runs [block] against the live session, or returns null when not connected. */
-    suspend fun <T> withSession(block: suspend (Elm327Session) -> T): T? {
+    override suspend fun <T> withSession(block: suspend (Elm327Session) -> T): T? {
         val s = session ?: return null
         if (_state.value !is ObdConnectionState.Connected) return null
         return block(s)

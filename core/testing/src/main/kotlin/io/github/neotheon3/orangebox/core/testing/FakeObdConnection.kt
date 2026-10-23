@@ -13,4 +13,8 @@ class FakeObdConnection(initial: ObdConnectionState = ObdConnectionState.Idle) :
     override fun connect() { connectCalls++ }
     override fun retry() { retryCalls++ }
     override fun disconnect() { disconnectCalls++ }
+    /** Session handed to [withSession] while [state] is Connected; null means "not connected". */
+    var session: io.github.neotheon3.orangebox.core.obd.Elm327Session? = null
+    override suspend fun <T> withSession(block: suspend (io.github.neotheon3.orangebox.core.obd.Elm327Session) -> T): T? =
+        session?.takeIf { state.value is ObdConnectionState.Connected }?.let { block(it) }
 }

@@ -12,12 +12,15 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
+import io.github.neotheon3.orangebox.core.telemetry.TelemetrySource
 import javax.inject.Inject
 
 data class HomeUiState(
     val backend: BackendConfig = BackendConfig(),
     val loading: Boolean = true,
     val obd: ObdConnectionState = ObdConnectionState.Idle,
+    val live: TelemetrySnapshot? = null,
 ) {
     val showRemoteWarning: Boolean
         get() = !loading && backend.mode == BackendMode.REMOTE && !backend.isRemoteReady
@@ -27,9 +30,10 @@ data class HomeUiState(
 class HomeViewModel @Inject constructor(
     backendConfigRepository: BackendConfigRepository,
     private val obd: ObdConnection,
+    telemetry: TelemetrySource,
 ) : ViewModel() {
-    val uiState: StateFlow<HomeUiState> = combine(backendConfigRepository.config, obd.state) { backend, obdState ->
-        HomeUiState(backend = backend, loading = false, obd = obdState)
+    val uiState: StateFlow<HomeUiState> = combine(backendConfigRepository.config, obd.state, telemetry.latest) { backend, obdState, live ->
+        HomeUiState(backend = backend, loading = false, obd = obdState, live = live)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
     fun onConnect() = obd.connect()

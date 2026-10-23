@@ -16,6 +16,13 @@ class SimulatorController(initial: SimulatorState = SimulatorState()) {
 
     fun reset() { _state.value = SimulatorState() }
 
+    fun addPendingDtc(code: String): Boolean {
+        val c = code.trim().uppercase()
+        if (io.github.neotheon3.orangebox.core.obd.Elm327Session.encodeDtc(c) == null) return false
+        update { if (c in it.pendingDtcs) it else it.copy(pendingDtcs = it.pendingDtcs + c) }
+        return true
+    }
+
     fun injectDtc(code: String): Boolean {
         val c = code.trim().uppercase()
         if (io.github.neotheon3.orangebox.core.obd.Elm327Session.encodeDtc(c) == null) return false
@@ -23,5 +30,5 @@ class SimulatorController(initial: SimulatorState = SimulatorState()) {
         return true
     }
 
-    fun clearDtcs() = update { it.copy(dtcs = emptyList(), milOn = false) }
+    fun clearDtcs() = update { it.copy(dtcs = emptyList(), pendingDtcs = emptyList(), milOn = false) }
 }

@@ -12,6 +12,7 @@ import io.github.neotheon3.orangebox.DebugEntries
 import io.github.neotheon3.orangebox.core.bluetooth.SimulatedDongleSource
 import io.github.neotheon3.orangebox.core.common.ApplicationScope
 import io.github.neotheon3.orangebox.core.obd.ObdTransport
+import io.github.neotheon3.orangebox.core.simulator.DriveScriptPlayer
 import io.github.neotheon3.orangebox.core.simulator.SimulatedElm327Transport
 import io.github.neotheon3.orangebox.core.simulator.SimulatorController
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +41,10 @@ object SimulatorModule {
         override val available = true
         override fun createTransport(): ObdTransport = SimulatedElm327Transport(controller)
     }
+
+    @Provides @Singleton
+    fun provideDriveScriptPlayer(controller: SimulatorController, @ApplicationScope scope: CoroutineScope): DriveScriptPlayer =
+        DriveScriptPlayer(controller, scope)
 
     @Provides fun provideDebugEntries(): DebugEntries = SimulatorDebugEntries
 }

@@ -37,4 +37,7 @@ interface ObdConnection {
     fun retry()
 
     fun disconnect()
+
+    /** Runs [block] against the live session; null when not connected. */
+    suspend fun <T> withSession(block: suspend (Elm327Session) -> T): T?
 }

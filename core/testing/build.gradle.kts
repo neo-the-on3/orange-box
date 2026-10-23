@@ -23,3 +23,7 @@ dependencies {
 dependencies {
     api(project(":core:obd"))
 }
+
+dependencies {
+    api(project(":core:telemetry"))
+}
