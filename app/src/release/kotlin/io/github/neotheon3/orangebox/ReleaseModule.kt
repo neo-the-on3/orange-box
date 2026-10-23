@@ -11,9 +11,12 @@ import io.github.neotheon3.orangebox.core.model.BackendMode
 @Module
 @InstallIn(SingletonComponent::class)
 object ReleaseModule {
-    @Provides fun provideLaunchOverrides(): LaunchOverrides = object : LaunchOverrides {
-        override fun apply(intent: Intent?): BackendMode? = null
-    }
+    @Provides fun provideLaunchOverrides(): LaunchOverrides = ReleaseLaunchOverrides
 
     @Provides fun provideDebugEntries(): DebugEntries = NoDebugEntries
+}
+
+/** Ignores every launch extra, including `backend_mode`. */
+object ReleaseLaunchOverrides : LaunchOverrides {
+    override fun apply(intent: Intent?): BackendMode? = null
 }

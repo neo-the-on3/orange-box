@@ -1,4 +1,5 @@
 pluginManagement {
+    includeBuild("build-logic")
     repositories {
         google {
             content {
@@ -24,6 +25,8 @@ rootProject.name = "orange-box"
 
 include(":app")
 include(":core:model")
+include(":core:common")
+include(":core:testing")
 include(":core:datastore")
 include(":core:designsystem")
 include(":feature:home")

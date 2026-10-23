@@ -38,7 +38,7 @@ jobs:
           "$SDKM" --install "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" > /dev/null
 
       - name: Assemble, lint and unit test
-        run: ./gradlew assembleDebug lintDebug testDebugUnitTest :core:model:test --stacktrace
+        run: ./gradlew assembleDebug lintDebug testDebugUnitTest :app:testReleaseUnitTest --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7

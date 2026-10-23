@@ -1,41 +1,23 @@
 package io.github.neotheon3.orangebox.feature.settings
 
-import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
-import io.github.neotheon3.orangebox.core.model.BackendConfig
 import io.github.neotheon3.orangebox.core.model.BackendMode
 import io.github.neotheon3.orangebox.core.model.BaseUrlValidator
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
+import io.github.neotheon3.orangebox.core.testing.FakeBackendConfigRepository
+import io.github.neotheon3.orangebox.core.testing.MainDispatcherRule
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
-    private class FakeRepo : BackendConfigRepository {
-        val state = MutableStateFlow(BackendConfig())
-        override val config = state
-        override suspend fun setMode(mode: BackendMode) { state.value = state.value.copy(mode = mode) }
-        override suspend fun setBaseUrl(url: String): BaseUrlValidator.Result {
-            val r = BaseUrlValidator.validate(url)
-            if (r == BaseUrlValidator.Result.Valid) state.value = state.value.copy(baseUrl = url.trim())
-            return r
-        }
-    }
-
-    @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
-    @After fun tearDown() = Dispatchers.resetMain()
+    @get:Rule val main = MainDispatcherRule()
 
     @Test fun `selecting a mode persists it`() = runTest {
-        val repo = FakeRepo()
+        val repo = FakeBackendConfigRepository()
         val vm = SettingsViewModel(repo)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
         vm.onModeSelected(BackendMode.FAKE)
@@ -44,7 +26,7 @@ class SettingsViewModelTest {
     }
 
     @Test fun `cleartext url is rejected and not stored`() = runTest {
-        val repo = FakeRepo()
+        val repo = FakeBackendConfigRepository()
         val vm = SettingsViewModel(repo)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
         vm.onUrlChanged("http://14.63.216.111:9801")
