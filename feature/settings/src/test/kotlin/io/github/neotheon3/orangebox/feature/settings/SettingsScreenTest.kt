@@ -4,7 +4,9 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import io.github.neotheon3.orangebox.core.designsystem.OrangeBoxTheme
 import io.github.neotheon3.orangebox.core.model.BackendConfig
 import io.github.neotheon3.orangebox.core.model.BackendMode
@@ -41,5 +43,16 @@ class SettingsScreenTest {
             }
         }
         compose.onNodeWithTag("settings_base_url").assertIsDisplayed()
+    }
+
+    @Test fun `about shows version and build`() {
+        val v = io.github.neotheon3.orangebox.core.model.AppVersion("0.1.0.9-abc1234-ci57-debug", 9, "abc1234", "57", debug = true)
+        compose.setContent {
+            io.github.neotheon3.orangebox.core.designsystem.OrangeBoxTheme {
+                SettingsScreen(SettingsUiState(version = v), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {})
+            }
+        }
+        compose.onNodeWithTag("settings_about_version").performScrollTo().assertTextContains("Version 0.1.0.9-abc1234-ci57-debug (code 9)")
+        compose.onNodeWithTag("settings_about_build").assertTextContains("Commit abc1234 · CI run 57")
     }
 }

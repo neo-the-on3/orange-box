@@ -19,6 +19,19 @@ object AppModule {
 
 @Module
 @InstallIn(SingletonComponent::class)
+object VersionModule {
+    @Provides
+    fun provideAppVersion(): io.github.neotheon3.orangebox.core.model.AppVersion = io.github.neotheon3.orangebox.core.model.AppVersion(
+        versionName = BuildConfig.VERSION_NAME,
+        versionCode = BuildConfig.VERSION_CODE,
+        gitSha = BuildConfig.GIT_SHA,
+        ciRun = BuildConfig.CI_RUN,
+        debug = BuildConfig.DEBUG,
+    )
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
 object TelemetryModule {
     @Provides @Singleton
     fun providePidPoller(connection: io.github.neotheon3.orangebox.core.obd.ObdConnection): io.github.neotheon3.orangebox.core.obd.pid.PidPoller =

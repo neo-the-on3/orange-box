@@ -19,6 +19,8 @@ import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import io.github.neotheon3.orangebox.core.obd.ObdError
 import io.github.neotheon3.orangebox.core.simulator.SimulatorController
+import io.github.neotheon3.orangebox.core.obd.VinDecoder
+import io.github.neotheon3.orangebox.core.simulator.DtcList
 import io.github.neotheon3.orangebox.core.simulator.SimulatorState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,7 +47,12 @@ class SimulatorScreenTest {
         override fun update(transform: (SimulatorState) -> SimulatorState) { controller.update(transform); ui = ui.copy(sim = controller.state.value) }
         override fun linkConnected() { calls += "link=connected" }
         override fun linkDisconnected() { calls += "link=disconnected" }
-        override fun injectDtc(code: String) = controller.injectDtc(code).also { ui = ui.copy(sim = controller.state.value) }
+        override fun injectDtc(code: String, list: DtcList) = controller.addDtc(code, list).also { ui = ui.copy(sim = controller.state.value) }
+        override fun setVin(vin: String) { controller.setVin(vin); ui = ui.copy(sim = controller.state.value) }
+        override fun readDiagnostics() {
+            calls += "read"
+            ui = ui.copy(readout = DiagnosticsReadout(listOf("P0133"), listOf("P0300"), emptyList(), VinDecoder.Result.Valid(SimulatorState.VIN, true)))
+        }
         override fun clearDtcs() { controller.clearDtcs(); ui = ui.copy(sim = controller.state.value) }
         override fun setBackendMode(mode: BackendMode) { ui = ui.copy(backendMode = mode) }
         override fun startScript(id: String) { calls += "script=$id"; controller.update { it.copy(runningScript = id) }; ui = ui.copy(sim = controller.state.value) }
@@ -84,10 +91,40 @@ class SimulatorScreenTest {
         click("sim_dtc_clear")
         assertTrue(sim.dtcs.isEmpty()); assertFalse(sim.milOn)
     }
-    @Test fun `invalid dtc is rejected`() {
-        compose.onNodeWithTag("sim_dtc_input").performScrollTo().performTextReplacement("nope")
+    @Test fun `pending and permanent dtc injection`() {
+        click("sim_dtc_kind_pending")
+        compose.onNodeWithTag("sim_dtc_input").performScrollTo().performTextReplacement("P0300")
+        click("sim_dtc_inject")
+        click("sim_dtc_kind_permanent")
+        compose.onNodeWithTag("sim_dtc_input").performScrollTo().performTextReplacement("P0420")
+        click("sim_dtc_inject")
+        assertEquals(listOf("P0300"), sim.pendingDtcs)
+        assertEquals(listOf("P0420"), sim.permanentDtcs)
+        assertTrue(sim.dtcs.isEmpty())
+        compose.onNodeWithTag("sim_dtc_other_lists").assertTextContains("Pending: P0300   Permanent: P0420")
+    }
+
+    @Test fun `vin can be set`() {
+        compose.onNodeWithTag("sim_vin_input").performScrollTo().performTextReplacement("1M8GDM9AXKP042788")
+        click("sim_vin_set")
+        assertEquals("1M8GDM9AXKP042788", sim.vin)
+    }
+
+    @Test fun `app readout shows DTC lists and VIN`() {
+        click("sim_readout_read")
+        assertEquals(listOf("read"), calls)
+        compose.onNodeWithTag("sim_readout_stored").performScrollTo().assertTextContains("Stored (03): P0133")
+        compose.onNodeWithTag("sim_readout_pending").assertTextContains("Pending (07): P0300")
+        compose.onNodeWithTag("sim_readout_permanent").assertTextContains("Permanent (0A): none")
+        compose.onNodeWithTag("sim_readout_vin").assertTextContains(SimulatorState.VIN, substring = true)
+        compose.onNodeWithTag("sim_readout_telemetry").assertTextContains("not connected", substring = true)
+    }
+
+    @Test fun `invalid dtc is rejected with supporting text`() {
+        compose.onNodeWithTag("sim_dtc_input").performScrollTo().performTextReplacement("XYZ12")
         click("sim_dtc_inject")
         assertTrue(sim.dtcs.isEmpty())
+        compose.onNodeWithTag("sim_dtc_error", useUnmergedTree = true).assertTextContains("Invalid code", substring = true)
     }
     @Test fun `failure toggles show the banner`() {
         click("sim_fail_connection"); assertTrue("connection", sim.connectionFailure)

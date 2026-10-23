@@ -18,7 +18,7 @@ class SettingsViewModelTest {
 
     @Test fun `selecting a mode persists it`() = runTest {
         val repo = FakeBackendConfigRepository()
-        val vm = SettingsViewModel(repo)
+        val vm = SettingsViewModel(repo, io.github.neotheon3.orangebox.core.model.AppVersion.UNKNOWN)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
         vm.onModeSelected(BackendMode.FAKE)
         assertEquals(BackendMode.FAKE, repo.config.first().mode)
@@ -27,7 +27,7 @@ class SettingsViewModelTest {
 
     @Test fun `cleartext url is rejected and not stored`() = runTest {
         val repo = FakeBackendConfigRepository()
-        val vm = SettingsViewModel(repo)
+        val vm = SettingsViewModel(repo, io.github.neotheon3.orangebox.core.model.AppVersion.UNKNOWN)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
         vm.onUrlChanged("http://14.63.216.111:9801")
         vm.onSaveUrl()

@@ -25,9 +25,9 @@ class SimulatedElm327(private val controller: SimulatorController) {
             s.unsupportedProtocol -> "SEARCHING...\nUNABLE TO CONNECT"
             cmd == "03" -> dtcResponse(0x43, s.dtcs)
             cmd == "07" -> dtcResponse(0x47, s.pendingDtcs)
-            cmd == "0A" -> dtcResponse(0x4A, emptyList())
+            cmd == "0A" -> dtcResponse(0x4A, s.permanentDtcs)
             cmd == "04" -> { controller.clearDtcs(); "44" }
-            cmd == "0902" -> vinResponse(SimulatorState.VIN)
+            cmd == "0902" -> if (s.vin.isEmpty()) "NO DATA" else vinResponse(s.vin)
             cmd.length == 4 && cmd.startsWith("01") -> mode01(cmd.substring(2), s)
             else -> "?"
         }
@@ -85,7 +85,7 @@ class SimulatedElm327(private val controller: SimulatorController) {
         return canMessage(payload)
     }
 
-    private fun vinResponse(vin: String): String = canMessage(listOf(0x49, 0x02, 0x01) + vin.map { it.code })
+    private fun vinResponse(vin: String): String = canMessage(listOf(0x49, 0x02, 0x01) + vin.take(17).map { it.code and 0x7F })
 
     companion object {
         val BITMAP_BASES = setOf(0x00, 0x20, 0x40)

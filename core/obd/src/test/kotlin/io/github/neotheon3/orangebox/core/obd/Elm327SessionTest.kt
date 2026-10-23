@@ -12,10 +12,38 @@ class Elm327SessionTest {
     @Test fun `init sends AT sequence then probes`() = runTest {
         val t = FakeObdTransport()
         val info = Elm327Session(t).initialize()
-        assertEquals(listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "ATDPN", "ATRV", "0100", "ATDPN"), t.written)
+        assertEquals(listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "ATRV", "0100", "ATDPN"), t.written)
         assertEquals("ELM327 v1.5", info.adapterId)
         assertEquals(ObdProtocol.CAN_11_500, info.protocol)
         assertEquals(12.6, info.voltage!!, 0.001)
+    }
+
+    @Test fun `garbled or auto ATDPN after the search is retried`() = runTest {
+        val replies = ArrayDeque(listOf("A#\u0007", "A0", "A6"))
+        val t = FakeObdTransport(responder = { if (it == "ATDPN") replies.removeFirst() else FakeObdTransport.defaultResponse(it) })
+        val info = Elm327Session(t).initialize()
+        assertEquals(ObdProtocol.CAN_11_500, info.protocol)
+        assertTrue(info.protocol.isCan)
+        assertEquals(3, t.written.count { it == "ATDPN" })
+    }
+
+    @Test fun `protocol that cannot be determined fails clearly instead of staying Automatic`() = runTest {
+        val t = FakeObdTransport(responder = { if (it == "ATDPN") "A0" else FakeObdTransport.defaultResponse(it) })
+        try {
+            Elm327Session(t).initialize()
+            fail("expected ObdError.Io")
+        } catch (e: ObdError.Io) {
+            assertTrue(e.message!!.contains("protocol"))
+            assertTrue(!e.isTerminal) // the connection manager retries it
+        }
+    }
+
+    @Test fun `ISO 9141 is detected as non-CAN`() = runTest {
+        val t = FakeObdTransport(responder = { if (it == "ATDPN") "A3" else FakeObdTransport.defaultResponse(it) })
+        val s = Elm327Session(t)
+        assertEquals(ObdProtocol.ISO_9141_2, s.initialize().protocol)
+        t.responder = { if (it == "03") "43 01 33 04 20 00 00" else FakeObdTransport.defaultResponse(it) }
+        assertEquals(listOf("P0133", "P0420"), s.readDtcs())
     }
 
     @Test fun `prompt parsing strips echo and searching`() {

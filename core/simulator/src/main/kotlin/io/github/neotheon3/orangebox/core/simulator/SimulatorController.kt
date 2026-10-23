@@ -16,19 +16,27 @@ class SimulatorController(initial: SimulatorState = SimulatorState()) {
 
     fun reset() { _state.value = SimulatorState() }
 
-    fun addPendingDtc(code: String): Boolean {
+    fun addPendingDtc(code: String): Boolean = addDtc(code, DtcList.PENDING)
+
+    /** Adds [code] to [list]. Returns false (and changes nothing) if the code is not a valid DTC. */
+    fun addDtc(code: String, list: DtcList): Boolean {
         val c = code.trim().uppercase()
         if (io.github.neotheon3.orangebox.core.obd.Elm327Session.encodeDtc(c) == null) return false
-        update { if (c in it.pendingDtcs) it else it.copy(pendingDtcs = it.pendingDtcs + c) }
+        update {
+            when (list) {
+                DtcList.STORED -> if (c in it.dtcs) it else it.copy(dtcs = it.dtcs + c, milOn = true)
+                DtcList.PENDING -> if (c in it.pendingDtcs) it else it.copy(pendingDtcs = it.pendingDtcs + c)
+                DtcList.PERMANENT -> if (c in it.permanentDtcs) it else it.copy(permanentDtcs = it.permanentDtcs + c)
+            }
+        }
         return true
     }
 
-    fun injectDtc(code: String): Boolean {
-        val c = code.trim().uppercase()
-        if (io.github.neotheon3.orangebox.core.obd.Elm327Session.encodeDtc(c) == null) return false
-        update { if (c in it.dtcs) it else it.copy(dtcs = it.dtcs + c, milOn = true) }
-        return true
-    }
+    fun setVin(vin: String) = update { it.copy(vin = vin.trim().uppercase().take(17)) }
+
+    fun injectDtc(code: String): Boolean = addDtc(code, DtcList.STORED)
 
     fun clearDtcs() = update { it.copy(dtcs = emptyList(), pendingDtcs = emptyList(), milOn = false) }
 }
+
+enum class DtcList { STORED, PENDING, PERMANENT }

@@ -23,6 +23,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -133,6 +134,17 @@ fun SettingsScreen(
                     Text(stringResource(R.string.settings_save_url))
                 }
             }
+            HorizontalDivider()
+            Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.settings_about_version, state.version.versionName, state.version.versionCode),
+                modifier = Modifier.testTag("settings_about_version"),
+            )
+            Text(
+                stringResource(R.string.settings_about_build, state.version.gitSha, state.version.ciRun ?: stringResource(R.string.settings_about_local)),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("settings_about_build"),
+            )
         }
     }
 }

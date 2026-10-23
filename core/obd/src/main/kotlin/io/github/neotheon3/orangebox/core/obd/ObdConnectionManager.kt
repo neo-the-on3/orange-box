@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.core.obd
 
+import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.common.runCatchingCancellable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -19,8 +20,10 @@ import kotlinx.coroutines.withContext
  * recoverable errors, then `Failed` until [retry]. NotPaired, UnsupportedProtocol and
  * PermissionDenied are terminal: one attempt, no retries.
  *
- * While connected a heartbeat (`ATRV`) runs every [heartbeatMillis]; a failure, or a
- * [DongleLinkEvent.Disconnected] for the selected dongle, re-enters the retry loop.
+ * While connected a heartbeat (`ATRV`) runs every [heartbeatMillis]; a heartbeat failure re-enters the
+ * retry loop. A [DongleLinkEvent.Disconnected] for the selected dongle (in any active state) stops
+ * everything and moves to `LinkLost`; [DongleLinkEvent.Connected] or [connect] start again.
+ * The real ACL receiver and the Simulator feed the same [DongleLinkEvents], so both paths behave alike.
  */
 class ObdConnectionManager(
     private val scope: CoroutineScope,
@@ -32,6 +35,23 @@ class ObdConnectionManager(
 ) : ObdConnection {
     private val _state = MutableStateFlow<ObdConnectionState>(ObdConnectionState.Idle)
     override val state: StateFlow<ObdConnectionState> = _state.asStateFlow()
+
+    /** Sets the state and logs real transitions (not the per-second countdown or voltage updates). */
+    private fun setState(new: ObdConnectionState) {
+        val old = _state.value
+        _state.value = new
+        if (old::class != new::class || (new is ObdConnectionState.WaitingToRetry && old is ObdConnectionState.WaitingToRetry && old.nextRetry != new.nextRetry)) {
+            when (new) {
+                is ObdConnectionState.Failed -> OrangeLog.w(AREA, "state", "to" to "Failed", "attempts" to new.attempts, "reason" to new.reason.describe())
+                is ObdConnectionState.WaitingToRetry -> OrangeLog.i(
+                    AREA, "retry_scheduled", "retry" to "${new.nextRetry}/${new.maxRetries}",
+                    "delay_s" to new.secondsRemaining, "last_error" to new.lastError.describe(),
+                )
+                is ObdConnectionState.Connected -> OrangeLog.i(AREA, "state", "to" to "Connected", "protocol" to new.info.protocol.name, "voltage" to new.info.voltage)
+                else -> OrangeLog.i(AREA, "state", "from" to old::class.simpleName, "to" to new::class.simpleName)
+            }
+        }
+    }
 
     private val _lastLinkEvent = MutableStateFlow<DongleLinkEvent?>(null)
     val lastLinkEvent: StateFlow<DongleLinkEvent?> = _lastLinkEvent.asStateFlow()
@@ -48,17 +68,34 @@ class ObdConnectionManager(
             linkEvents.collect { event ->
                 _lastLinkEvent.value = event
                 when (event) {
-                    is DongleLinkEvent.Connected -> if (isIdleOrFailed()) connect()
-                    is DongleLinkEvent.Disconnected -> if (_state.value is ObdConnectionState.Connected) restart(fromDrop = true)
+                    is DongleLinkEvent.Connected -> {
+                        OrangeLog.i(AREA, "link_up", "state" to _state.value::class.simpleName)
+                        if (isIdleOrFailed()) connect()
+                    }
+                    is DongleLinkEvent.Disconnected -> {
+                        OrangeLog.i(AREA, "link_down", "state" to _state.value::class.simpleName)
+                        if (_state.value !is ObdConnectionState.Idle) linkLost()
+                    }
                 }
             }
         }
     }
 
-    private fun isIdleOrFailed() = _state.value.let { it is ObdConnectionState.Idle || it is ObdConnectionState.Failed }
+    private fun isIdleOrFailed() = _state.value.let {
+        it is ObdConnectionState.Idle || it is ObdConnectionState.Failed || it is ObdConnectionState.LinkLost
+    }
+
+    private fun linkLost() {
+        val previous = job
+        job = scope.launch {
+            previous?.cancelAndJoinQuietly()
+            setState(ObdConnectionState.LinkLost)
+        }
+    }
 
     override fun connect() {
         if (job?.isActive == true) return
+        if (!isIdleOrFailed()) return
         restart(fromDrop = false)
     }
 
@@ -67,7 +104,7 @@ class ObdConnectionManager(
     override fun disconnect() {
         job?.cancel()
         job = null
-        _state.value = ObdConnectionState.Idle
+        setState(ObdConnectionState.Idle)
     }
 
     /** Runs [block] against the live session, or returns null when not connected. */
@@ -103,7 +140,7 @@ class ObdConnectionManager(
                 else -> {
                     lastError = result
                     if (result.isTerminal || retry >= policy.maxRetries) {
-                        _state.value = ObdConnectionState.Failed(result, attempts = retry + 1)
+                        setState(ObdConnectionState.Failed(result, attempts = retry + 1))
                         return
                     }
                     retry++
@@ -116,12 +153,12 @@ class ObdConnectionManager(
     private suspend fun waitBeforeRetry(retry: Int, lastError: ObdError) {
         var remaining = policy.delayBefore(retry)
         while (remaining > 0) {
-            _state.value = ObdConnectionState.WaitingToRetry(
+            setState(ObdConnectionState.WaitingToRetry(
                 nextRetry = retry,
                 maxRetries = policy.maxRetries,
                 secondsRemaining = ((remaining + 999) / 1000).toInt(),
                 lastError = lastError,
-            )
+            ))
             val step = minOf(1_000L, remaining)
             delay(step)
             remaining -= step
@@ -130,20 +167,22 @@ class ObdConnectionManager(
 
     /** One connection attempt. Returns the error, or null after a successful session ends. */
     private suspend fun attempt(retry: Int): ObdError? {
-        _state.value = ObdConnectionState.Connecting(retry, policy.maxRetries)
+        setState(ObdConnectionState.Connecting(retry, policy.maxRetries))
         totalAttempts++
         var transport: ObdTransport? = null
         try {
             val t = Elm327Session.guarded { transportProvider.create() }.also { transport = it }
             Elm327Session.guarded { t.open() }
-            _state.value = ObdConnectionState.Initializing(retry, policy.maxRetries)
+            setState(ObdConnectionState.Initializing(retry, policy.maxRetries))
             val s = sessionFactory(t)
             val info = Elm327Session.guarded { s.initialize() }
             session = s
-            _state.value = ObdConnectionState.Connected(info)
+            setState(ObdConnectionState.Connected(info))
             heartbeat(s, info)
+            OrangeLog.w(AREA, "connection_lost", "reason" to "heartbeat failed")
             return null
         } catch (e: ObdError) {
+            OrangeLog.w(AREA, "attempt_failed", "retry" to retry, "error" to e.describe())
             return e
         } finally {
             session = null
@@ -163,9 +202,13 @@ class ObdConnectionManager(
             }
             if (voltage != null && voltage != current.voltage) {
                 current = current.copy(voltage = voltage)
-                _state.value = ObdConnectionState.Connected(current)
+                setState(ObdConnectionState.Connected(current))
             }
         }
+    }
+
+    private companion object {
+        const val AREA = OrangeLog.Areas.OBD
     }
 
     private suspend fun Job.cancelAndJoinQuietly() {

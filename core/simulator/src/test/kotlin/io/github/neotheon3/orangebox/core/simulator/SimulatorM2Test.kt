@@ -70,7 +70,7 @@ class SimulatorM2Test {
         assertEquals(SimulatorState.IDLE_RPM, DriveScript.gearRpm(0.0))
     }
 
-    @Test fun `player drives the controller and stops`() = runTest {
+    @Test fun `player drives the controller, stop coasts to idle`() = runTest {
         val c = SimulatorController()
         val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250)
         p.start(DriveScript.HIGHWAY)
@@ -79,11 +79,50 @@ class SimulatorM2Test {
         advanceTimeBy(15_000); runCurrent()
         assertEquals(100, c.state.value.speedKph)
         p.stop()
+        runCurrent()
         assertNull(c.state.value.runningScript)
+        assertEquals(0, c.state.value.throttlePercent)
         advanceTimeBy(5_000); runCurrent()
-        assertEquals(100, c.state.value.speedKph)
-        p.start(DriveScript.IDLE)
-        advanceTimeBy(121_000); runCurrent()
-        assertNull("script ends on its own", c.state.value.runningScript)
+        // 100 km/h − 7.2 km/h/s · 5 s ≈ 64 km/h: still coasting, decelerating smoothly
+        assertTrue(c.state.value.speedKph in 60..68)
+        advanceTimeBy(15_000); runCurrent()
+        assertEquals(0, c.state.value.speedKph)
+        assertEquals(SimulatorState.IDLE_RPM, c.state.value.rpm)
+    }
+
+    @Test fun `script that ends on its own also coasts to a stop`() = runTest {
+        val c = SimulatorController()
+        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250)
+        p.start(DriveScript.HIGHWAY) // ends at 100 km/h
+        advanceTimeBy((DriveScript.HIGHWAY.durationS * 1000).toLong() + 500); runCurrent()
+        assertNull(c.state.value.runningScript)
+        advanceTimeBy(20_000); runCurrent()
+        assertEquals(0, c.state.value.speedKph)
+        assertEquals(SimulatorState.IDLE_RPM, c.state.value.rpm)
+    }
+
+    @Test fun `starting a new script cancels the coast`() = runTest {
+        val c = SimulatorController()
+        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250)
+        p.start(DriveScript.HIGHWAY); advanceTimeBy(15_000); runCurrent()
+        p.stop(); advanceTimeBy(1_000)
+        p.start(DriveScript.IDLE); runCurrent()
+        advanceTimeBy(5_000); runCurrent()
+        assertEquals(0, c.state.value.speedKph)
+        assertEquals("idle", c.state.value.runningScript)
+    }
+
+    @Test fun `permanent DTCs survive mode 04 and VIN can be changed`() = runTest {
+        val c = SimulatorController()
+        val s = session(c)
+        assertTrue(c.addDtc("P0420", DtcList.PERMANENT))
+        assertTrue(!c.addDtc("XYZ12", DtcList.PENDING))
+        assertEquals(listOf("P0420"), s.readDtcs(DtcKind.PERMANENT))
+        s.clearDtcs()
+        assertEquals(listOf("P0420"), s.readDtcs(DtcKind.PERMANENT))
+        c.setVin("1M8GDM9AXKP042788")
+        assertEquals(VinDecoder.Result.Valid("1M8GDM9AXKP042788", true), s.readVin())
+        c.setVin("BAD")
+        assertTrue(s.readVin() is VinDecoder.Result.Invalid)
     }
 }

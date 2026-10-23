@@ -85,16 +85,21 @@ class DriveScript(val id: String, val label: String, private val segments: List<
     }
 }
 
-/** Plays a [DriveScript] into a [SimulatorController] in real (or virtual) time. */
+/**
+ * Plays a [DriveScript] into a [SimulatorController] in real (or virtual) time. When the script ends or
+ * is stopped the car coasts to a halt: throttle 0, speed falls by [decayKphPerSecond] (≈ 2 m/s², gentle
+ * braking, so it doesn't count as harsh), RPM follows the gear model down to idle.
+ */
 class DriveScriptPlayer(
     private val controller: SimulatorController,
     private val scope: CoroutineScope,
     private val tickMillis: Long = 250,
+    private val decayKphPerSecond: Double = 7.2,
 ) {
     private var job: Job? = null
 
     fun start(script: DriveScript) {
-        stop()
+        job?.cancel()
         controller.update { it.copy(engineOn = true, runningScript = script.id) }
         job = scope.launch {
             var t = 0.0
@@ -106,13 +111,28 @@ class DriveScriptPlayer(
                 delay(tickMillis)
                 t += tickMillis / 1000.0
             }
-            controller.update { it.copy(runningScript = null, throttlePercent = 0) }
+            controller.update { it.copy(runningScript = null) }
+            coastToIdle()
         }
     }
 
+    /** Stops the script; the car then coasts to 0 km/h and idle RPM. */
     fun stop() {
+        val wasRunning = job?.isActive == true
         job?.cancel()
         job = null
         controller.update { if (it.runningScript == null) it else it.copy(runningScript = null, throttlePercent = 0) }
+        if (wasRunning) job = scope.launch { coastToIdle() }
+    }
+
+    private suspend fun coastToIdle() {
+        var v = controller.state.value.speedKph.toDouble()
+        val step = decayKphPerSecond * tickMillis / 1000.0
+        while (true) {
+            v = (v - step).coerceAtLeast(0.0)
+            controller.update { it.copy(speedKph = v.roundToInt(), rpm = DriveScript.gearRpm(v), throttlePercent = 0) }
+            if (v <= 0.0) break
+            delay(tickMillis)
+        }
     }
 }

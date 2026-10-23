@@ -16,6 +16,10 @@ data class SimulatorState(
     val throttlePercent: Int = 0,
     val dtcs: List<String> = emptyList(),
     val pendingDtcs: List<String> = emptyList(),
+    /** Permanent DTCs (mode 0A). Like a real ECU, mode 04 does not clear them. */
+    val permanentDtcs: List<String> = emptyList(),
+    /** VIN answered to 09 02. Not validated, so invalid VIN handling can be tested. */
+    val vin: String = VIN,
     val milOn: Boolean = false,
     val connectionFailure: Boolean = false,
     val unsupportedProtocol: Boolean = false,

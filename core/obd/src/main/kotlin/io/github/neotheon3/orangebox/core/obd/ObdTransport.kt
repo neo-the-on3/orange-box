@@ -30,6 +30,9 @@ fun interface ObdTransportProvider {
 sealed class ObdError(message: String, cause: Throwable? = null) : Exception(message, cause) {
     open val isTerminal: Boolean get() = false
 
+    /** Short, PII-free description for logs: type and message. */
+    fun describe(): String = "${this::class.simpleName}(${message})"
+
     /** No dongle selected, or the selected device is not bonded. */
     class NotPaired(message: String = "No paired OBD dongle") : ObdError(message) {
         override val isTerminal get() = true
