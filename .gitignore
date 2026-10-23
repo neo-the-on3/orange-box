@@ -1,23 +1,65 @@
-# Gradle / Android
+# ---- Gradle ----
 .gradle/
 build/
-/local.properties
-/captures
+!gradle/wrapper/gradle-wrapper.jar
+/buildSrc/build/
+/build-logic/*/build/
+
+# ---- Android / Android Studio ----
+local.properties
+/captures/
+captures/
 .externalNativeBuild/
 .cxx/
+.navigation/
 *.apk
 *.aab
 *.ap_
+*.apks
 *.dex
-# Kotlin
+*.class
+output-metadata.json
+lint-results*.html
+lint-results*.xml
+/app/release/
+/app/debug/
+*.hprof
+freeline.py
+freeline/
+freeline_project_description.json
+
+# ---- Kotlin ----
 .kotlin/
-# IDE
+*.kotlin_module.tmp
+
+# ---- IntelliJ / Android Studio ----
 .idea/
 *.iml
-.DS_Store
-# Signing material must never be committed
+*.ipr
+*.iws
+out/
+
+# ---- Signing material and secrets: never commit ----
 *.jks
 *.keystore
+*.p12
+*.pem
 keystore.properties
-# Python tooling
+signing.properties
+google-services.json
+secrets.properties
+
+# ---- Logs / tooling ----
+*.log
 .venv/
+node_modules/
+
+# ---- OS files ----
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*~
+.directory
