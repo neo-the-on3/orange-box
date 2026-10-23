@@ -89,12 +89,19 @@ class DriveScript(val id: String, val label: String, private val segments: List<
  * Plays a [DriveScript] into a [SimulatorController] in real (or virtual) time. When the script ends or
  * is stopped the car coasts to a halt: throttle 0, speed falls by [decayKphPerSecond] (≈ 2 m/s², gentle
  * braking, so it doesn't count as harsh), RPM follows the gear model down to idle.
+ *
+ * Script time is read from [clock] (monotonic milliseconds), not counted in [tickMillis] steps: on a slow
+ * device each `delay(tickMillis)` overruns, and counting ticks stretched the whole drive in wall time
+ * (≈ 8 % on an API 25 ARM emulator), which lowered every real acceleration by the same factor. City's
+ * 1.74 m/s² stops then fell under the 1.5 m/s² eco limit and were counted as eco (issue #120).
+ * [tickMillis] now only sets how often the frame is refreshed.
  */
 class DriveScriptPlayer(
     private val controller: SimulatorController,
     private val scope: CoroutineScope,
-    private val tickMillis: Long = 250,
+    private val tickMillis: Long = 100,
     private val decayKphPerSecond: Double = 7.2,
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private var job: Job? = null
 
@@ -102,14 +109,15 @@ class DriveScriptPlayer(
         job?.cancel()
         controller.update { it.copy(engineOn = true, runningScript = script.id) }
         job = scope.launch {
-            var t = 0.0
-            while (t <= script.durationS) {
-                val f = script.frameAt(t)
+            val startedAt = clock()
+            while (true) {
+                val t = (clock() - startedAt) / 1000.0
+                val f = script.frameAt(t.coerceAtMost(script.durationS))
                 controller.update {
                     it.copy(speedKph = f.speedKph.roundToInt(), rpm = f.rpm, throttlePercent = f.throttlePercent)
                 }
+                if (t >= script.durationS) break
                 delay(tickMillis)
-                t += tickMillis / 1000.0
             }
             controller.update { it.copy(runningScript = null) }
             coastToIdle()
@@ -125,11 +133,12 @@ class DriveScriptPlayer(
         if (wasRunning) job = scope.launch { coastToIdle() }
     }
 
+    /** Speed falls linearly with elapsed [clock] time, so a late tick can't slow the deceleration. */
     private suspend fun coastToIdle() {
-        var v = controller.state.value.speedKph.toDouble()
-        val step = decayKphPerSecond * tickMillis / 1000.0
+        val v0 = controller.state.value.speedKph.toDouble()
+        val startedAt = clock()
         while (true) {
-            v = (v - step).coerceAtLeast(0.0)
+            val v = (v0 - decayKphPerSecond * (clock() - startedAt) / 1000.0).coerceAtLeast(0.0)
             controller.update { it.copy(speedKph = v.roundToInt(), rpm = DriveScript.gearRpm(v), throttlePercent = 0) }
             if (v <= 0.0) break
             delay(tickMillis)
