@@ -3,6 +3,7 @@ package io.github.neotheon3.orangebox.core.bluetooth
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.neotheon3.orangebox.core.datastore.DongleSelectionRepository
 import io.github.neotheon3.orangebox.core.model.SelectedDongle
@@ -32,8 +33,14 @@ object NoSimulatedDongle : SimulatedDongleSource {
     override fun createTransport(): ObdTransport = throw ObdError.NotPaired("Simulator not available in this build")
 }
 
+/** Whether a real dongle can be reached at all, so the picker can say why its list is empty (#121). */
+enum class BluetoothAvailability { UNAVAILABLE, OFF, ON }
+
 interface ObdDongleProvider : ObdTransportProvider {
     val selected: Flow<SelectedDongle?>
+
+    /** No adapter (e.g. an emulator without Bluetooth), adapter switched off, or on. */
+    fun bluetoothAvailability(): BluetoothAvailability = BluetoothAvailability.ON
 
     /** Bonded devices (plus the simulated dongle in debug). Throws [ObdError.PermissionDenied] without BLUETOOTH_CONNECT. */
     fun candidates(): List<DongleCandidate>
@@ -48,6 +55,17 @@ class DefaultObdDongleProvider @Inject constructor(
     private val simulated: SimulatedDongleSource,
 ) : ObdDongleProvider {
     override val selected: Flow<SelectedDongle?> = selection.selected
+
+    @SuppressLint("MissingPermission") // isEnabled needs only the install-time BLUETOOTH permission (≤ 30) or none (31+)
+    override fun bluetoothAvailability(): BluetoothAvailability {
+        if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)) return BluetoothAvailability.UNAVAILABLE
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: return BluetoothAvailability.UNAVAILABLE
+        return try {
+            if (adapter.isEnabled) BluetoothAvailability.ON else BluetoothAvailability.OFF
+        } catch (e: SecurityException) {
+            BluetoothAvailability.ON // can't tell; let the list and the connection test report the problem
+        }
+    }
 
     @SuppressLint("MissingPermission") // checked by requireConnect
     override fun candidates(): List<DongleCandidate> {

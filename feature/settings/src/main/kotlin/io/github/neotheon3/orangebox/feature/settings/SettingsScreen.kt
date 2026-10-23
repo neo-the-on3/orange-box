@@ -162,7 +162,7 @@ fun SettingsScreen(
                 stringResource(R.string.settings_dongle), state.dongleName ?: stringResource(R.string.settings_not_set),
                 onOpenDongle, "settings_dongle",
             )
-            SetupRow(stringResource(R.string.settings_permissions), stringResource(R.string.settings_permissions_summary), onOpenPermissions, "settings_permissions")
+            SetupRow(stringResource(R.string.settings_permissions), stringResource(permissionsSummaryRes()), onOpenPermissions, "settings_permissions")
             ListItem(
                 headlineContent = { Text(stringResource(R.string.settings_auto_start)) },
                 supportingContent = { Text(stringResource(R.string.settings_auto_start_summary)) },
@@ -193,4 +193,14 @@ private fun SetupRow(title: String, summary: String, onClick: () -> Unit, tag: S
         supportingContent = { Text(summary) },
         modifier = Modifier.clickable(onClick = onClick, role = Role.Button).testTag(tag),
     )
+}
+
+/**
+ * Names only the runtime permissions this Android version asks for: Bluetooth (Nearby devices) from
+ * API 31, notifications from 33, location everywhere. Mirrors feature:setup's AppPermission.forSdk.
+ */
+internal fun permissionsSummaryRes(sdk: Int = android.os.Build.VERSION.SDK_INT): Int = when {
+    sdk >= android.os.Build.VERSION_CODES.TIRAMISU -> R.string.settings_permissions_summary
+    sdk >= android.os.Build.VERSION_CODES.S -> R.string.settings_permissions_summary_bt_location
+    else -> R.string.settings_permissions_summary_location
 }

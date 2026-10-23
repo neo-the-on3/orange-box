@@ -19,6 +19,8 @@
     <string name="settings_not_set">Not set up</string>
     <string name="settings_permissions">Permissions</string>
     <string name="settings_permissions_summary">Bluetooth, notifications and location</string>
+    <string name="settings_permissions_summary_bt_location">Bluetooth and location</string>
+    <string name="settings_permissions_summary_location">Location</string>
     <string name="settings_auto_start">Start when the dongle connects</string>
     <string name="settings_auto_start_summary">Connect automatically when the paired dongle comes in range.</string>
     <string name="settings_about_section">About</string>

@@ -66,6 +66,10 @@
     <string name="dongle_none_paired">No paired Bluetooth devices. Pair your dongle in Bluetooth settings (PIN is usually 1234 or 0000).</string>
     <string name="dongle_simulated">Simulated, for testing without a car</string>
     <string name="dongle_open_bt_settings">Open Bluetooth settings</string>
+    <string name="dongle_turn_on_bt">Turn on Bluetooth</string>
+    <string name="dongle_bt_unavailable">This device has no Bluetooth, so it can\'t connect to an OBD dongle.</string>
+    <string name="dongle_bt_off">Bluetooth is off. Turn it on to see your paired dongle.</string>
+    <string name="dongle_settings_unavailable">Couldn\'t open Settings on this device.</string>
     <string name="dongle_test">Test connection</string>
     <string name="dongle_testing">Testing… keep the engine running.</string>
     <string name="dongle_test_ok">Connected to %1$s using %2$s.</string>

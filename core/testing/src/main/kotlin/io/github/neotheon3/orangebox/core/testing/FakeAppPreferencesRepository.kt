@@ -13,6 +13,7 @@ class FakeAppPreferencesRepository(initial: AppPreferences = AppPreferences()) :
     override suspend fun setOnboardingComplete(complete: Boolean) { state.value = state.value.copy(onboardingComplete = complete) }
     override suspend fun setAutoStartOnDongleConnect(enabled: Boolean) { state.value = state.value.copy(autoStartOnDongleConnect = enabled) }
     override suspend fun setActiveVehicle(id: Long?) { state.value = state.value.copy(activeVehicleId = id) }
+    override suspend fun setOnboardingStep(step: String?) { state.value = state.value.copy(onboardingStep = step) }
     override suspend fun markPermissionsAsked(permissions: Collection<String>) {
         state.value = state.value.copy(askedPermissions = state.value.askedPermissions + permissions)
     }

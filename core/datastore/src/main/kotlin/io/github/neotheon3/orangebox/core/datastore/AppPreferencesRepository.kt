@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import io.github.neotheon3.orangebox.core.model.AppPreferences
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +22,8 @@ interface AppPreferencesRepository {
     suspend fun setAutoStartOnDongleConnect(enabled: Boolean)
     suspend fun setActiveVehicle(id: Long?)
     suspend fun markPermissionsAsked(permissions: Collection<String>)
+    /** Remembers the onboarding step in progress; null clears it. */
+    suspend fun setOnboardingStep(step: String?)
 }
 
 @Singleton
@@ -34,6 +37,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
             autoStartOnDongleConnect = p[AUTO_START] ?: false,
             activeVehicleId = p[VEHICLE],
             askedPermissions = p[ASKED].orEmpty(),
+            onboardingStep = p[ONBOARDING_STEP],
         )
     }.distinctUntilChanged()
 
@@ -48,7 +52,12 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         dataStore.edit { it[ASKED] = it[ASKED].orEmpty() + permissions }
     }
 
+    override suspend fun setOnboardingStep(step: String?) {
+        dataStore.edit { if (step == null) it.remove(ONBOARDING_STEP) else it[ONBOARDING_STEP] = step }
+    }
+
     internal companion object {
+        val ONBOARDING_STEP = stringPreferencesKey("onboarding_step")
         val ONBOARDING = booleanPreferencesKey("onboarding_complete")
         val DISCLAIMER = booleanPreferencesKey("disclaimer_accepted")
         val AUTO_START = booleanPreferencesKey("auto_start_on_dongle_connect")

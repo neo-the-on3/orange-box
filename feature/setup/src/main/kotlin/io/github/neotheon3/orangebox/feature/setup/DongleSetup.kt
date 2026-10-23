@@ -1,7 +1,10 @@
 package io.github.neotheon3.orangebox.feature.setup
 
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,7 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.github.neotheon3.orangebox.core.bluetooth.BluetoothAvailability
 import io.github.neotheon3.orangebox.core.bluetooth.DongleCandidate
+import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.bluetooth.DongleTestResult
 import io.github.neotheon3.orangebox.core.bluetooth.DongleTester
 import io.github.neotheon3.orangebox.core.bluetooth.ObdDongleProvider
@@ -63,6 +68,7 @@ data class DongleSetupUiState(
     val selectedAddress: String? = null,
     val test: TestState = TestState.Idle,
     val autoStart: Boolean = false,
+    val bluetooth: BluetoothAvailability = BluetoothAvailability.ON,
 )
 
 @HiltViewModel
@@ -73,14 +79,16 @@ class DongleSetupViewModel @Inject constructor(
 ) : ViewModel() {
     private val list = MutableStateFlow(emptyList<DongleCandidate>() to false)
     private val test = MutableStateFlow<TestState>(TestState.Idle)
+    private val bluetooth = MutableStateFlow(BluetoothAvailability.ON)
 
-    val state: StateFlow<DongleSetupUiState> = combine(list, provider.selected, test, prefs.preferences) { (c, perm), sel, t, p ->
-        DongleSetupUiState(c, perm, sel?.address, t, p.autoStartOnDongleConnect)
+    val state: StateFlow<DongleSetupUiState> = combine(list, provider.selected, test, prefs.preferences, bluetooth) { (c, perm), sel, t, p, bt ->
+        DongleSetupUiState(c, perm, sel?.address, t, p.autoStartOnDongleConnect, bt)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DongleSetupUiState())
 
     init { refresh() }
 
     fun refresh() {
+        bluetooth.value = provider.bluetoothAvailability()
         list.value = try {
             provider.candidates() to false
         } catch (e: ObdError.PermissionDenied) {
@@ -126,10 +134,21 @@ fun DongleSetupContent(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        when (state.bluetooth) {
+            BluetoothAvailability.UNAVAILABLE -> Text(
+                stringResource(R.string.dongle_bt_unavailable), color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("dongle_bt_unavailable"),
+            )
+            BluetoothAvailability.OFF -> Text(
+                stringResource(R.string.dongle_bt_off), color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("dongle_bt_off"),
+            )
+            BluetoothAvailability.ON -> Unit
+        }
         if (state.needsPermission) {
             Text(stringResource(R.string.dongle_needs_permission), modifier = Modifier.testTag("dongle_needs_permission"))
             permissionSlot()
-        } else if (state.candidates.isEmpty()) {
+        } else if (state.bluetooth == BluetoothAvailability.ON && state.candidates.none { !it.simulated }) {
             Text(stringResource(R.string.dongle_none_paired), modifier = Modifier.testTag("dongle_empty"))
         }
         Column(Modifier.selectableGroup()) {
@@ -145,8 +164,10 @@ fun DongleSetupContent(
                 )
             }
         }
-        OutlinedButton(onClick = onOpenBluetoothSettings, modifier = Modifier.testTag("dongle_bt_settings")) {
-            Text(stringResource(R.string.dongle_open_bt_settings))
+        if (state.bluetooth != BluetoothAvailability.UNAVAILABLE) {
+            OutlinedButton(onClick = onOpenBluetoothSettings, modifier = Modifier.testTag("dongle_bt_settings")) {
+                Text(stringResource(if (state.bluetooth == BluetoothAvailability.OFF) R.string.dongle_turn_on_bt else R.string.dongle_open_bt_settings))
+            }
         }
         Button(
             onClick = onTest,
@@ -203,10 +224,31 @@ private fun TestResultCard(test: TestState, onOpenBluetoothSettings: () -> Unit)
     }
 }
 
+/**
+ * Opens Bluetooth settings, falling back to the main Settings screen where there is no Bluetooth page
+ * (#121). Returns false, after logging, when neither can be opened.
+ */
+internal fun openBluetoothSettings(context: Context): Boolean {
+    for (action in listOf(Settings.ACTION_BLUETOOTH_SETTINGS, Settings.ACTION_SETTINGS)) {
+        try {
+            context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            if (action != Settings.ACTION_BLUETOOTH_SETTINGS) OrangeLog.w(OrangeLog.Areas.BLUETOOTH, "bt_settings_fallback", "action" to action)
+            return true
+        } catch (e: ActivityNotFoundException) {
+            continue
+        } catch (e: SecurityException) {
+            continue
+        }
+    }
+    OrangeLog.w(OrangeLog.Areas.BLUETOOTH, "bt_settings_unavailable")
+    return false
+}
+
 @Composable
 internal fun rememberOpenBluetoothSettings(): () -> Unit {
     val context = LocalContext.current
+    val failed = stringResource(R.string.dongle_settings_unavailable)
     return {
-        runCatching { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        if (!openBluetoothSettings(context)) Toast.makeText(context, failed, Toast.LENGTH_LONG).show()
     }
 }
