@@ -72,7 +72,7 @@ class SimulatorM2Test {
 
     @Test fun `player drives the controller, stop coasts to idle`() = runTest {
         val c = SimulatorController()
-        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250)
+        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250, clock = { testScheduler.currentTime })
         p.start(DriveScript.HIGHWAY)
         runCurrent()
         assertEquals("highway", c.state.value.runningScript)
@@ -92,7 +92,7 @@ class SimulatorM2Test {
 
     @Test fun `script that ends on its own also coasts to a stop`() = runTest {
         val c = SimulatorController()
-        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250)
+        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250, clock = { testScheduler.currentTime })
         p.start(DriveScript.HIGHWAY) // ends at 100 km/h
         advanceTimeBy((DriveScript.HIGHWAY.durationS * 1000).toLong() + 500); runCurrent()
         assertNull(c.state.value.runningScript)
@@ -101,9 +101,38 @@ class SimulatorM2Test {
         assertEquals(SimulatorState.IDLE_RPM, c.state.value.rpm)
     }
 
+    @Test fun `script time follows the clock when ticks overrun`() = runTest {
+        // Each 250 ms delay "takes" 400 ms of wall time, as on a slow device (#120).
+        val wall = { testScheduler.currentTime * 8 / 5 }
+        val c = SimulatorController()
+        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250, clock = wall)
+        p.start(DriveScript.CITY)
+        runCurrent()
+        repeat(40) {
+            advanceTimeBy(250); runCurrent()
+            val t = wall() / 1000.0
+            if (t <= DriveScript.CITY.durationS) {
+                // Ticking a fixed 250 ms per loop would show frameAt(t / 1.6) instead.
+                assertEquals("t=$t", kotlin.math.round(DriveScript.CITY.frameAt(t).speedKph).toInt(), c.state.value.speedKph)
+            }
+        }
+    }
+
+    @Test fun `coast deceleration follows the clock when ticks overrun`() = runTest {
+        val wall = { testScheduler.currentTime * 2 }
+        val c = SimulatorController()
+        c.update { it.copy(speedKph = 72) }
+        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250, clock = wall)
+        p.start(DriveScript.IDLE); runCurrent()
+        c.update { it.copy(speedKph = 72) }
+        p.stop(); runCurrent()
+        advanceTimeBy(2_500); runCurrent() // 5 s of wall time at 7.2 km/h/s
+        assertEquals(36, c.state.value.speedKph)
+    }
+
     @Test fun `starting a new script cancels the coast`() = runTest {
         val c = SimulatorController()
-        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250)
+        val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250, clock = { testScheduler.currentTime })
         p.start(DriveScript.HIGHWAY); advanceTimeBy(15_000); runCurrent()
         p.stop(); advanceTimeBy(1_000)
         p.start(DriveScript.IDLE); runCurrent()

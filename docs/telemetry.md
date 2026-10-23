@@ -154,3 +154,22 @@ engine is a 1.6 L petrol: `MAF ≈ RPM/120 · 1.6 · 1.18 · VE`, with VE from 0
 | harsh | 0.451 | 0.044 | 9.7 | 11 | 4 | 19 | 0 | 2/2 |
 
 The distances also match the analytic integral of each script to within 1.5 % (PID 0D is whole km/h).
+
+**Playback on a slow device (#120).** The golden numbers are right for the eco rule above, so they stay. On an
+API 25 ARM emulator the tester saw City eco 104.7–106.9 s, Harsh 20.3 s, Highway 2 s and overspeed 50.05 s.
+Every one is the golden stretched by ≈ 7–9 % in wall time: the debug `DriveScriptPlayer` used to advance
+script time by a fixed 250 ms per loop, so each overrunning `delay` slowed the whole drive down, and every
+acceleration with it. City's 8 s, 1.74 m/s² stops then ran at ≈ 1.5–1.6 m/s², so with sampling jitter part
+of each stop fell under the 1.5 m/s² eco limit. Replaying the scripts with a 7–10 % stretch reproduces the
+device numbers (City 98–109 s, Harsh 20–22 s, Highway coast up to 2 s). The player now reads script time and
+the coast-down from a monotonic clock, so a late tick can't stretch the drive. `SlowDevicePlaybackTest` runs
+the whole debug path with an 8 % lagging clock and 0.5–1.1 s polling and checks City 85–95 s, Harsh 17–21.5 s
+with 2/2 harsh events, Highway's duration and overspeed, and at most one eco sample on the coast to a stop.
+
+Expect a few seconds of scatter on a device even so. The 1 s acceleration window and the interval's starting
+state mean one poll interval at a phase change can go either way. For example, the first sample of the
+Highway coast-down is eco: its window still half covers the 100 km/h cruise, and the RPM is already under 2500.
+
+The legacy app's "eco speed" is a different metric (time between 60 and 80 km/h,
+`DEFAULT_ECO_MIN_ECO_SPEED`/`DEFAULT_ECO_MAX_ECO_SPEED`, computed inside its closed OBD library). By design
+it isn't reproduced here (see the note at the top).
