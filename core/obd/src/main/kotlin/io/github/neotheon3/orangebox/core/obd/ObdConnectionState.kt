@@ -22,6 +22,13 @@ sealed interface ObdConnectionState {
 
     data class Connected(val info: Elm327Info) : ObdConnectionState
 
+    /**
+     * The dongle's Bluetooth link went away (ACL disconnect, or the Simulator's "BT disconnected").
+     * No automatic retries: stays here until the link comes back ([DongleLinkEvent.Connected]) or the
+     * user taps Connect.
+     */
+    data object LinkLost : ObdConnectionState
+
     /** Gave up. Stays here until [ObdConnection.retry]. */
     data class Failed(val reason: ObdError, val attempts: Int) : ObdConnectionState
 }
@@ -30,7 +37,7 @@ sealed interface ObdConnectionState {
 interface ObdConnection {
     val state: kotlinx.coroutines.flow.StateFlow<ObdConnectionState>
 
-    /** Starts connecting if Idle or Failed. No-op while connecting or connected. */
+    /** Starts connecting if Idle, LinkLost or Failed. No-op while connecting or connected. */
     fun connect()
 
     /** From Failed (or any state): drops the current attempt and restarts at the first attempt. */

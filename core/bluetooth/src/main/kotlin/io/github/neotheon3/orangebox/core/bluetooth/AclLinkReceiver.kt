@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import androidx.core.content.ContextCompat
+import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvents
 
@@ -30,7 +31,14 @@ class AclLinkReceiver(private val events: DongleLinkEvents) : BroadcastReceiver(
         } else {
             @Suppress("DEPRECATION") intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
         }
-        AclEventMapper.map(intent.action, device?.address)?.let(events::report)
+        val event = AclEventMapper.map(intent.action, device?.address) ?: return
+        val forSelected = events.report(event)
+        if (forSelected) {
+            OrangeLog.i(
+                OrangeLog.Areas.BLUETOOTH, if (event is DongleLinkEvent.Connected) "acl_connected" else "acl_disconnected",
+                "device" to OrangeLog.sensitive(event.address),
+            )
+        }
     }
 
     fun register(context: Context) {

@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.core.obd
 
+import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.common.runCatchingCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -56,13 +57,26 @@ class Elm327Session(
     suspend fun initialize(): Elm327Info {
         val id = command("ATZ").lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }.orEmpty()
         for (cmd in INIT_COMMANDS) command(cmd)
-        val protocolRaw = command("ATDPN")
         val voltage = parseVoltage(command("ATRV"))
         probe()
-        // ATDPN after a successful probe reports the protocol that was actually found.
-        val protocol = ObdProtocol.fromDpn(command("ATDPN")).takeIf { it != ObdProtocol.UNKNOWN }
-            ?: ObdProtocol.fromDpn(protocolRaw)
+        val protocol = detectProtocol()
+        OrangeLog.i(OrangeLog.Areas.OBD, "protocol_detected", "protocol" to protocol.name, "can" to protocol.isCan, "adapter" to id)
         return Elm327Info(id, protocol, voltage).also { info = it }
+    }
+
+    /**
+     * After a successful search, `ATDPN` reports the protocol actually in use (e.g. `A6`). A garbled
+     * or still-automatic (`A0`/`0`) reply is retried; if none of [PROTOCOL_ATTEMPTS] replies names a
+     * concrete protocol the connection fails, so DTC parsing never runs with an unknown CAN/non-CAN format.
+     */
+    private suspend fun detectProtocol(): ObdProtocol {
+        repeat(PROTOCOL_ATTEMPTS) { attempt ->
+            val raw = command("ATDPN")
+            val p = ObdProtocol.fromDpn(raw)
+            if (p != ObdProtocol.UNKNOWN && p != ObdProtocol.AUTO) return p
+            OrangeLog.w(OrangeLog.Areas.OBD, "protocol_reply_invalid", "attempt" to attempt + 1, "reply" to raw.take(16))
+        }
+        throw ObdError.Io("Could not determine the vehicle protocol (ATDPN unreadable)")
     }
 
     private suspend fun probe() {
@@ -100,7 +114,12 @@ class Elm327Session(
         DtcDecoder.decode(command(kind.command), kind, isCan = info?.protocol?.isCan ?: true)
 
     /** VIN via mode 09 PID 02. */
-    suspend fun readVin(): VinDecoder.Result = VinDecoder.decode(command("0902"))
+    suspend fun readVin(): VinDecoder.Result = VinDecoder.decode(command("0902")).also { r ->
+        when (r) {
+            is VinDecoder.Result.Valid -> OrangeLog.i(OrangeLog.Areas.OBD, "vin_read", "vin" to OrangeLog.sensitive(r.vin), "check_digit_ok" to r.checkDigitValid)
+            is VinDecoder.Result.Invalid -> OrangeLog.w(OrangeLog.Areas.OBD, "vin_invalid", "reason" to r.reason)
+        }
+    }
 
     /** Supported mode 01 PIDs, following the 00/20/40/… bitmap chain. */
     suspend fun readSupportedPids(): io.github.neotheon3.orangebox.core.obd.pid.SupportedPids {
@@ -128,6 +147,7 @@ class Elm327Session(
     companion object {
         const val DEFAULT_TIMEOUT_MS = 3_000L
         private const val PROBE_ATTEMPTS = 3
+        private const val PROTOCOL_ATTEMPTS = 3
         val INIT_COMMANDS = listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATSP0")
 
         internal fun clean(raw: String, cmd: String): String = raw

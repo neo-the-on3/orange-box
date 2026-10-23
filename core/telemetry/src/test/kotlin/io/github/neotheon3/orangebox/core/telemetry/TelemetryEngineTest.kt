@@ -104,6 +104,10 @@ class TelemetryEngineTest {
         val trip = e.onSample(s(t, ObdPid.SPEED to v)).trip
         assertEquals(1, trip.harshAccelCount)
         assertEquals(1, trip.harshBrakeCount)
+        val e4 = TelemetryEngine()
+        e4.onSample(s(0, ObdPid.SPEED to 50.0))
+        val braking = e4.onSample(s(1000, ObdPid.SPEED to 37.0)).instant
+        assertTrue(braking.harshBrake); assertFalse(braking.harshAccel)
         // 2.9 m/s² stays below the threshold
         val e2 = TelemetryEngine()
         e2.onSample(s(0, ObdPid.SPEED to 0.0))

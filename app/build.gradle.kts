@@ -5,19 +5,48 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Build identity. versionCode is the commit count, so a CI APK and a local APK built from the same
+// commit share it and can be installed over each other (CI checks out with full history).
+// versionName = <base>.<count>-<sha>[-ci<run>], plus "-debug" on debug builds.
+fun git(vararg args: String): String? = runCatching {
+    providers.exec {
+        commandLine("git", *args)
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim().takeIf { it.isNotEmpty() }
+}.getOrNull()
+
+val baseVersion = "0.1.0"
+val commitCount = git("rev-list", "--count", "HEAD")?.toIntOrNull() ?: 1
+val gitSha = git("rev-parse", "--short=7", "HEAD") ?: "nogit"
+val ciRun: String? = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull
+
 android {
     namespace = "io.github.neotheon3.orangebox"
 
     defaultConfig {
         applicationId = "io.github.neotheon3.orangebox"
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = commitCount
+        versionName = "$baseVersion.$commitCount-$gitSha" + (ciRun?.let { "-ci$it" } ?: "")
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+        buildConfigField("String", "CI_RUN", ciRun?.let { "\"$it\"" } ?: "null")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        // Shared debug key (committed on purpose, not a secret): CI and local debug builds get the same
+        // signature, so testers can install one over the other. Debug build type only.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
+            signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }

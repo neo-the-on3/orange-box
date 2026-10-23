@@ -26,6 +26,10 @@ data class InstantTelemetry(
     val eco: Boolean,
     val overspeed: Boolean,
     val warnings: Set<Warning>,
+    /** Acceleration at this sample is at or above the harsh-acceleration threshold. */
+    val harshAccel: Boolean = false,
+    /** Deceleration at this sample is at or above the harsh-braking threshold. */
+    val harshBrake: Boolean = false,
 )
 
 /** Totals since [TelemetryEngine.reset]. Times in seconds. */
@@ -99,6 +103,8 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             fuelFlowLph = flow, economyLPer100Km = economy, accelMps2 = accel,
             fuelCut = fuelCut, idling = idling, eco = eco, overspeed = overspeed,
             warnings = warnings(sample),
+            harshAccel = accel != null && accel >= config.harshAccel,
+            harshBrake = accel != null && -accel >= config.harshBrake,
         )
 
         if (dtS != null) integrate(prev, dtS, speed, flow, instant, accel)

@@ -39,6 +39,12 @@ fun ObdStatusCard(
                         Text(stringResource(R.string.obd_connect))
                     }
                 }
+                ObdConnectionState.LinkLost -> {
+                    Text(stringResource(R.string.obd_link_lost), modifier = status)
+                    Button(onClick = onConnect, modifier = Modifier.testTag("home_obd_connect")) {
+                        Text(stringResource(R.string.obd_connect))
+                    }
+                }
                 is ObdConnectionState.Connecting -> {
                     Text(
                         if (state.retry == 0) stringResource(R.string.obd_connecting)

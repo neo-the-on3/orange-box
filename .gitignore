@@ -42,6 +42,9 @@ out/
 # ---- Signing material and secrets: never commit ----
 *.jks
 *.keystore
+# Shared, non-secret DEBUG signing key (public password "android"), so CI and local debug APKs install
+# over each other. Never use it for release; release signing comes from CI secrets.
+!/app/debug.keystore
 *.p12
 *.pem
 keystore.properties

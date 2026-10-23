@@ -100,17 +100,67 @@ class ObdConnectionManagerTest {
         assertEquals(2, transports.size)
     }
 
-    @Test fun `link events drive connect and drop`() = runTest {
+    @Test fun `link down stays down until link up or Connect`() = runTest {
         val events = MutableSharedFlow<DongleLinkEvent>()
-        val m = ObdConnectionManager(backgroundScope, { FakeObdTransport() }, linkEvents = events)
+        val transports = mutableListOf<FakeObdTransport>()
+        val m = ObdConnectionManager(backgroundScope, { FakeObdTransport().also { transports += it } }, linkEvents = events)
         runCurrent()
         events.emit(DongleLinkEvent.Connected("AA"))
         runCurrent()
         assertTrue(m.state.value is ObdConnectionState.Connected)
         events.emit(DongleLinkEvent.Disconnected("AA"))
         runCurrent()
-        assertTrue(m.state.value is ObdConnectionState.WaitingToRetry)
+        assertEquals(ObdConnectionState.LinkLost, m.state.value)
         assertEquals(DongleLinkEvent.Disconnected("AA"), m.lastLinkEvent.value)
+        assertEquals(1, transports.single().closeCount)
+        settle() // no automatic reconnect, however long we wait
+        assertEquals(ObdConnectionState.LinkLost, m.state.value)
+        assertEquals(1, transports.size)
+        events.emit(DongleLinkEvent.Connected("AA"))
+        runCurrent()
+        assertTrue(m.state.value is ObdConnectionState.Connected)
+        events.emit(DongleLinkEvent.Disconnected("AA")); runCurrent()
+        m.connect(); runCurrent() // user taps Connect
+        assertTrue(m.state.value is ObdConnectionState.Connected)
+        assertEquals(3, transports.size)
+    }
+
+    @Test fun `link down during retry wait stops the retries`() = runTest {
+        val events = MutableSharedFlow<DongleLinkEvent>()
+        val rec = Recorder(this) { FakeObdTransport(openError = ObdError.Io("refused")) }
+        val m = ObdConnectionManager(backgroundScope, rec, linkEvents = events)
+        runCurrent()
+        m.connect(); runCurrent()
+        assertTrue(m.state.value is ObdConnectionState.WaitingToRetry)
+        events.emit(DongleLinkEvent.Disconnected("AA")); runCurrent()
+        assertEquals(ObdConnectionState.LinkLost, m.state.value)
+        settle()
+        assertEquals(1, rec.createdAt.size)
+    }
+
+    @Test fun `link down while Idle is ignored`() = runTest {
+        val events = MutableSharedFlow<DongleLinkEvent>()
+        val m = ObdConnectionManager(backgroundScope, { FakeObdTransport() }, linkEvents = events)
+        runCurrent()
+        events.emit(DongleLinkEvent.Disconnected("AA")); runCurrent()
+        assertEquals(ObdConnectionState.Idle, m.state.value)
+    }
+
+    @Test fun `state changes are logged with the OrangeBox tag`() = runTest {
+        val lines = mutableListOf<String>()
+        io.github.neotheon3.orangebox.core.common.OrangeLog.sink =
+            io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, tag, msg, _ -> lines += "$tag $msg" }
+        try {
+            val m = ObdConnectionManager(backgroundScope, { FakeObdTransport(openError = ObdError.Io("refused")) })
+            m.connect(); runCurrent(); advanceTimeBy(2_500); runCurrent()
+            assertTrue(lines.toString(), lines.any { it.startsWith("OrangeBox/OBD state from=Idle to=Connecting") })
+            assertTrue(lines.toString(), lines.any { it.startsWith("OrangeBox/OBD retry_scheduled retry=1/5 delay_s=2") })
+            assertTrue(lines.toString(), lines.any { it.contains("attempt_failed") && it.contains("Io(refused)") })
+            // the per-second countdown is not logged
+            assertEquals(1, lines.count { it.contains("retry=1/5") })
+        } finally {
+            io.github.neotheon3.orangebox.core.common.OrangeLog.sink = io.github.neotheon3.orangebox.core.common.OrangeLog.Sink { _, _, _, _ -> }
+        }
     }
 
     @Test fun `disconnect returns to Idle and closes transport`() = runTest {

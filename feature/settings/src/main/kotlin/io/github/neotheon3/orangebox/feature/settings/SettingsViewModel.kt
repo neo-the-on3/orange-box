@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
 import io.github.neotheon3.orangebox.core.model.BackendConfig
 import io.github.neotheon3.orangebox.core.model.BackendMode
+import io.github.neotheon3.orangebox.core.model.AppVersion
 import io.github.neotheon3.orangebox.core.model.BaseUrlValidator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,11 +21,13 @@ data class SettingsUiState(
     val config: BackendConfig = BackendConfig(),
     val urlDraft: String = "",
     val urlResult: BaseUrlValidator.Result? = null,
+    val version: AppVersion = AppVersion.UNKNOWN,
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val repository: BackendConfigRepository,
+    private val version: AppVersion,
 ) : ViewModel() {
 
     private val urlDraft = MutableStateFlow<String?>(null)
@@ -32,8 +35,8 @@ class SettingsViewModel @Inject constructor(
 
     val uiState: StateFlow<SettingsUiState> =
         combine(repository.config, urlDraft, urlResult) { config, draft, result ->
-            SettingsUiState(config = config, urlDraft = draft ?: config.baseUrl, urlResult = result)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
+            SettingsUiState(config = config, urlDraft = draft ?: config.baseUrl, urlResult = result, version = version)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState(version = version))
 
     fun onModeSelected(mode: BackendMode) {
         viewModelScope.launch { repository.setMode(mode) }

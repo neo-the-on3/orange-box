@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,7 +45,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.neotheon3.orangebox.core.model.BackendMode
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
+import io.github.neotheon3.orangebox.core.obd.VinDecoder
 import io.github.neotheon3.orangebox.core.simulator.DriveScript
+import io.github.neotheon3.orangebox.core.simulator.DtcList
 import io.github.neotheon3.orangebox.core.simulator.SimulatorState
 import kotlin.math.roundToInt
 
@@ -123,25 +126,22 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
             SliderRow("Fuel", sim.fuelPercent, "%", SimulatorState.FUEL_RANGE, "sim_fuel") { v -> actions.update { it.copy(fuelPercent = v) } }
 
             Section("Diagnostics")
-            var dtc by remember { mutableStateOf("P0133") }
-            var dtcError by remember { mutableStateOf(false) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = dtc,
-                    onValueChange = { dtc = it; dtcError = false },
-                    label = { Text("DTC") },
-                    isError = dtcError,
-                    singleLine = true,
-                    modifier = Modifier.weight(1f).testTag("sim_dtc_input"),
-                )
-                Button(onClick = { dtcError = !actions.injectDtc(dtc) }, modifier = Modifier.testTag("sim_dtc_inject")) { Text("Inject") }
-            }
+            DtcInjector(actions)
             Text(
                 if (sim.dtcs.isEmpty()) "Stored DTCs: none" else "Stored DTCs: " + sim.dtcs.joinToString(", "),
                 modifier = Modifier.testTag("sim_dtc_list"),
             )
+            Text(
+                "Pending: " + sim.pendingDtcs.ifEmpty { listOf("none") }.joinToString(", ") +
+                    "   Permanent: " + sim.permanentDtcs.ifEmpty { listOf("none") }.joinToString(", "),
+                modifier = Modifier.testTag("sim_dtc_other_lists"),
+            )
             ToggleRow("MIL (check engine) on", sim.milOn, "sim_mil") { v -> actions.update { it.copy(milOn = v) } }
-            OutlinedButton(onClick = actions::clearDtcs, modifier = Modifier.testTag("sim_dtc_clear")) { Text("Clear DTCs") }
+            OutlinedButton(onClick = actions::clearDtcs, modifier = Modifier.testTag("sim_dtc_clear")) { Text("Clear DTCs (mode 04)") }
+            VinEditor(sim.vin, actions)
+
+            Section("App readout (debug)")
+            AppReadout(state, actions)
 
             Section("Failures")
             ToggleRow("Connection failure", sim.connectionFailure, "sim_fail_connection") { v -> actions.update { it.copy(connectionFailure = v) } }
@@ -164,6 +164,100 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
 
             HorizontalDivider()
             Button(onClick = actions::reset, modifier = Modifier.testTag("sim_reset")) { Text("Reset simulator") }
+        }
+    }
+}
+
+@Composable
+private fun DtcInjector(actions: SimulatorActions) {
+    var dtc by remember { mutableStateOf("P0133") }
+    var dtcError by remember { mutableStateOf(false) }
+    var list by remember { mutableStateOf(DtcList.STORED) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        DtcList.entries.forEach { l ->
+            FilterChip(
+                selected = list == l,
+                onClick = { list = l },
+                label = { Text(l.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                modifier = Modifier.testTag("sim_dtc_kind_${l.name.lowercase()}"),
+            )
+        }
+    }
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = dtc,
+            onValueChange = { dtc = it; dtcError = false },
+            label = { Text("DTC") },
+            isError = dtcError,
+            supportingText = {
+                if (dtcError) {
+                    Text("Invalid code. Use P, C, B or U and 4 hex digits, e.g. P0133.", modifier = Modifier.testTag("sim_dtc_error"))
+                }
+            },
+            singleLine = true,
+            modifier = Modifier.weight(1f).testTag("sim_dtc_input"),
+        )
+        Button(onClick = { dtcError = !actions.injectDtc(dtc, list) }, modifier = Modifier.padding(top = 8.dp).testTag("sim_dtc_inject")) { Text("Inject") }
+    }
+}
+
+@Composable
+private fun VinEditor(current: String, actions: SimulatorActions) {
+    var vin by remember(current) { mutableStateOf(current) }
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = vin,
+            onValueChange = { vin = it.take(17) },
+            label = { Text("VIN reported by the car") },
+            supportingText = { Text("${vin.length}/17. Not validated, so invalid VINs can be tested.") },
+            singleLine = true,
+            modifier = Modifier.weight(1f).testTag("sim_vin_input"),
+        )
+        Button(onClick = { actions.setVin(vin) }, modifier = Modifier.padding(top = 8.dp).testTag("sim_vin_set")) { Text("Set") }
+    }
+}
+
+@Composable
+private fun AppReadout(state: SimulatorUiState, actions: SimulatorActions) {
+    Card(Modifier.fillMaxWidth().testTag("sim_readout")) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val snap = state.telemetry
+            if (snap == null) {
+                Text("Telemetry: not connected", modifier = Modifier.testTag("sim_readout_telemetry"))
+            } else {
+                val i = snap.instant
+                val t = snap.trip
+                fun flag(on: Boolean) = if (on) "ON" else "off"
+                Text("Harsh accel: ${flag(i.harshAccel)} · count ${t.harshAccelCount}", modifier = Modifier.testTag("sim_readout_harsh_accel"))
+                Text("Harsh brake: ${flag(i.harshBrake)} · count ${t.harshBrakeCount}", modifier = Modifier.testTag("sim_readout_harsh_brake"))
+                Text("Overspeed: ${flag(i.overspeed)} · ${"%.1f".format(java.util.Locale.US, t.overspeedS)} s", modifier = Modifier.testTag("sim_readout_overspeed"))
+                Text(
+                    "Accel: " + (i.accelMps2?.let { "%.2f m/s²".format(java.util.Locale.US, it) } ?: "–") +
+                        " · fuel cut ${flag(i.fuelCut)} · idle ${flag(i.idling)} · eco ${flag(i.eco)}",
+                    modifier = Modifier.testTag("sim_readout_flags"),
+                )
+            }
+            OutlinedButton(onClick = actions::readDiagnostics, modifier = Modifier.testTag("sim_readout_read")) {
+                Text("Read DTCs + VIN from car")
+            }
+            state.readout?.let { r ->
+                if (r.error != null) {
+                    Text("Read failed: ${r.error}", color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sim_readout_error"))
+                } else {
+                    fun codes(l: List<String>?) = l?.ifEmpty { listOf("none") }?.joinToString(", ") ?: "unreadable"
+                    Text("Stored (03): ${codes(r.stored)}", modifier = Modifier.testTag("sim_readout_stored"))
+                    Text("Pending (07): ${codes(r.pending)}", modifier = Modifier.testTag("sim_readout_pending"))
+                    Text("Permanent (0A): ${codes(r.permanent)}", modifier = Modifier.testTag("sim_readout_permanent"))
+                    Text(
+                        "VIN: " + when (val v = r.vin) {
+                            is VinDecoder.Result.Valid -> v.vin + if (v.checkDigitValid) " (check digit OK)" else " (check digit mismatch)"
+                            is VinDecoder.Result.Invalid -> "invalid: ${v.reason}"
+                            null -> "–"
+                        },
+                        modifier = Modifier.testTag("sim_readout_vin"),
+                    )
+                }
+            }
         }
     }
 }
@@ -202,6 +296,7 @@ private fun StatusPanel(state: SimulatorUiState) {
 
 private fun stateLabel(c: ObdConnectionState) = when (c) {
     ObdConnectionState.Idle -> "Idle"
+    ObdConnectionState.LinkLost -> "Link lost (waiting for dongle)"
     is ObdConnectionState.Connecting -> "Connecting"
     is ObdConnectionState.Initializing -> "Initializing"
     is ObdConnectionState.WaitingToRetry -> "Waiting to retry"

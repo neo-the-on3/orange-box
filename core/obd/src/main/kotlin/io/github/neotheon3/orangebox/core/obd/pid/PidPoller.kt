@@ -55,6 +55,10 @@ class PidPoller(
         val fast = supported.filter(config.fast)
         val slow = supported.filter(config.slow)
         activePids = (fast + slow).toSet()
+        io.github.neotheon3.orangebox.core.common.OrangeLog.i(
+            io.github.neotheon3.orangebox.core.common.OrangeLog.Areas.TELEMETRY, "polling_started",
+            "supported" to supported.all.size, "fast" to fast.size, "slow" to slow.size,
+        )
         val values = LinkedHashMap<ObdPid, Double>()
         var tick = 0L
         while (true) {

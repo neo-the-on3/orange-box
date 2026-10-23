@@ -50,3 +50,20 @@ adb shell pm clear io.github.neotheon3.orangebox.debug
 ```
 
 See [docs/REAL_DEVICE_CHECKLIST.md](docs/REAL_DEVICE_CHECKLIST.md) for the checks that need real hardware.
+
+## Versions, signing and logs
+
+- **Version.** `versionCode` is the git commit count. `versionName` is `0.1.0.<count>-<sha>`, plus `-ci<run>` on CI and `-debug` on debug builds, for example `0.1.0.8-1a2b3c4-ci61-debug`. It's shown in Settings → About. CI checks out the full history so the count matches a local build of the same commit.
+- **Debug signing.** `app/debug.keystore` is a shared, **non-secret** debug key (password `android`, alias `androiddebugkey`). It's committed on purpose so CI and local debug APKs have the same signature and install over each other. Only the debug build type uses it. Release builds are unsigned in CI and will be signed from CI secrets, never from a committed key. If a device has a debug build signed with another key, uninstall it once first.
+- **Logs.** Everything goes through `OrangeLog`, with tags `OrangeBox/<area>` (`OBD`, `BT`, `Backend`, `Telemetry`, `App`) and `event key=value` messages:
+  ```
+  adb logcat -s 'OrangeBox/OBD:*' 'OrangeBox/BT:*' 'OrangeBox/Backend:*' 'OrangeBox/Telemetry:*' 'OrangeBox/App:*'
+  ```
+  Debug builds log from DEBUG up. Release builds keep only warnings and errors and redact sensitive values (VIN, Bluetooth addresses).
+
+## Debug diagnostics (Simulator screen)
+
+- Inject stored, pending or permanent DTCs (mode 04 doesn't clear permanent ones, like a real ECU) and set the VIN the simulated car reports.
+- **App readout** shows what the app computed: harsh accel/brake and overspeed flags and counters, plus "Read DTCs + VIN from car", which reads 03/07/0A and 09 02 over the live session.
+- **BT disconnected** drops the link and the app stays in "Adapter disconnected" until **BT connected** or **Connect**. A real Bluetooth ACL disconnect goes through the same path.
+- Stopping a drive script, or reaching its end, lets the car coast to 0 km/h and idle RPM.
