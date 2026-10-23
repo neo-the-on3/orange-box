@@ -33,4 +33,7 @@ object DataStoreModule {
 abstract class BackendConfigModule {
     @Binds
     abstract fun bindBackendConfigRepository(impl: DataStoreBackendConfigRepository): BackendConfigRepository
+
+    @Binds
+    abstract fun bindDongleSelectionRepository(impl: DataStoreDongleSelectionRepository): DongleSelectionRepository
 }

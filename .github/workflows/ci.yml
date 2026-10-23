@@ -57,6 +57,32 @@ jobs:
             **/build/test-results/**
           if-no-files-found: ignore
 
+  release-check:
+    name: Release build has no Simulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Android SDK packages
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" > /dev/null
+
+      - name: Assemble release (unsigned, R8)
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Check release contents
+        run: bash scripts/ci/check-release.sh
+
   emulator-smoke:
     name: Emulator smoke (API 34 x86_64)
     needs: build

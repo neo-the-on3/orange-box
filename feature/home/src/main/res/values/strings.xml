@@ -2,11 +2,34 @@
     <string name="home_title">Orange Box</string>
     <string name="home_backend_mode">Backend: %1$s</string>
     <string name="home_obd_title">OBD-II adapter</string>
-    <string name="home_obd_placeholder">No adapter connected. Bluetooth OBD-II support is coming in a later milestone.</string>
     <string name="home_open_settings">Settings</string>
     <string name="home_more">More</string>
     <string name="backend_mode_off">Off</string>
     <string name="backend_mode_fake">Fake</string>
     <string name="backend_mode_remote">Remote</string>
     <string name="home_remote_not_configured">Remote mode needs an HTTPS server URL in Settings.</string>
+
+    <string name="obd_idle">Not connected</string>
+    <string name="obd_connect">Connect</string>
+    <string name="obd_connecting">Connecting…</string>
+    <string name="obd_connecting_retry">Connecting… (retry %1$d/%2$d)</string>
+    <string name="obd_initializing">Initializing adapter…</string>
+    <string name="obd_waiting">Retry %1$d/%2$d in %3$d s</string>
+    <string name="obd_connected">Connected</string>
+    <string name="obd_protocol">Protocol: %1$s</string>
+    <string name="obd_voltage">Battery: %1$.1f V</string>
+    <string name="obd_voltage_unknown">Battery: unknown</string>
+    <plurals name="obd_failed">
+        <item quantity="one">Connection failed after %1$d attempt</item>
+        <item quantity="other">Connection failed after %1$d attempts</item>
+    </plurals>
+    <string name="obd_retry">Retry</string>
+    <string name="obd_cancel">Cancel</string>
+    <string name="obd_disconnect">Disconnect</string>
+    <string name="obd_last_error">Last error: %1$s</string>
+    <string name="obd_error_not_paired">No paired OBD dongle selected</string>
+    <string name="obd_error_unsupported">Vehicle protocol not supported</string>
+    <string name="obd_error_permission">Bluetooth permission needed</string>
+    <string name="obd_error_timeout">Adapter did not respond</string>
+    <string name="obd_error_io">Connection error</string>
 </resources>

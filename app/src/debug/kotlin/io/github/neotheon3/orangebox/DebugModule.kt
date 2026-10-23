@@ -4,7 +4,6 @@ import android.content.Intent
 import android.util.Log
 import dagger.Binds
 import dagger.Module
-import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
@@ -40,8 +39,3 @@ abstract class DebugLaunchModule {
     @Binds abstract fun bindLaunchOverrides(impl: DebugLaunchOverrides): LaunchOverrides
 }
 
-@Module
-@InstallIn(SingletonComponent::class)
-object DebugEntriesModule {
-    @Provides fun provideDebugEntries(): DebugEntries = NoDebugEntries
-}
