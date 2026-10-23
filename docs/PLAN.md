@@ -88,9 +88,9 @@ Modules are added when a milestone first needs them. M0 creates only the ones it
 | **M1** | `core:obd` transport abstraction, ELM327 session, `ObdConnectionManager` (backoff 2/4/8/16/30 s, max 5, Failed + Retry), `SimulatedElm327`, `DongleLinkEvents`, debug **Simulator screen** with all toggles, OBD status + Retry on Home. Unit tests for backoff, protocol and the simulator |
 | **M2** | PID decoder (≈40 PIDs), DTC read (03/07/0A) / clear (04), VIN (0902), `TelemetryEngine` (fuel flow/economy, fuel-cut, idling, eco/overspeed, harsh accel/brake, speed zones, CO₂, warnings), scripted simulator drives |
 | **M3** | Onboarding + runtime permissions (BT, location, notifications; version-gated), vehicle setup (local catalogue + manual), dongle pairing incl. simulated, opt-in auto-start via `DongleLinkEvents` |
-| **M4** | `DrivingService` FGS + notification "Start driving" (no background activity launch; full-screen intent only if permitted), driving dashboard, trip recording (Room) |
-| **M5** | Trips: history (calendar), detail (keyless map, metrics, speed-zone chart), aggregate stats (local) |
-| **M6** | Diagnostics: DTC list grouped, descriptions, clear with confirmation, MIL prompt at drive start |
+| **M4** | `DrivingService` FGS + notification "Start driving" (no background activity launch; full-screen intent only if permitted), driving dashboard **mimicking the legacy CarooLive dashboard** (clusters, centre FUEL/TRIP cards, Detailed Info. grid; own artwork, see `docs/ui/LEGACY_OBD_UI.md`), Home Live data card as a mini dashboard, trip recording (Room) |
+| **M5** | Trips: history (calendar, **Material 3**), detail (keyless map, metrics, speed-zone chart), aggregate stats (local; Material 3 with legacy hierarchy) |
+| **M6** | Diagnostics **mimicking the legacy screen** (10 DTC-group lamps, vehicle illustration, message bar), group detail, clear with confirmation, "Car Diagnosing…" prompt at drive start |
 | **M7** | Crash prompt: accelerometer impact detection while driving → countdown prompt → dialer / SMS app intents (no CALL_PHONE/SEND_SMS) |
 | **M8** | Settings: units, alerts/sounds (new assets)/TTS, crash contact, Server (advanced) |
 | **M9** *(optional)* | Remote/Fake backend: Retrofit per `openapi.yaml`, upload queue + WorkManager, rankings/points screens (Remote only) |
@@ -125,3 +125,10 @@ Reachable from Home's overflow/menu on debug builds. On release builds the activ
 ## 7. CI (`.github/workflows/ci.yml`)
 - `build` job: ubuntu-latest, Temurin 17, `gradle/actions/setup-gradle`, `./gradlew assembleDebug lintDebug testDebugUnitTest`, uploads the debug APK + reports.
 - `emulator-smoke` job: needs `build`, enables KVM (udev rule), `reactivecircus/android-emulator-runner` API 34 x86_64 `google_apis`, installs the APK, `am start ... --es backend_mode off`, screenshots + logcat as artifacts.
+
+## 8. UI direction (Kiran, 2026-10-24)
+
+- Screens whose main job is showing OBD values (driving dashboard, detail readings, Home Live data card, diagnostics) **mimic the legacy CarooLive UI**: layout, hierarchy, panel styles, colours, type scale and flow, "same or better". The spec is [`docs/ui/LEGACY_OBD_UI.md`](ui/LEGACY_OBD_UI.md).
+- **All artwork is our own** (vector drawables or Compose Canvas). No Pokevian image, drawable, font, icon or sound is copied, traced or embedded. The images in `docs/ui/legacy-reference/` are for reference only.
+- The trip list, Settings, onboarding, permissions, pairing and vehicles use **default Material 3** components.
+- Everywhere: 48 dp touch targets, content descriptions, font scaling, edge-to-edge, dark theme, and modern version-gated permission flows.
