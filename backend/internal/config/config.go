@@ -61,6 +61,17 @@ type Config struct {
 	UploadReadTimeout time.Duration
 	// LogLevel is the minimum log level (LOG_LEVEL: debug, info, warn, error).
 	LogLevel slog.Level
+
+	// DatabaseURL is the Postgres connection string (DATABASE_URL). Empty
+	// means in-memory stores, which lose everything on restart; that is
+	// allowed only in dev environments.
+	DatabaseURL string
+	// DBMaxConns caps the Postgres pool (DB_MAX_CONNS, default 10).
+	DBMaxConns int
+	// MigrateOnStart applies pending migrations before serving
+	// (MIGRATE_ON_START, default false). Otherwise the server refuses to
+	// start until `server migrate up` has run.
+	MigrateOnStart bool
 }
 
 // IsDevEnvironment reports whether Env is one of local, ci or sandbox.
@@ -75,6 +86,7 @@ func Load(getenv func(string) string) (Config, error) {
 		JWTPrivateKeyPEM: getenv("JWT_PRIVATE_KEY"),
 		JWTKeyID:         getenv("JWT_KEY_ID"),
 		JWTIssuer:        orDefault(getenv("JWT_ISSUER"), "orange-box"),
+		DatabaseURL:      strings.TrimSpace(getenv("DATABASE_URL")),
 	}
 	var errs []error
 
@@ -134,6 +146,20 @@ func Load(getenv func(string) string) (Config, error) {
 	c.AnonReadConcurrency, err = strconv.Atoi(orDefault(getenv("ANON_READ_CONCURRENCY"), "1024"))
 	if err != nil || c.AnonReadConcurrency < 1 || c.AnonReadConcurrency > 65536 {
 		errs = append(errs, errors.New("ANON_READ_CONCURRENCY must be a number from 1 to 65536"))
+	}
+	if c.DatabaseURL == "" && !c.IsDevEnvironment() {
+		errs = append(errs, errors.New("DATABASE_URL is required unless ENV is local, ci or sandbox"))
+	}
+	c.DBMaxConns, err = strconv.Atoi(orDefault(getenv("DB_MAX_CONNS"), "10"))
+	if err != nil || c.DBMaxConns < 1 || c.DBMaxConns > 200 {
+		errs = append(errs, errors.New("DB_MAX_CONNS must be a number from 1 to 200"))
+	}
+	switch v := getenv("MIGRATE_ON_START"); v {
+	case "", "false":
+	case "true":
+		c.MigrateOnStart = true
+	default:
+		errs = append(errs, errors.New(`MIGRATE_ON_START must be "true", "false" or unset`))
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))

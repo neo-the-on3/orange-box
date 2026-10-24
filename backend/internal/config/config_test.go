@@ -19,7 +19,8 @@ func TestLoadDefaults(t *testing.T) {
 	if c.Port != 8080 || c.AuthTestMode || c.JWTIssuer != "orange-box" ||
 		c.RequestTimeout != 30*time.Second || c.ShutdownTimeout != 8*time.Second ||
 		c.UploadConcurrency != 2 || c.UploadQueueWait != 2*time.Second || c.UploadReadTimeout != 10*time.Second || c.BodyConcurrency != 16 ||
-		c.AnonBodyConcurrency != 8 || c.AnonReadConcurrency != 1024 {
+		c.AnonBodyConcurrency != 8 || c.AnonReadConcurrency != 1024 ||
+		c.DatabaseURL != "" || c.DBMaxConns != 10 || c.MigrateOnStart {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 }
@@ -46,7 +47,7 @@ func TestLoadTestMode(t *testing.T) {
 		{"code trivial", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "true", "AUTH_TEST_CODE": "123456"}, "AUTH_TEST_CODE"},
 		{"mode TRUE", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "TRUE", "AUTH_TEST_CODE": good}, "AUTH_TEST_MODE must be"},
 		{"mode 1", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "1", "AUTH_TEST_CODE": good}, "AUTH_TEST_MODE must be"},
-		{"mode off in prod", map[string]string{"ENV": "production", "AUTH_TEST_MODE": "false", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k"}, ""},
+		{"mode off in prod", map[string]string{"ENV": "production", "AUTH_TEST_MODE": "false", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob"}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,9 +119,27 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"bodies zero":   {"ENV": "local", "BODY_CONCURRENCY": "0"},
 		"anon bodies":   {"ENV": "local", "ANON_BODY_CONCURRENCY": "x"},
 		"anon reads":    {"ENV": "local", "ANON_READ_CONCURRENCY": "0"},
+		"db conns zero": {"ENV": "local", "DB_MAX_CONNS": "0"},
+		"db conns text": {"ENV": "local", "DB_MAX_CONNS": "lots"},
+		"migrate flag":  {"ENV": "local", "MIGRATE_ON_START": "yes"},
 	} {
 		if _, err := Load(env(e)); err == nil {
 			t.Errorf("%s: Load succeeded, want error", name)
 		}
+	}
+}
+
+func TestLoadDatabaseRules(t *testing.T) {
+	t.Parallel()
+	prod := map[string]string{"ENV": "production", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k"}
+	if _, err := Load(env(prod)); err == nil || !strings.Contains(err.Error(), "DATABASE_URL is required") {
+		t.Errorf("production without DATABASE_URL: err = %v", err)
+	}
+	c, err := Load(env(map[string]string{"ENV": "local", "DATABASE_URL": " postgres://u@h/db ", "DB_MAX_CONNS": "4", "MIGRATE_ON_START": "true"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DatabaseURL != "postgres://u@h/db" || c.DBMaxConns != 4 || !c.MigrateOnStart {
+		t.Errorf("database settings = %q, %d, %v", c.DatabaseURL, c.DBMaxConns, c.MigrateOnStart)
 	}
 }
