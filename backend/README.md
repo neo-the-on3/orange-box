@@ -27,8 +27,21 @@ and validated. Implemented so far:
   de-duplication by `clientVehicleId` (`200` with the existing vehicle, `410
   vehicle_deleted` for a deletion tombstone), `?cascade=true` and
   `Idempotency-Key`. Without `DATABASE_URL` they answer `501`.
-- `Idempotency-Key` on every operation that declares it (only
-  `POST /v1/vehicles` is implemented so far): a retry with the same key and
+- Trips (#110), on Postgres: `POST /v1/trips/batch` (per-item results:
+  `created`/`updated`/`unchanged`, or `rejected` with `vehicle_not_found` or
+  `trip_deleted`; a newer `snapshotAt` replaces, a `completed` trip is
+  final), `GET /v1/trips` (history newest first, filtered by `vehicleId` and
+  `from`/`to`, or `since=<token>` for the changes since a sync point),
+  `GET /v1/trips/deletions?since=<token>`, `GET /v1/trips/days` (trip counts
+  per local date in `tz`, up to 366 days), and `GET`/`DELETE
+  /v1/trips/{tripRef}` with `client:<clientTripId>` refs. Times are stored as
+  UTC milliseconds. Pages carry an opaque `nextCursor`; the last page of an
+  unfiltered walk carries `nextSince`. A token that a tombstone purge has
+  overtaken, or one from another member or deployment, gets `400
+  sync_window_expired` (do a full walk). Without `DATABASE_URL` they answer
+  `501`.
+- `Idempotency-Key` on every operation that declares it (`POST /v1/vehicles`
+  and `POST /v1/trips/batch` so far): a retry with the same key and
   request gets the stored response, another request under the key `422
   idempotency_key_reused`, a retry while the first runs `409
   idempotency_in_flight`. Needs Postgres; without it the header is only
@@ -39,10 +52,11 @@ and validated. Implemented so far:
 Postgres storage (#105): the schema, goose migrations and sqlc queries for
 members, vehicles, trips with deletion tombstones and sync watermarks,
 telemetry batch metadata and events, DTC reports and idempotency keys are
-in `internal/db` (see [Database](#database)). Members, vehicles and
+in `internal/db` (see [Database](#database)). Members, vehicles, trips and
 idempotency keys are stored in Postgres when `DATABASE_URL` is set; the
 handlers for the other resources are still `501` and will use the queries as
-they land.
+they land. Nothing purges tombstones or expired idempotency keys yet (the
+queries exist; the job is to come).
 
 ## Requirements
 
@@ -110,11 +124,14 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `UPLOAD_READ_TIMEOUT` | `10s`     | How long an upload body may take to arrive once it has a slot; then `408 request_timeout`. Send large batches gzipped (1 MiB max). |
 | `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
 | `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members and `501` for vehicles (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
+| `SYNC_TOKEN_KEY`   | none         | Base64 secret (at least 32 bytes) that signs trip sync tokens and page cursors. Required unless `ENV` is `local`/`ci`/`sandbox`, where a missing one is generated at startup (tokens then die with the process). Rotating it expires every client's token: they do one full walk. |
+| `SYNC_DEPLOYMENT_ID` | none       | Names the database in sync tokens when its system identifier can't be read (`[A-Za-z0-9._:-]`, up to 64). Change it when you restore the database from a backup, so older tokens expire. |
 | `DB_MAX_CONNS`     | `10`         | Postgres pool size (1–200). |
 | `MIGRATE_ON_START` | `false`      | `true` applies pending migrations at startup (an advisory lock serialises instances). Otherwise run `server migrate up` as a release step. |
 
 Keep local values in a `.env` (git-ignored); never commit secrets. To make a
-signing key: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
+signing key: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`;
+a sync token key: `openssl rand -base64 32`.
 
 ## Layout
 
@@ -124,8 +141,9 @@ signing key: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
 | `internal/api`           | **Generated** strict server + models (`api.gen.go`) and 501 stubs (`stubs.gen.go`) |
 | `internal/httpapi`       | Router, middleware, OpenAPI validation, handlers |
 | `internal/auth`          | ES256 access tokens, member store interface, test-mode codes |
-| `internal/store`         | Storage interfaces and domain types the handlers use (vehicles, idempotency keys) |
-| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member, vehicle and idempotency stores |
+| `internal/store`         | Storage interfaces and domain types the handlers use (vehicles, trips, idempotency keys) |
+| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member, vehicle, trip and idempotency stores |
+| `internal/synctoken`     | HMAC-signed sync tokens and page cursors |
 | `internal/db/dbgen`      | **Generated** by sqlc from `queries/` and `migrations/` (`sqlc.yaml`) |
 | `internal/db/dbtest`     | Throwaway databases for integration tests |
 | `internal/config`        | Environment config (fails closed) |
@@ -259,7 +277,7 @@ Schema overview (`internal/db/migrations`):
 | ----- | ----- |
 | `members` | Profile, `version` (ETag), `tokens_valid_after`, `deleted_at`. E-mail is unique among live members only: `DELETE /v1/me` sets it to NULL at once, a job erases the row later and `ON DELETE CASCADE` removes everything the member owns. |
 | `vehicles` | Vehicle fields, `version` (ETag), `archived`. A deleted vehicle with a `clientVehicleId` stays as a data-less tombstone row (`deleted_at` set) so `POST /v1/vehicles` can answer `410`; unique `(member_id, client_vehicle_id)`. |
-| `trips` | Trip summaries, unique `(member_id, client_trip_id)`. Deleting clears every data column and sets `deleted_at` (the tombstone). `writer_xid` is set to `pg_current_xact_id()` by a trigger on every write. |
+| `trips` | Trip summaries, unique `(member_id, client_trip_id)`. Deleting clears every data column and sets `deleted_at` (the tombstone). `writer_xid` is set to `pg_current_xact_id()` by a trigger on every write. A batch upload holds `FOR SHARE` locks on its live vehicles, so a vehicle delete (and its cascade) waits for it or runs first, and the batch then rejects its trips with `vehicle_not_found`. |
 | `trip_purge_boundaries` | Per member, the latest `deleted_at` and highest `writer_xid` among purged trip tombstones; sync tokens at or below it get `sync_window_expired`. |
 | `telemetry_batches` | One row per uploaded batch: `clientBatchId` (unique per member), counts for duplicate replies, sample time range, object-storage key (raw batches go to R2 with #110). |
 | `trip_events` | Driving events, de-duplicated on insert by `clientEventId` and by the fallback key (`client_trip_id`, `t`, `type`, `active`, `dtc`; `NULLS NOT DISTINCT`). |
