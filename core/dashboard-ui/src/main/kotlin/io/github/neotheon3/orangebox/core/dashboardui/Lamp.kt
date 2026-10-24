@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -20,6 +21,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.ui.text.TextStyle
 
 /** What a lamp shows. [color] is used when [on]; [stateLabel] overrides the spoken state. */
 data class LampState(val on: Boolean, val color: Color, val stateLabel: String? = null)
@@ -39,19 +45,21 @@ fun Lamp(
 ) {
     val spoken = state.stateLabel ?: stringResource(if (state.on) R.string.dashboard_state_on else R.string.dashboard_state_off)
     val tint = if (state.on) state.color else DashboardColors.LampOff
+    val minCaption = with(LocalDensity.current) { 7.dp.toSp() }
     Column(
-        modifier.clearAndSetSemantics { contentDescription = "$label, $spoken" },
+        modifier.clearAndSetSemantics { contentDescription = "$label, $spoken" }.padding(horizontal = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(iconSize))
-        Text(
+        BasicText(
             label.uppercase(),
-            color = if (state.on) DashboardColors.Text else DashboardColors.LampOff,
-            fontSize = DashboardType.Caption,
-            fontWeight = if (state.on) FontWeight.Black else FontWeight.Bold,
+            style = TextStyle(
+                color = if (state.on) DashboardColors.Text else DashboardColors.LampOff,
+                fontWeight = if (state.on) FontWeight.Black else FontWeight.Bold,
+            ),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            autoSize = TextAutoSize.StepBased(minFontSize = minCaption, maxFontSize = DashboardType.Caption, stepSize = 0.5.sp),
         )
     }
 }
@@ -67,13 +75,18 @@ fun HeaderLamp(icon: ImageVector, label: String, state: LampState, modifier: Mod
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
-        Text(
+        BasicText(
             label.uppercase(),
-            color = tint,
-            fontSize = DashboardType.Header,
-            fontWeight = if (state.on) FontWeight.Black else FontWeight.Bold,
+            modifier = Modifier.weight(1f, fill = false),
+            // Lit: white text (readable on the matching glow), icon in the lamp colour.
+            style = TextStyle(
+                color = if (state.on) DashboardColors.Text else DashboardColors.LampOff,
+                fontWeight = if (state.on) FontWeight.Black else FontWeight.Bold,
+            ),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            autoSize = TextAutoSize.StepBased(
+                minFontSize = with(LocalDensity.current) { 9.dp.toSp() }, maxFontSize = DashboardType.Header, stepSize = 0.5.sp,
+            ),
         )
     }
 }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dashboard_emergency">Emergency</string>
+    <string name="dashboard_diagnostics">Diagnostics</string>
+    <string name="dashboard_detailed_info">Detailed Info.</string>
+    <string name="dashboard_detail_shown">detail grid shown</string>
+    <string name="dashboard_detail_hidden">clusters shown</string>
+    <string name="dashboard_end_driving">End driving</string>
+    <string name="detail_page">Detailed info page %1$d of %2$d</string>
+
+    <string name="emergency_title">Emergency</string>
+    <string name="emergency_body">Automatic crash detection and emergency contacts come in a later update.\n\nIf you need help now, stop safely and call %1$s or your local emergency number.</string>
+    <string name="emergency_dial">Open dialer (%1$s)</string>
+    <string name="emergency_no_dialer">No phone app found on this device</string>
+    <string name="dialog_close">Close</string>
+
+    <string name="diagnostics_mil_on">on</string>
+    <string name="diagnostics_mil_off">off</string>
+    <string name="diagnostics_unknown">unknown</string>
+    <string name="diagnostics_body">Check-engine lamp (MIL): %1$s\nStored trouble codes: %2$s\n\nThe full Diagnostics screen with code details comes in a later update.</string>
+</resources>

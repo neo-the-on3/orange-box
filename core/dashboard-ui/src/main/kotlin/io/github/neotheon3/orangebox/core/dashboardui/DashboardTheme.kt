@@ -11,6 +11,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 /**
  * Dashboard palette, measured from the legacy layouts (docs/ui/LEGACY_OBD_UI.md §3). Only the
@@ -62,7 +64,6 @@ object DashboardColors {
 /** Text sizes in sp (they follow the user's font scale; meters additionally auto-fit). */
 object DashboardType {
     val MeterMax = 75.sp
-    val MeterMin = 28.sp
     val MeterUnit = 18.sp
     val Value = 20.sp
     val ValueUnit = 12.sp
@@ -92,7 +93,13 @@ fun rememberReduceMotion(): Boolean {
     }
 }
 
-/** Always dark (decision D1), whatever the system theme. */
+/**
+ * The dashboard honours the system font size up to 1.5×: its readouts are already 20–75 sp, and every
+ * label auto-fits, so larger scales would only squeeze the meters. TalkBack descriptions are complete.
+ */
+const val MAX_DASHBOARD_FONT_SCALE = 1.5f
+
+/** Always dark (decision D1), whatever the system theme. Caps the font scale at [MAX_DASHBOARD_FONT_SCALE]. */
 @Composable
 fun DashboardTheme(
     settings: DashboardSettings = DashboardSettings(reduceMotion = rememberReduceMotion()),
@@ -105,7 +112,12 @@ fun DashboardTheme(
         onSurface = DashboardColors.Text,
         primary = DashboardColors.Accent,
     )
+    val density = LocalDensity.current
     MaterialTheme(colorScheme = scheme) {
-        CompositionLocalProvider(LocalDashboardSettings provides settings, content = content)
+        CompositionLocalProvider(
+            LocalDashboardSettings provides settings,
+            LocalDensity provides Density(density.density, density.fontScale.coerceAtMost(MAX_DASHBOARD_FONT_SCALE)),
+            content = content,
+        )
     }
 }

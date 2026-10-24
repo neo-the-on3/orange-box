@@ -10,4 +10,5 @@ dependencies {
     implementation(project(":core:datastore"))
     implementation(project(":core:obd"))
     implementation(project(":core:telemetry"))
+    implementation(project(":core:dashboard-ui"))
 }

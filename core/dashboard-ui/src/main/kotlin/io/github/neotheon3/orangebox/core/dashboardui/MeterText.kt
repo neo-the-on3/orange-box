@@ -16,10 +16,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+
+private val MeterMinHeight = 22.dp
 
 /**
  * Big meter readout (RPM, speed) with its unit underneath, right-aligned like the legacy cluster.
- * The number auto-fits between [DashboardType.MeterMin] and [max] so 200 % font scale never clips.
+ * The number auto-fits between 22 dp (independent of font scale) and [max] so 200 % font scale never clips.
  * [spoken] is the full content description ("Speed 59 kilometres per hour").
  */
 @Composable
@@ -31,6 +35,7 @@ fun MeterText(
     max: TextUnit = DashboardType.MeterMax,
     alignment: Alignment.Horizontal = Alignment.End,
 ) {
+    val minSize = with(LocalDensity.current) { MeterMinHeight.toSp() }
     Column(
         modifier.clearAndSetSemantics { contentDescription = spoken },
         horizontalAlignment = alignment,
@@ -47,7 +52,8 @@ fun MeterText(
                 lineHeight = max,
             ),
             maxLines = 1,
-            autoSize = TextAutoSize.StepBased(minFontSize = DashboardType.MeterMin, maxFontSize = max, stepSize = 2.sp),
+            // The floor is fixed in dp so a large font scale can't make the number too big to fit at all.
+            autoSize = TextAutoSize.StepBased(minFontSize = minSize, maxFontSize = if (max.value > minSize.value) max else minSize, stepSize = 2.sp),
         )
         Text(unit, color = DashboardColors.Text, fontSize = DashboardType.MeterUnit, maxLines = 1)
     }

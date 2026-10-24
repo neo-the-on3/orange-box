@@ -53,6 +53,7 @@ fun ValueTile(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     large: Boolean = false,
+    titleLines: Int = 1,
 ) {
     val glow: Color? = when {
         !large -> null
@@ -89,7 +90,7 @@ fun ValueTile(
     ) {
         Text(
             title, color = DashboardColors.TileTitle, fontSize = DashboardType.TileTitle,
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            lineHeight = DashboardType.TileTitle * 1.15f, maxLines = titleLines, overflow = TextOverflow.Ellipsis,
         )
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (icon != null) {

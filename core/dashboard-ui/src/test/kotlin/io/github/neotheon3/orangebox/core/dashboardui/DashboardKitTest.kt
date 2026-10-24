@@ -52,8 +52,8 @@ class DashboardKitTest {
         Column {
             RpmCluster(state, Modifier.size(234.dp, 232.dp))
             SpeedCluster(state, Modifier.size(234.dp, 232.dp))
-            FuelCard(state, Modifier.width(110.dp))
-            TripCard(state, Modifier.width(110.dp))
+            FuelCard(state, Modifier.size(110.dp, 130.dp))
+            TripCard(state, Modifier.size(110.dp, 100.dp))
             ConnectChips(state, Modifier.width(110.dp))
         }
     }

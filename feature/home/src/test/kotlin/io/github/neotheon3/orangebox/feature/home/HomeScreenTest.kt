@@ -21,7 +21,7 @@ class HomeScreenTest {
     @get:Rule val compose = createComposeRule()
 
     private fun render(dark: Boolean, state: HomeUiState, onSettings: () -> Unit = {}, extra: List<HomeMenuEntry> = emptyList()) =
-        compose.setContent { OrangeBoxTheme(darkTheme = dark) { HomeScreen(state, onSettings, extra) } }
+        compose.setContent { OrangeBoxTheme(darkTheme = dark) { HomeScreen(state, onSettings, extraMenuEntries = extra) } }
 
     @Test fun `renders in light theme`() {
         render(false, HomeUiState(BackendConfig(BackendMode.OFF), loading = false))

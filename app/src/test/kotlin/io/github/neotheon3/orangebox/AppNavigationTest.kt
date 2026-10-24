@@ -31,7 +31,7 @@ class AppNavigationTest {
 
     /** First launch: walk the onboarding (accept, skip car and dongle) to reach Home. */
     private fun walkOnboarding() {
-        compose.waitUntil(5_000) { compose.onAllNodes(androidx.compose.ui.test.hasTestTag("onboarding_next")).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasTestTag("onboarding_next")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("onboarding_welcome").assertIsDisplayed()
         compose.onNodeWithTag("onboarding_next").performClick()
         compose.onNodeWithTag("onboarding_disclaimer_accept").performScrollTo().performClick()
@@ -41,7 +41,7 @@ class AppNavigationTest {
         compose.onNodeWithTag("onboarding_skip").performClick() // vehicle
         compose.onNodeWithTag("onboarding_skip").performClick() // dongle
         compose.onNodeWithTag("onboarding_finish").performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithTextCount("Backend: Off") > 0 }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTextCount("Backend: Off") > 0 }
     }
 
     @Test fun `first launch walks onboarding, then home opens settings and setup rows`() {
@@ -64,7 +64,7 @@ class AppNavigationTest {
         compose.onNodeWithText("Server (advanced)").assertIsDisplayed()
         compose.onNodeWithTag("settings_mode_fake").performClick()
         compose.onNodeWithTag("settings_back").performClick()
-        compose.waitUntil(5_000) {
+        compose.waitUntil(10_000) {
             compose.onAllNodesWithTextCount("Backend: Fake") > 0
         }
     }

@@ -41,6 +41,7 @@ data class HomeMenuEntry(val label: String, val testTag: String, val onClick: ()
 @Composable
 fun HomeRoute(
     onOpenSettings: () -> Unit,
+    onOpenDashboard: () -> Unit,
     extraMenuEntries: List<HomeMenuEntry> = emptyList(),
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -48,6 +49,7 @@ fun HomeRoute(
     HomeScreen(
         state = state,
         onOpenSettings = onOpenSettings,
+        onOpenDashboard = onOpenDashboard,
         extraMenuEntries = extraMenuEntries,
         onObdConnect = viewModel::onConnect,
         onObdRetry = viewModel::onRetry,
@@ -60,6 +62,7 @@ fun HomeRoute(
 fun HomeScreen(
     state: HomeUiState,
     onOpenSettings: () -> Unit,
+    onOpenDashboard: () -> Unit = {},
     extraMenuEntries: List<HomeMenuEntry> = emptyList(),
     onObdConnect: () -> Unit = {},
     onObdRetry: () -> Unit = {},
@@ -113,7 +116,9 @@ fun HomeScreen(
                 )
             }
             ObdStatusCard(state.obd, onObdConnect, onObdRetry, onObdDisconnect)
-            if (state.obd is io.github.neotheon3.orangebox.core.obd.ObdConnectionState.Connected) LiveDataCard(state.live)
+            if (state.obd is io.github.neotheon3.orangebox.core.obd.ObdConnectionState.Connected) {
+                MiniDashboardCard(state.dashboard, state.live, onOpenDashboard)
+            }
         }
     }
 }
