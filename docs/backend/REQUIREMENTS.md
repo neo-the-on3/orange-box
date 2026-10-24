@@ -14,7 +14,7 @@ The legacy app talked to a Pokevian backend. From the client code we know:
 - No real authentication. The server trusted a client-supplied e-mail (`loginId`) and `memberNo` in request bodies, and the client trusted every TLS certificate.
 - Many "connected" screens (dashboards, charts, rankings, notices, terms) were server-rendered HTML in WebViews. Their content can't be recovered from the client.
 
-This document replaces that with a modern REST API. **We are not building the server.** We're asking a backend developer to build it to this contract.
+This document replaces that with a modern REST API. The server is built to this contract in the same repository (`backend/`, Go); the contract stays the source of truth for both the app and the server.
 
 ## 2. The app's optional-backend model
 
@@ -38,7 +38,7 @@ Consequences for the server:
 - Member profile, and account deletion with real erasure.
 - Vehicles CRUD with optimistic concurrency.
 - Vehicle catalogue (makes → models → variants) and reference data (countries, regions), read-only and cacheable.
-- Trip summaries: idempotent batch upsert, list, get, delete, driving-day calendar.
+- Trip summaries: idempotent batch upsert, list, get, delete (with tombstones), incremental sync including deletions, driving-day calendar.
 - Telemetry: batched samples and events with gzip, idempotent, read-back per trip.
 - Diagnostics: DTC read/clear reports per vehicle.
 - Remote-only: stats summary, rankings (opt-in), points balance and ledger.
@@ -64,7 +64,7 @@ All paths are under `https://{host}/v1`. Full detail is in `openapi-v2.yaml`; ev
 | Vehicles | `GET`/`POST /v1/vehicles`; `GET`/`PATCH`/`DELETE /v1/vehicles/{id}` | Vehicle CRUD (ETag/If-Match) | `getMemberCarList`, `insertCar`, `updateCar` |
 | Catalogue | `GET /v1/catalogue/makes`, `/makes/{id}/models`, `/variants`, `/variants/{id}` | Vehicle picker with filters and facets | `getCarModelList` (6-step `targetField` cascade) |
 | Reference | `GET /v1/reference/countries`, `/countries/{cc}/regions` | Country and region lists | `getCodeList` (`CountryCd`, `Local<cc>`) |
-| Trips | `POST /v1/trips/batch`; `GET /v1/trips`, `/v1/trips/days`, `/v1/trips/{id}`; `DELETE /v1/trips/{id}` | Idempotent trip upsert, history, calendar | `carMessage` (trip), `/m/trip.do qSelectUserDrivingTripDate` |
+| Trips | `POST /v1/trips/batch`; `GET /v1/trips`, `/v1/trips/deletions`, `/v1/trips/days`, `/v1/trips/{id}`; `DELETE /v1/trips/{id}` | Idempotent trip upsert, history, incremental sync (changes and deletions), calendar | `carMessage` (trip), `/m/trip.do qSelectUserDrivingTripDate` |
 | Telemetry | `POST /v1/telemetry/batches`; `GET /v1/trips/{id}/samples`, `/events` | Batched samples and events, read-back | `carMessage` (location, event) |
 | Diagnostics | `POST`/`GET /v1/vehicles/{id}/dtc-reports` | DTC read and clear records | DTC strings inside `carMessage` |
 | Stats (Remote-only) | `GET /v1/stats/summary` | Period aggregates and score stars | `getRanking.do`, `getScoreStar.do` |
@@ -114,8 +114,13 @@ Conventions: timestamps in UTC ISO-8601 with `Z`; metric units in field names; s
 - **Flow**: while driving, the app records samples and events locally (Room). In Remote mode a WorkManager job uploads trip snapshots (`POST /v1/trips/batch`) and telemetry batches (`POST /v1/telemetry/batches`). Uploads need network connectivity, not a live drive.
 - **Order independence**: a trip summary may arrive before or after its telemetry, and batches may arrive out of order or days late (offline backlog). The server must link everything by `clientTripId` and must not assume order.
 - **Trip snapshots**: the legacy app re-uploaded a trip summary periodically during a drive (once it passed 1 km) and again at the end. v1 keeps that: upsert by `clientTripId`, ignore snapshots older than the stored `snapshotAt`, and treat a `completed` trip as immutable except for deletion.
-- **Idempotency**: every upload carries an `Idempotency-Key` header, plus `clientBatchId` or `clientReportId` in the body. The same key and body returns the original response; the same key with a different body returns `422`; a retry while the original is still processing returns `409`. Keep keys for at least 24 hours (proposal; 7 days would better cover long offline backlogs). Samples are also de-duplicated by (`clientTripId`, `t`).
-- **Batch limits (proposal)**: up to 5,000 samples and 500 events per telemetry batch, up to 100 trips per trip batch, and at most 1 MiB compressed or 8 MiB uncompressed per request. Anything larger returns `413`. `Content-Encoding: gzip` must be accepted; other encodings return `415`.
+- **Deletion tombstones**: deleting a trip (directly or with `DELETE /v1/vehicles/{id}?cascade=true`) erases its data and keeps a tombstone (server id, `clientTripId`, `deletedAt`; no trip data) for at least 90 days (proposal; longer than the app's 30-day backlog), erased with the account. A late snapshot for a tombstoned trip gets a per-item `rejected` with `code=trip_deleted`; a late telemetry batch gets `202` with `status=trip_deleted` and is discarded. Neither recreates the trip.
+- **Incremental sync**: `GET /v1/trips?updatedSince=` returns changed trips ordered by (`updatedAt`, `id`) ascending, and `GET /v1/trips/deletions?since=` returns tombstones ordered by (`deletedAt`, `id`). If `since` is older than tombstone retention, the server returns `400` with `code=sync_window_expired` and the app does a full resync.
+- **Vehicles**: `POST /v1/vehicles` is de-duplicated by `clientVehicleId`: if the caller already has that vehicle, it is returned unchanged with `200`, so a retry under a new `Idempotency-Key` is safe. A `clientVehicleId` whose vehicle was deleted returns `410` (`code=vehicle_deleted`), which the app does not retry.
+- **Idempotency**: every upload carries an `Idempotency-Key` header, plus `clientBatchId` or `clientReportId` in the body. Keys are scoped per (member, HTTP method, route template), so one member's key can never replay another member's response. The same key and request fingerprint (path parameters plus decompressed body) returns the original response; the same key with a different fingerprint returns `422` (`code=idempotency_key_reused`); a retry while the original is still processing returns `409` (`code=idempotency_in_flight`). `409` means only that. Keep keys for at least 24 hours (proposal; 7 days would better cover long offline backlogs).
+- **De-duplication**: samples are de-duplicated by (`clientTripId`, `t`) and events by (`clientTripId`, `t`, `type`). The telemetry acknowledgement's `acceptedSamples`/`acceptedEvents`/`droppedSamples`/`droppedEvents` cover that batch only (in-batch duplicates and out-of-range values); duplicates of earlier batches are removed on read-back or compaction, so read-back never returns duplicates. This keeps uploads cheap when raw batches live in object storage.
+- **Telemetry `404`**: `POST /v1/telemetry/batches` returns `404` only when `vehicleId` is not one of the caller's vehicles. An unknown `clientTripId` is normal (the summary may come later) and is never a `404`.
+- **Batch limits (proposal)**: up to 5,000 samples and 500 events per telemetry batch, up to 100 trips per trip batch, and at most 1 MiB compressed or 8 MiB uncompressed per request. Anything larger returns `413`. `Content-Encoding: gzip` must be accepted on the three upload operations; other encodings return `415` (`code=unsupported_encoding`). `Content-Encoding` is not declared as an API parameter: the server inflates the body (stopping at the 8 MiB limit) before schema validation.
 - **Volume (estimate)**: at about 1 sample per second, a 1-hour drive is about 3,600 samples, roughly 0.9 MB of JSON before gzip and well under 1 MB after. The app sends one or more batches per drive.
 - **Acknowledgement**: `202` means durably stored. Aggregation (stats, rankings, points) may lag (proposal: under 5 minutes).
 - **Client retry policy (app side, proposal)**: exponential backoff with jitter starting at 30 s and capped at 1 h. The app honours `Retry-After` on `429`/`503`, stops retrying on other `4xx` except `408`/`409`, keeps a backlog of up to 30 days or 100 MB, and uploads oldest first.
@@ -127,11 +132,11 @@ Conventions: timestamps in UTC ISO-8601 with `Z`; metric units in field names; s
 |---|---|
 | Transport | HTTPS only, TLS 1.2+ (1.3 preferred), HSTS, modern cipher suites |
 | Latency | p95 under 300 ms for reads and profile/vehicle writes; p95 under 500 ms to acknowledge an upload batch of 1 MiB or less, measured at the server edge |
-| Availability | 99.5% monthly for auth and upload endpoints; Remote-only features (stats, rankings, points) may degrade first |
+| Availability | 99.5% monthly for auth and upload endpoints; Remote-only features (stats, rankings, points) may degrade first. The sandbox and any free-tier production deployment (free compute plus free Postgres and object storage) are best-effort and can't promise this or the durability target below |
 | Durability | An acknowledged upload (`200`/`202`) is never lost: replicated storage plus daily backups |
 | Scalability | Initial sizing for 10k members and 1k concurrent drivers; horizontally scalable stateless API |
 | Retention | Raw samples 12 months; trip summaries and DTC reports until the user deletes them or their account; request logs 30 days; idempotency keys 24 h–7 d |
-| Privacy and deletion | `DELETE /v1/me` revokes tokens immediately and erases all member data within 30 days, backups included as they rotate. Provide a data export on request (open question). Follow GDPR-style principles: data minimisation, purpose limitation and documented processors. Check India's DPDP Act if hosting or users are in India |
+| Privacy and deletion | `DELETE /v1/me` revokes tokens immediately and erases all member data within 30 days, backups included as they rotate; the e-mail address is detached at once, so the same address can sign up again as a new, empty member. Provide a data export on request (open question). Follow GDPR-style principles: data minimisation, purpose limitation and documented processors. Check India's DPDP Act if hosting or users are in India |
 | Logging | Structured logs with `X-Request-Id`, member id (or a hash of it), route, status and latency. Never log tokens, one-time codes, e-mail, VIN, plate, precise location or request bodies |
 | Observability | Metrics for rate, errors and latency per route; upload backlog and aggregation lag; alerting on 5xx rate and auth failures |
 | Auth abuse alerting | Metrics for OTP failures, lockouts and `otp_locked` responses. Alert when the same address (hashed) is locked repeatedly (proposal: 3 or more lockouts in 7 days), when one IP or ASN causes many lockouts across addresses (proposal: 5 or more distinct addresses in 1 hour), and when the overall lockout rate spikes. Alerts carry hashed addresses only, never plain e-mail |
@@ -156,7 +161,7 @@ Every error is `application/problem+json` (RFC 9457):
 }
 ```
 
-Status codes used: `400` malformed or expired cursor, `401` missing or expired token (with `WWW-Authenticate`), `403` not allowed, `404` missing or not owned, `409` idempotent request in flight, `412` stale `If-Match`, `413` too large, `415` bad media type or encoding, `422` validation or idempotency-key reuse, `428` `If-Match` missing (declared optional in the spec and enforced in the handler), `429` rate limited (documented on every operation), `500` unexpected error, `503` maintenance. Every operation has a `default` problem+json response. Problem bodies contain no PII, tokens or stack traces. `code` values are stable and documented.
+Status codes used: `400` malformed request, expired cursor or expired sync window, `401` missing or expired token (with `WWW-Authenticate`), `404` missing or not owned, `409` idempotent request in flight (and nothing else), `410` re-creating a deleted vehicle, `412` stale `If-Match`, `413` too large, `415` bad media type or encoding, `422` validation or idempotency-key reuse, `428` `If-Match` missing (declared optional in the spec and enforced in the handler), `429` rate limited (documented on every operation), `500` unexpected error, `503` maintenance. Every operation has a `default` problem+json response. Problem bodies contain no PII, tokens or stack traces. `code` values are stable and documented.
 
 ## 10. Environments and base URL configuration
 
@@ -196,7 +201,7 @@ How the app finds the server:
 6. **Scores and points**: compute scores server-side from telemetry, or accept the client's `ecoScore`/`safetyScore`? What are the points earning, expiry and redemption rules? Redemption isn't specified.
 7. **Location precision**: keep full-precision GPS in samples, or coarsen or trim the start and end of trips to protect home and work locations?
 8. **Limits**: are the proposed batch sizes, rate limits and idempotency-key retention (24 h vs 7 d) workable?
-9. **Multi-device**: the same account on two phones. Is last-writer-wins plus ETag enough for vehicles? Should trips sync down to a second device?
+9. **Multi-device**: the same account on two phones. Is last-writer-wins plus ETag enough for vehicles? Trips can sync down to a second device with `updatedSince` plus `/v1/trips/deletions`; does the app want that in v1?
 10. **Data export**: add `GET /v1/me/export` (async) for portability requests in v1, or handle it manually?
 11. **Fuel cost**: `StatsSummary.fuelCost` needs a fuel price and currency source. Keep, defer or drop?
 12. **Lockout weighting**: should OTP failures be weighted per (address, IP) so one source can't lock an address alone (e.g. an IP's failures count fully only up to a per-IP budget)? That reduces lockout abuse but needs care so distributed guessing isn't let through.
