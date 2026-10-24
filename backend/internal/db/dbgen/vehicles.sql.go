@@ -112,6 +112,49 @@ func (q *Queries) GetVehicleByClientID(ctx context.Context, arg GetVehicleByClie
 	return i, err
 }
 
+const getVehicleForUpdate = `-- name: GetVehicleForUpdate :one
+SELECT id, member_id, client_vehicle_id, nickname, variant_id, make, model, fuel_type, engine_displacement_cc, model_year, plate_number, vin, odometer_km, idle_stop_go, obd_elm_version, obd_protocol, archived, version, created_at, updated_at, deleted_at FROM vehicles
+WHERE member_id = $1 AND id = $2 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+type GetVehicleForUpdateParams struct {
+	MemberID uuid.UUID
+	ID       uuid.UUID
+}
+
+// DELETE /v1/vehicles/{id}: locks the live vehicle so the If-Match check,
+// the delete and a cascade happen against the version that is deleted. A
+// concurrent PATCH waits, then finds no live row.
+func (q *Queries) GetVehicleForUpdate(ctx context.Context, arg GetVehicleForUpdateParams) (Vehicle, error) {
+	row := q.db.QueryRow(ctx, getVehicleForUpdate, arg.MemberID, arg.ID)
+	var i Vehicle
+	err := row.Scan(
+		&i.ID,
+		&i.MemberID,
+		&i.ClientVehicleID,
+		&i.Nickname,
+		&i.VariantID,
+		&i.Make,
+		&i.Model,
+		&i.FuelType,
+		&i.EngineDisplacementCc,
+		&i.ModelYear,
+		&i.PlateNumber,
+		&i.Vin,
+		&i.OdometerKm,
+		&i.IdleStopGo,
+		&i.ObdElmVersion,
+		&i.ObdProtocol,
+		&i.Archived,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const insertVehicle = `-- name: InsertVehicle :one
 INSERT INTO vehicles (
     id, member_id, client_vehicle_id, nickname, variant_id, make, model, fuel_type,

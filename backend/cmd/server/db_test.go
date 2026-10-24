@@ -227,3 +227,60 @@ func TestHealthReportsDatabaseOutage(t *testing.T) {
 		t.Fatalf("health with database gone: %d, want 503", code)
 	}
 }
+
+// TestRunServesVehiclesFromPostgres checks the wiring: with DATABASE_URL
+// the vehicle operations and Idempotency-Key storage use Postgres.
+func TestRunServesVehiclesFromPostgres(t *testing.T) {
+	t.Parallel()
+	url := dbtest.NewDatabase(t)
+	base := startServer(t, dbConfig(t, url, map[string]string{"MIGRATE_ON_START": "true"}), io.Discard)
+	token := accessToken(t, base, "veh@test.orangebox.invalid")
+	post := func() int {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/v1/vehicles",
+			strings.NewReader(`{"make":"Hyundai","model":"i20","fuelType":"gasoline"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Idempotency-Key", "0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a99")
+		res, err := noKeepAlive.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+	if a, b := post(), post(); a != http.StatusCreated || b != http.StatusCreated {
+		t.Fatalf("create and replay: %d, %d", a, b)
+	}
+	pool := dbtest.Open(t, url)
+	var vehicles, keys int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT (SELECT count(*) FROM vehicles), (SELECT count(*) FROM idempotency_keys WHERE state = 'completed')`).Scan(&vehicles, &keys); err != nil {
+		t.Fatal(err)
+	}
+	if vehicles != 1 || keys != 1 {
+		t.Fatalf("vehicles = %d, completed keys = %d; want 1 and 1", vehicles, keys)
+	}
+}
+
+func accessToken(t *testing.T, base, email string) string {
+	t.Helper()
+	post := func(path, body string) *http.Response {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := noKeepAlive.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	_ = post("/v1/auth/otp", `{"email":"`+email+`"}`).Body.Close()
+	res := post("/v1/auth/token", `{"grantType":"email_otp","email":"`+email+`","code":"`+testCode+`"}`)
+	defer res.Body.Close()
+	var tok struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&tok); err != nil || tok.AccessToken == "" {
+		t.Fatalf("token: %d %v", res.StatusCode, err)
+	}
+	return tok.AccessToken
+}

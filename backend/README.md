@@ -20,15 +20,29 @@ and validated. Implemented so far:
   `@test.orangebox.invalid` addresses. Other addresses get `503`
   (`code=email_sign_in_unavailable`) on `/otp` and `invalid_grant` on
   `/token`; `grantType=refresh_token` answers `501`.
+- Vehicles (#108), on Postgres: `GET`/`POST /v1/vehicles` and
+  `GET`/`PATCH`/`DELETE /v1/vehicles/{vehicleId}`, with `ETag` /
+  `If-Match` (`428` when missing, `412` when stale), `If-None-Match` (`304`),
+  JSON merge patch (`null` clears a nullable field, an absent one is kept),
+  de-duplication by `clientVehicleId` (`200` with the existing vehicle, `410
+  vehicle_deleted` for a deletion tombstone), `?cascade=true` and
+  `Idempotency-Key`. Without `DATABASE_URL` they answer `501`.
+- `Idempotency-Key` on every operation that declares it (only
+  `POST /v1/vehicles` is implemented so far): a retry with the same key and
+  request gets the stored response, another request under the key `422
+  idempotency_key_reused`, a retry while the first runs `409
+  idempotency_in_flight`. Needs Postgres; without it the header is only
+  validated.
 - Every other operation answers `501` (`code=not_implemented`) after routing,
   auth and validation, so clients and contract tests see the real shapes.
 
 Postgres storage (#105): the schema, goose migrations and sqlc queries for
 members, vehicles, trips with deletion tombstones and sync watermarks,
 telemetry batch metadata and events, DTC reports and idempotency keys are
-in `internal/db` (see [Database](#database)). Members are stored in Postgres
-when `DATABASE_URL` is set; the handlers for the other resources are still
-`501` and will use the queries as they land.
+in `internal/db` (see [Database](#database)). Members, vehicles and
+idempotency keys are stored in Postgres when `DATABASE_URL` is set; the
+handlers for the other resources are still `501` and will use the queries as
+they land.
 
 ## Requirements
 
@@ -61,7 +75,8 @@ curl -s -X POST localhost:8080/v1/auth/token -H 'Content-Type: application/json'
 Without `JWT_PRIVATE_KEY` the server generates a signing key at startup (only
 allowed when `ENV` is `local`, `ci` or `sandbox`), so tokens stop working when
 it restarts. Without `DATABASE_URL`, members are kept in memory and lost on
-restart; see [Database](#database) to use Postgres.
+restart, and the vehicle operations answer `501`; see [Database](#database)
+to use Postgres.
 
 Test-mode guessing limits (all test addresses share one code): asking for a
 code again within `resendAfter` (60 s) keeps the pending one; 5 wrong codes
@@ -94,7 +109,7 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `ANON_READ_CONCURRENCY` | `1024`  | Anonymous requests with a body in flight, reading included (1–65536); bounds buffered anonymous bodies to 16 MiB. Beyond it, `503 server_busy` at once. |
 | `UPLOAD_READ_TIMEOUT` | `10s`     | How long an upload body may take to arrive once it has a slot; then `408 request_timeout`. Send large batches gzipped (1 MiB max). |
 | `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
-| `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
+| `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members and `501` for vehicles (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
 | `DB_MAX_CONNS`     | `10`         | Postgres pool size (1–200). |
 | `MIGRATE_ON_START` | `false`      | `true` applies pending migrations at startup (an advisory lock serialises instances). Otherwise run `server migrate up` as a release step. |
 
@@ -109,7 +124,8 @@ signing key: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
 | `internal/api`           | **Generated** strict server + models (`api.gen.go`) and 501 stubs (`stubs.gen.go`) |
 | `internal/httpapi`       | Router, middleware, OpenAPI validation, handlers |
 | `internal/auth`          | ES256 access tokens, member store interface, test-mode codes |
-| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member store |
+| `internal/store`         | Storage interfaces and domain types the handlers use (vehicles, idempotency keys) |
+| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member, vehicle and idempotency stores |
 | `internal/db/dbgen`      | **Generated** by sqlc from `queries/` and `migrations/` (`sqlc.yaml`) |
 | `internal/db/dbtest`     | Throwaway databases for integration tests |
 | `internal/config`        | Environment config (fails closed) |

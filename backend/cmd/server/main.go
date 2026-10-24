@@ -19,6 +19,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
 	"github.com/neo-the-on3/orange-box/backend/internal/httpapi"
 	"github.com/neo-the-on3/orange-box/backend/internal/logging"
+	storage "github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
 func main() {
@@ -117,16 +118,18 @@ func run(ctx context.Context, ln net.Listener, cfg config.Config, logger *slog.L
 
 // store is the storage the handlers use.
 type store struct {
-	members auth.MemberStore
-	ready   func(context.Context) error // nil when there is nothing to check
-	close   func()
+	members     auth.MemberStore
+	vehicles    storage.Vehicles            // nil without a database
+	idempotency storage.Idempotency         // nil without a database
+	ready       func(context.Context) error // nil when there is nothing to check
+	close       func()
 }
 
 // openStore picks the storage: Postgres when DATABASE_URL is set
 // (config.Load requires it outside dev environments), in-memory otherwise.
 func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (store, error) {
 	if cfg.DatabaseURL == "" {
-		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart")
+		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle operations answer 501")
 		return store{members: auth.NewMemoryMembers(), close: func() {}}, nil
 	}
 	pool, err := db.Open(ctx, db.Options{URL: cfg.DatabaseURL, MaxConns: cfg.DBMaxConns})
@@ -144,7 +147,13 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		return store{}, err
 	}
 	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
-	return store{members: db.NewMembers(pool), ready: pool.Ping, close: pool.Close}, nil
+	return store{
+		members:     db.NewMembers(pool),
+		vehicles:    db.NewVehicles(pool),
+		idempotency: db.NewIdempotency(pool),
+		ready:       pool.Ping,
+		close:       pool.Close,
+	}, nil
 }
 
 func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler, error) {
@@ -160,6 +169,8 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		Logger:              logger,
 		Tokens:              tokens,
 		Members:             st.members,
+		Vehicles:            st.vehicles,
+		Idempotency:         st.idempotency,
 		Ready:               st.ready,
 		Codes:               auth.NewPendingCodes(),
 		TestMode:            cfg.AuthTestMode,

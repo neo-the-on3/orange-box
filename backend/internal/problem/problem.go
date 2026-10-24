@@ -43,6 +43,11 @@ const (
 	CodeUploadInProgress    = "upload_in_progress"
 	CodeServerBusy          = "server_busy"
 	CodeRequestTimeout      = "request_timeout"
+	CodeEtagMismatch        = "etag_mismatch"
+	CodePreconditionReq     = "precondition_required"
+	CodeIdempotencyReused   = "idempotency_key_reused"
+	CodeIdempotencyInFlight = "idempotency_in_flight"
+	CodeVehicleDeleted      = "vehicle_deleted"
 	CodeInternal            = "internal_error"
 	CodeUnavailable         = "service_unavailable"
 )
