@@ -291,3 +291,38 @@ func TestIdempotencyStore(t *testing.T) {
 		t.Fatalf("get missing: %v", err)
 	}
 }
+
+// 50 concurrent read-modify-write patches (If-Match: *) all apply in turn:
+// none fails and none is lost.
+func TestVehicleStoreUpdateStress(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := db.NewVehicles(pool)
+	member := newMember(t, dbgen.New(pool))
+	v, _, err := s.CreateVehicle(ctx, member, nil, fields())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 50
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() {
+			if _, err := s.UpdateVehicle(ctx, member, v.ID, func(store.Vehicle) error { return nil }, func(f store.VehicleFields) store.VehicleFields {
+				odo := int64(1)
+				if f.OdometerKm != nil {
+					odo = *f.OdometerKm + 1
+				}
+				f.OdometerKm = &odo
+				return f
+			}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	got, err := s.GetVehicle(ctx, member, v.ID)
+	if err != nil || got.OdometerKm == nil || *got.OdometerKm != n || got.Version != n+1 {
+		t.Fatalf("lost update: odometer %v version %d %v", got.OdometerKm, got.Version, err)
+	}
+}

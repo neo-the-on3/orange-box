@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -501,5 +502,35 @@ func TestVehicleRejectsNUL(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Many PATCHes under If-Match: * all apply, one after another: no 500 and
+// no lost update.
+func TestVehicleConcurrentPatchStress(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("patchstress")
+	r := m.call(http.MethodPost, "/v1/vehicles", `{"make":"a","model":"b","fuelType":"gasoline","odometerKm":0}`)
+	loc := r.header.Get("Location")
+	const n = 50
+	var wg sync.WaitGroup
+	statuses := make([]int, n)
+	for i := range n {
+		wg.Go(func() {
+			body := `{"nickname":"n` + strconv.Itoa(i) + `"}`
+			statuses[i] = m.e.do(http.MethodPatch, loc, strings.NewReader(body),
+				"Authorization", "Bearer "+m.token, "If-Match", "*", "Content-Type", "application/merge-patch+json").status
+		})
+	}
+	wg.Wait()
+	for i, s := range statuses {
+		if s != http.StatusOK {
+			t.Errorf("patch %d: %d", i, s)
+		}
+	}
+	got := m.call(http.MethodGet, loc, "")
+	if etag := got.header.Get("ETag"); etag != `"v`+strconv.Itoa(n+1)+`"` {
+		t.Errorf("after %d patches: ETag %s, want every patch applied", n, etag)
 	}
 }

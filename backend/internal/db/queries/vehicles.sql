@@ -24,9 +24,10 @@ SELECT * FROM vehicles
 WHERE member_id = @member_id AND id = @id AND deleted_at IS NULL;
 
 -- name: GetVehicleForUpdate :one
--- DELETE /v1/vehicles/{id}: locks the live vehicle so the If-Match check,
--- the delete and a cascade happen against the version that is deleted. A
--- concurrent PATCH waits, then finds no live row.
+-- PATCH and DELETE /v1/vehicles/{id}: locks the live vehicle so the
+-- If-Match check and the write (and a cascade) happen against the version
+-- they replace. Concurrent writers wait their turn; after a delete they
+-- find no live row.
 SELECT * FROM vehicles
 WHERE member_id = @member_id AND id = @id AND deleted_at IS NULL
 FOR UPDATE;
