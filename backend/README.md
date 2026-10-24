@@ -23,6 +23,13 @@ and validated. Implemented so far:
 - Every other operation answers `501` (`code=not_implemented`) after routing,
   auth and validation, so clients and contract tests see the real shapes.
 
+Postgres storage (#105): the schema, goose migrations and sqlc queries for
+members, vehicles, trips with deletion tombstones and sync watermarks,
+telemetry batch metadata and events, DTC reports and idempotency keys are
+in `internal/db` (see [Database](#database)). Members are stored in Postgres
+when `DATABASE_URL` is set; the handlers for the other resources are still
+`501` and will use the queries as they land.
+
 ## Requirements
 
 - Go 1.27 or newer
@@ -53,7 +60,8 @@ curl -s -X POST localhost:8080/v1/auth/token -H 'Content-Type: application/json'
 
 Without `JWT_PRIVATE_KEY` the server generates a signing key at startup (only
 allowed when `ENV` is `local`, `ci` or `sandbox`), so tokens stop working when
-it restarts. Members are kept in memory until the database lands (#105).
+it restarts. Without `DATABASE_URL`, members are kept in memory and lost on
+restart; see [Database](#database) to use Postgres.
 
 Test-mode guessing limits (all test addresses share one code): asking for a
 code again within `resendAfter` (60 s) keeps the pending one; 5 wrong codes
@@ -86,7 +94,9 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `ANON_READ_CONCURRENCY` | `1024`  | Anonymous requests with a body in flight, reading included (1–65536); bounds buffered anonymous bodies to 16 MiB. Beyond it, `503 server_busy` at once. |
 | `UPLOAD_READ_TIMEOUT` | `10s`     | How long an upload body may take to arrive once it has a slot; then `408 request_timeout`. Send large batches gzipped (1 MiB max). |
 | `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
-| `DATABASE_URL`     | none         | Postgres DSN (planned, #105). |
+| `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
+| `DB_MAX_CONNS`     | `10`         | Postgres pool size (1–200). |
+| `MIGRATE_ON_START` | `false`      | `true` applies pending migrations at startup (an advisory lock serialises instances). Otherwise run `server migrate up` as a release step. |
 
 Keep local values in a `.env` (git-ignored); never commit secrets. To make a
 signing key: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
@@ -99,6 +109,9 @@ signing key: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
 | `internal/api`           | **Generated** strict server + models (`api.gen.go`) and 501 stubs (`stubs.gen.go`) |
 | `internal/httpapi`       | Router, middleware, OpenAPI validation, handlers |
 | `internal/auth`          | ES256 access tokens, member store interface, test-mode codes |
+| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member store |
+| `internal/db/dbgen`      | **Generated** by sqlc from `queries/` and `migrations/` (`sqlc.yaml`) |
+| `internal/db/dbtest`     | Throwaway databases for integration tests |
 | `internal/config`        | Environment config (fails closed) |
 | `internal/problem`       | RFC 9457 `application/problem+json` errors |
 | `internal/logging`       | slog JSON logger with redaction |
@@ -181,14 +194,72 @@ strict handlers.
 | `make lint`           | `golangci-lint run` (config in `.golangci.yml`)        |
 | `make vuln`           | `govulncheck ./...`                                    |
 | `make spec-lint`      | Redocly + openapi-spec-validator on the v2 spec        |
-| `make generate`       | Regenerate `internal/api` from the spec                |
+| `make generate`       | Regenerate `internal/api` from the spec and `internal/db/dbgen` from the SQL |
 | `make generate-check` | Fail if the committed generated code is stale          |
+| `make migrate-up`     | Apply pending migrations to `DATABASE_URL`             |
+| `make migrate-down`   | Roll back the latest migration                         |
+| `make migrate-status` | List migrations and whether each is applied            |
 | `make docker`         | `docker build -t orange-box-backend:dev .`             |
 | `make ci`             | generate-check, vet, lint, vuln, test (`-race`), build: the Go checks CI runs |
 | `make check`          | `make ci` plus the docker build when a daemon is reachable |
 
-After changing the spec, run `make generate` and commit the result; CI fails
-if `internal/api` is stale.
+After changing the spec or the SQL, run `make generate` and commit the
+result; CI fails if `internal/api` is stale (`make generate-check` also
+covers `internal/db/dbgen`).
+
+## Database
+
+Postgres 15 or newer (the schema uses `NULLS NOT DISTINCT`); Neon in
+production. Migrations are embedded in the binary and applied with
+`server migrate up` (or `MIGRATE_ON_START=true`); sqlc generates typed
+queries into `internal/db/dbgen`.
+
+```sh
+export DATABASE_URL='postgres://orangebox:...@localhost:5432/orangebox?sslmode=disable'
+make migrate-up      # or: go run ./cmd/server migrate up
+make run             # members now persist across restarts
+make test            # Postgres integration tests run because DATABASE_URL is set
+```
+
+Integration tests create a throwaway database per test on that server
+(`ob_test_*`, dropped afterwards), so the role needs `CREATEDB`; they never
+touch the database in `DATABASE_URL`. Without `DATABASE_URL` they are
+skipped, as in CI today.
+
+Schema overview (`internal/db/migrations`):
+
+| Table | Holds |
+| ----- | ----- |
+| `members` | Profile, `version` (ETag), `tokens_valid_after`, `deleted_at`. E-mail is unique among live members only: `DELETE /v1/me` sets it to NULL at once, a job erases the row later and `ON DELETE CASCADE` removes everything the member owns. |
+| `vehicles` | Vehicle fields, `version` (ETag), `archived`. A deleted vehicle with a `clientVehicleId` stays as a data-less tombstone row (`deleted_at` set) so `POST /v1/vehicles` can answer `410`; unique `(member_id, client_vehicle_id)`. |
+| `trips` | Trip summaries, unique `(member_id, client_trip_id)`. Deleting clears every data column and sets `deleted_at` (the tombstone). `writer_xid` is set to `pg_current_xact_id()` by a trigger on every write. |
+| `trip_purge_boundaries` | Per member, the latest `deleted_at` and highest `writer_xid` among purged trip tombstones; sync tokens at or below it get `sync_window_expired`. |
+| `telemetry_batches` | One row per uploaded batch: `clientBatchId` (unique per member), counts for duplicate replies, sample time range, object-storage key (raw batches go to R2 with #110). |
+| `trip_events` | Driving events, de-duplicated on insert by `clientEventId` and by the fallback key (`client_trip_id`, `t`, `type`, `active`, `dtc`; `NULLS NOT DISTINCT`). |
+| `dtc_reports` | DTC read/clear records, unique `(member_id, client_report_id)`. |
+| `idempotency_keys` | `Idempotency-Key` per (member, method, route template): fingerprint, in-progress lease, stored response, expiry. |
+
+Not here yet: OTP codes, lockout counters and refresh-token families (with
+full sign-in, #106), the vehicle catalogue and reference data (data source
+undecided), stats and the points ledger (rules undecided). Each is a new
+migration that doesn't change the tables above.
+
+Sync tokens: a walk's watermark is `pg_snapshot_xmin(pg_current_snapshot())`
+(`CurrentSyncWatermark`), and `ListTripChanges` / `ListTripDeletions`
+return rows with `writer_xid` at or above it in `(writer_xid, id)` order, so
+a write that hadn't committed when the token was taken is never missed.
+Transaction ids are cluster-wide, so busy neighbours only cause repeats.
+The deployment identity comes from `pg_control_system()`
+(`SystemIdentifier`) where the role may read it.
+
+Connection settings: `statement_timeout` and
+`idle_in_transaction_session_timeout` default to 15 s (they bound how long
+a session can hold the sync watermark back) unless `DATABASE_URL` sets them
+as query parameters, e.g. `?sslmode=require&statement_timeout=5s` (pgx
+sends unknown query parameters as session settings). On Neon, prefer the
+**direct** (non-pooled) endpoint: the server keeps its own small pool, and
+a transaction-mode pooler (PgBouncer) doesn't reliably keep session
+settings.
 
 ## CI
 
