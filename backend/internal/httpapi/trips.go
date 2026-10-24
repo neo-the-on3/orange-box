@@ -695,17 +695,35 @@ func timeZone(name string) (*time.Location, bool) {
 	return loc, err == nil
 }
 
-// localMidnight is the first instant of day's calendar date in loc. Where
-// a DST change skips midnight (e.g. America/Santiago), the day starts at
-// the first local time that exists.
+// localMidnight is the first instant whose local date in loc is on or
+// after day's calendar date: usually local midnight. Where DST skips
+// midnight (America/Santiago), the day starts at the first local time that
+// exists; where midnight happens twice (DST ending at 01:00, e.g.
+// Asia/Amman until 2022), at the first one; where a whole day is skipped
+// (Pacific/Apia, 2011-12-30), at the start of the next day, so that day's
+// range is empty.
+//
+// Within one zone period (ZoneBounds) the offset is constant, so the local
+// date only moves forward and the first instant on or after the day in it
+// is max(period start, midnight - offset). Walk the periods from well
+// before the day (offsets are within ±26 h) and take the first that has
+// one.
 func localMidnight(day time.Time, loc *time.Location) time.Time {
-	t := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
-	if y, m, d := t.Date(); y != day.Year() || m != day.Month() || d != day.Day() {
-		// time.Date normalised a skipped midnight into the previous day;
-		// step forward to the day itself.
-		for t.Day() != day.Day() {
-			t = t.Add(15 * time.Minute)
+	wall := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC) // the day's midnight as if UTC
+	t := wall.Add(-30 * time.Hour)
+	for range 64 {
+		_, offset := t.In(loc).Zone()
+		_, end := t.In(loc).ZoneBounds()
+		// t is in [start, end), so c >= start.
+		c := wall.Add(-time.Duration(offset) * time.Second)
+		if c.Before(t) {
+			c = t
 		}
+		if end.IsZero() || c.Before(end) {
+			return c
+		}
+		t = end
 	}
-	return t
+	// Unreachable for real zones; fall back to Go's normalisation.
+	return time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 }
