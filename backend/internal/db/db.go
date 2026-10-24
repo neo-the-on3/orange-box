@@ -60,5 +60,29 @@ func Open(ctx context.Context, opts Options) (*pgxpool.Pool, error) {
 		pool.Close()
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}
+	var version int
+	if err := pool.QueryRow(pingCtx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("read server version: %w", err)
+	}
+	if err := CheckServerVersion(version); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return pool, nil
+}
+
+// MinServerVersion is the oldest supported PostgreSQL (server_version_num):
+// the schema uses NULLS NOT DISTINCT, new in PostgreSQL 15.
+const MinServerVersion = 150000
+
+// CheckServerVersion rejects a server_version_num below MinServerVersion.
+// Open calls it, so the server and `server migrate` both refuse an old
+// server before touching the schema.
+func CheckServerVersion(num int) error {
+	if num < MinServerVersion {
+		return fmt.Errorf("PostgreSQL %d.%d is not supported: the schema needs PostgreSQL 15 or newer (server_version_num %d < %d)",
+			num/10000, num%10000, num, MinServerVersion)
+	}
+	return nil
 }
