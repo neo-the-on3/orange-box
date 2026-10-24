@@ -129,9 +129,29 @@ func (m *idempotency) serve(w http.ResponseWriter, r *http.Request, route *route
 		}
 		break
 	}
-	problem.Write(w, r, problem.New(http.StatusConflict, problem.CodeIdempotencyInFlight,
+	problem.Write(w, r, idempotencyInFlight())
+}
+
+func idempotencyInFlight() *problem.Problem {
+	return problem.New(http.StatusConflict, problem.CodeIdempotencyInFlight,
 		"A request with this Idempotency-Key is still being processed; retry shortly.").
-		WithTitle("Request in progress").WithRetryAfter(1))
+		WithTitle("Request in progress").WithRetryAfter(1)
+}
+
+// inFlight reports whether the request's Idempotency-Key is claimed by a
+// request that hasn't completed. It reads the key without claiming it, so
+// a storage error just reports false.
+func (m *idempotency) inFlight(r *http.Request, route *routers.Route) bool {
+	member, err := callerID(r.Context())
+	if err != nil {
+		return false
+	}
+	key, err := uuid.Parse(r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		return false
+	}
+	rec, err := m.store.Get(r.Context(), store.IdempotencyScope{MemberID: member, Method: r.Method, Route: route.Path, Key: key})
+	return err == nil && !rec.Completed
 }
 
 // run serves the request, then stores its response or releases the key.
