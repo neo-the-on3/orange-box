@@ -627,7 +627,7 @@ SELECT member_id, max_deleted_at, max_writer_xid FROM per_member
 ON CONFLICT (member_id) DO UPDATE SET
     max_deleted_at = GREATEST(b.max_deleted_at, EXCLUDED.max_deleted_at),
     max_writer_xid = GREATEST(b.max_writer_xid, EXCLUDED.max_writer_xid),
-    updated_at     = now()
+    updated_at     = clock_timestamp()
 RETURNING member_id
 `
 
@@ -710,7 +710,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
-    updated_at = now(),
+    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond'),
     deleted_at = now()
 WHERE member_id = $1 AND id = $2 AND deleted_at IS NULL
 RETURNING id, client_trip_id
@@ -746,7 +746,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
-    updated_at = now(),
+    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond'),
     deleted_at = now()
 WHERE member_id = $1 AND vehicle_id = $2::uuid AND deleted_at IS NULL
 RETURNING id, client_trip_id
@@ -791,7 +791,7 @@ INSERT INTO trips (
     harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count,
     fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s,
     accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score,
-    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app
+    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, updated_at
 ) VALUES (
     $1, $2, $3, $4::uuid, $5::text, $6::timestamptz,
     $7, $8::timestamptz,
@@ -803,7 +803,8 @@ INSERT INTO trips (
     $24, $25, $26,
     $27, $28, $29,
     $30, $31, $32,
-    $33, $34, $35::boolean, $36
+    $33, $34, $35::boolean, $36,
+    date_trunc('milliseconds', clock_timestamp())
 )
 ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
     vehicle_id            = EXCLUDED.vehicle_id,
@@ -839,7 +840,7 @@ ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
     dtc                   = EXCLUDED.dtc,
     simulated             = EXCLUDED.simulated,
     app                   = EXCLUDED.app,
-    updated_at            = now()
+    updated_at            = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond')
 WHERE trips.deleted_at IS NULL
   AND trips.state = 'in_progress'
   AND EXCLUDED.snapshot_at > trips.snapshot_at
@@ -895,6 +896,13 @@ type UpsertTripRow struct {
 // newer; otherwise no row is returned and the caller reads the trip with
 // GetTripByClientID to tell unchanged from trip_deleted. inserted is true
 // for a new trip.
+//
+// updated_at (here and in the tombstone queries) is the wall clock when the
+// row is written, at millisecond precision like the API, and always at
+// least 1 ms after the row's previous updated_at. now() would be the
+// transaction's start: a batch that waited on the row lock behind a later
+// batch would then commit newer data with an older updatedAt, and clients
+// keeping the newer updatedAt would keep the stale copy.
 func (q *Queries) UpsertTrip(ctx context.Context, arg UpsertTripParams) (UpsertTripRow, error) {
 	row := q.db.QueryRow(ctx, upsertTrip,
 		arg.ID,

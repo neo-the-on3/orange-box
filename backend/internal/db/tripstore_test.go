@@ -442,3 +442,122 @@ func TestTripStoreConcurrentStress(t *testing.T) {
 		}
 	}
 }
+
+// TestTripUpdatedAtMonotonic: updatedAt only moves forward, in commit
+// order, at the API's millisecond precision, even for a write whose
+// transaction started before a write it ends up following (now() would be
+// that transaction's start time).
+func TestTripUpdatedAtMonotonic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	q := dbgen.New(pool)
+	trips := newTrips(t, pool)
+	member := newMember(t, q)
+	vehicle := insertVehicle(t, q, member, nil)
+	t0 := time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC)
+	a := newID()
+	if _, err := trips.UpsertTrips(ctx, member, []store.TripUpload{upload(a, vehicle, "in_progress", t0)}); err != nil {
+		t.Fatal(err)
+	}
+	updatedAt := func() time.Time {
+		t.Helper()
+		tr, err := trips.GetTrip(ctx, member, store.TripRef{ClientID: &a})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tr.UpdatedAt.Equal(tr.UpdatedAt.Truncate(time.Millisecond)) {
+			t.Fatalf("updatedAt %v is not at millisecond precision", tr.UpdatedAt)
+		}
+		return tr.UpdatedAt
+	}
+	prev := updatedAt()
+
+	// An old transaction writes after a newer one committed.
+	old, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = old.Rollback(ctx) }()
+	if _, err := old.Exec(ctx, `SELECT now()`); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if _, err := trips.UpsertTrips(ctx, member, []store.TripUpload{upload(a, vehicle, "in_progress", t0.Add(time.Minute))}); err != nil {
+		t.Fatal(err)
+	}
+	newer := updatedAt()
+	if !newer.After(prev) {
+		t.Fatalf("update: updatedAt %v, was %v", newer, prev)
+	}
+	if _, err := dbgen.New(old).UpsertTrip(ctx, tripParams(member, vehicle, a, "in_progress", t0.Add(2*time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := updatedAt(); !got.After(newer) {
+		t.Fatalf("write of an older transaction committed last: updatedAt %v, the earlier commit's %v", got, newer)
+	}
+
+	// Writes within one millisecond still move it forward.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var last time.Time
+	for i := range 5 {
+		row, err := dbgen.New(tx).UpsertTrip(ctx, tripParams(member, vehicle, a, "in_progress", t0.Add(time.Duration(3+i)*time.Minute)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var u time.Time
+		if err := tx.QueryRow(ctx, `SELECT updated_at FROM trips WHERE id = $1`, row.ID).Scan(&u); err != nil {
+			t.Fatal(err)
+		}
+		if i > 0 && u.Sub(last) < time.Millisecond {
+			t.Fatalf("write %d: updatedAt %v, previous %v", i, u, last)
+		}
+		last = u
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// So does a delete from an old transaction.
+	before := updatedAt()
+	del, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = del.Rollback(ctx) }()
+	if _, err := del.Exec(ctx, `SELECT now()`); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if _, err := trips.UpsertTrips(ctx, member, []store.TripUpload{upload(a, vehicle, "in_progress", t0.Add(time.Hour))}); err != nil {
+		t.Fatal(err)
+	}
+	after := updatedAt()
+	if !after.After(before) {
+		t.Fatalf("update: updatedAt %v, was %v", after, before)
+	}
+	tr, err := trips.GetTrip(ctx, member, store.TripRef{ClientID: &a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbgen.New(del).TombstoneTrip(ctx, dbgen.TombstoneTripParams{MemberID: member, ID: tr.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := del.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var tomb time.Time
+	if err := pool.QueryRow(ctx, `SELECT updated_at FROM trips WHERE id = $1`, tr.ID).Scan(&tomb); err != nil {
+		t.Fatal(err)
+	}
+	if !tomb.After(after) {
+		t.Fatalf("tombstone of an older transaction: updatedAt %v, the earlier commit's %v", tomb, after)
+	}
+}
