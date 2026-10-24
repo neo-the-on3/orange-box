@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -20,9 +21,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -41,11 +42,14 @@ class DrivingService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var started = false
+    @Volatile private var stopping = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        stopping = false
         if (!goForeground()) {
+            removeOngoing()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -60,7 +64,9 @@ class DrivingService : Service() {
 
     private fun goForeground(): Boolean {
         DrivingNotifications.ensureChannels(this)
-        val notification = DrivingNotifications.ongoing(this, recorder.active.value)
+        val content = DrivingNotifications.ongoingContent(recorder.active.value)
+        shownContent = content
+        val notification = DrivingNotifications.ongoing(this, content)
         val location = hasLocationPermission()
         val types = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or (if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
@@ -89,16 +95,18 @@ class DrivingService : Service() {
         }
     }
 
+    private var shownContent: DrivingNotifications.OngoingContent? = null
+
     private fun watch() {
+        val updater = OngoingNotificationUpdater(now = { SystemClock.elapsedRealtime() }) { content ->
+            if (stopping || !DrivingNotifications.canPost(this@DrivingService)) return@OngoingNotificationUpdater
+            try {
+                NotificationManagerCompat.from(this@DrivingService)
+                    .notify(DrivingNotifications.ID_ONGOING, DrivingNotifications.ongoing(this@DrivingService, content))
+            } catch (_: SecurityException) { }
+        }
         scope.launch {
-            combine(connection.state, recorder.active) { c, t -> c to t }.collect { (_, trip) ->
-                if (DrivingNotifications.canPost(this@DrivingService)) {
-                    try {
-                        NotificationManagerCompat.from(this@DrivingService)
-                            .notify(DrivingNotifications.ID_ONGOING, DrivingNotifications.ongoing(this@DrivingService, trip))
-                    } catch (_: SecurityException) { }
-                }
-            }
+            updater.run(recorder.active.map { DrivingNotifications.ongoingContent(it) }, initial = shownContent)
         }
         scope.launch {
             connection.state.map { it is ObdConnectionState.Connected }.distinctUntilChanged().collectLatest { up ->
@@ -112,11 +120,25 @@ class DrivingService : Service() {
 
     private fun stop(reason: String) {
         OrangeLog.i(OrangeLog.Areas.APP, "driving_service_stop", "reason" to reason)
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        removeOngoing()
         stopSelf()
     }
 
+    /**
+     * Every stop path (link lost, End driving via stopService, a refused start) ends here: stop posting,
+     * leave the foreground and cancel notification 1001 explicitly, so a re-post queued just before the
+     * stop cannot leave an orphaned, non-dismissible notification behind.
+     */
+    private fun removeOngoing() {
+        stopping = true
+        started = false // a start command before onDestroy re-arms the watchers
+        scope.coroutineContext.cancelChildren()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        DrivingNotifications.cancelOngoing(this)
+    }
+
     override fun onDestroy() {
+        removeOngoing()
         scope.cancel()
         super.onDestroy()
     }

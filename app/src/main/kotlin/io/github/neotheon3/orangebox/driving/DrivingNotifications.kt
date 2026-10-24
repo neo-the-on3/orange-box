@@ -63,17 +63,29 @@ object DrivingNotifications {
     /** System page where the user allows full-screen notifications for Orange Box (API 34+). */
     fun fullScreenSettingsIntent(context: Context): Intent = FullScreenIntents.settingsIntent(context)
 
+    /**
+     * What the ongoing notification displays. Re-posting is driven by changes of this value only
+     * ([OngoingNotificationUpdater]), never by every telemetry poll.
+     */
+    data class OngoingContent(val recording: Boolean, val distanceKm: String = "", val elapsed: String = "")
+
+    fun ongoingContent(trip: ActiveTrip?): OngoingContent =
+        if (trip == null) OngoingContent(recording = false)
+        else OngoingContent(
+            recording = true,
+            distanceKm = String.format(Locale.getDefault(), "%.1f", trip.totals.distanceKm),
+            elapsed = elapsed(trip.totals.durationS),
+        )
+
     /** The foreground-service notification. [trip] null means connected but not recording yet. */
-    fun ongoing(context: Context, trip: ActiveTrip?) = NotificationCompat.Builder(context, CHANNEL_DRIVING)
+    fun ongoing(context: Context, trip: ActiveTrip?) = ongoing(context, ongoingContent(trip))
+
+    fun ongoing(context: Context, content: OngoingContent) = NotificationCompat.Builder(context, CHANNEL_DRIVING)
         .setSmallIcon(R.drawable.ic_stat_drive)
-        .setContentTitle(context.getString(if (trip == null) R.string.notif_connected_title else R.string.notif_recording_title))
+        .setContentTitle(context.getString(if (content.recording) R.string.notif_recording_title else R.string.notif_connected_title))
         .setContentText(
-            if (trip == null) context.getString(R.string.notif_connected_text)
-            else context.getString(
-                R.string.notif_recording_text,
-                String.format(Locale.getDefault(), "%.1f", trip.totals.distanceKm),
-                elapsed(trip.totals.durationS),
-            ),
+            if (!content.recording) context.getString(R.string.notif_connected_text)
+            else context.getString(R.string.notif_recording_text, content.distanceKm, content.elapsed),
         )
         .setOngoing(true)
         .setOnlyAlertOnce(true)
@@ -83,6 +95,9 @@ object DrivingNotifications {
         .setContentIntent(dashboardIntent(context, 1))
         .addAction(0, context.getString(R.string.notif_start_driving), dashboardIntent(context, 2))
         .build()
+
+    /** Removes the ongoing notification (the service has stopped or is stopping). */
+    fun cancelOngoing(context: Context) = NotificationManagerCompat.from(context).cancel(ID_ONGOING)
 
     /**
      * Heads-up "Start driving". With [autoShow] ("Show dashboard automatically") it also carries the
