@@ -47,7 +47,7 @@ func TestLoadTestMode(t *testing.T) {
 		{"code trivial", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "true", "AUTH_TEST_CODE": "123456"}, "AUTH_TEST_CODE"},
 		{"mode TRUE", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "TRUE", "AUTH_TEST_CODE": good}, "AUTH_TEST_MODE must be"},
 		{"mode 1", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "1", "AUTH_TEST_CODE": good}, "AUTH_TEST_MODE must be"},
-		{"mode off in prod", map[string]string{"ENV": "production", "AUTH_TEST_MODE": "false", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob"}, ""},
+		{"mode off in prod", map[string]string{"ENV": "production", "AUTH_TEST_MODE": "false", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob", "SYNC_TOKEN_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,5 +141,36 @@ func TestLoadDatabaseRules(t *testing.T) {
 	}
 	if c.DatabaseURL != "postgres://u@h/db" || c.DBMaxConns != 4 || !c.MigrateOnStart {
 		t.Errorf("database settings = %q, %d, %v", c.DatabaseURL, c.DBMaxConns, c.MigrateOnStart)
+	}
+}
+
+func TestLoadSyncTokenRules(t *testing.T) {
+	t.Parallel()
+	prod := func(extra ...string) map[string]string {
+		m := map[string]string{"ENV": "production", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob"}
+		for i := 0; i+1 < len(extra); i += 2 {
+			m[extra[i]] = extra[i+1]
+		}
+		return m
+	}
+	if _, err := Load(env(prod())); err == nil || !strings.Contains(err.Error(), "SYNC_TOKEN_KEY is required") {
+		t.Errorf("production without SYNC_TOKEN_KEY: err = %v", err)
+	}
+	for _, bad := range []string{"c2hvcnQ=", "not base64!", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZQ"} {
+		if _, err := Load(env(prod("SYNC_TOKEN_KEY", bad))); err == nil || !strings.Contains(err.Error(), "SYNC_TOKEN_KEY must be") || strings.Contains(err.Error(), bad) {
+			t.Errorf("SYNC_TOKEN_KEY=%q: err = %v", bad, err)
+		}
+	}
+	for _, good := range []string{"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY", "-_-_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"} {
+		c, err := Load(env(prod("SYNC_TOKEN_KEY", good, "SYNC_DEPLOYMENT_ID", "neon:prod-1")))
+		if err != nil || len(c.SyncTokenKey) < 32 || c.SyncDeploymentID != "neon:prod-1" {
+			t.Errorf("SYNC_TOKEN_KEY=%q: %d-byte key, id %q, %v", good, len(c.SyncTokenKey), c.SyncDeploymentID, err)
+		}
+	}
+	if _, err := Load(env(prod("SYNC_TOKEN_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "SYNC_DEPLOYMENT_ID", "has space"))); err == nil {
+		t.Error("SYNC_DEPLOYMENT_ID with a space accepted")
+	}
+	if c, err := Load(env(map[string]string{"ENV": "local"})); err != nil || c.SyncTokenKey != nil {
+		t.Errorf("local without a key: %v, %v", c.SyncTokenKey, err)
 	}
 }

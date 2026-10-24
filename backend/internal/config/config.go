@@ -5,6 +5,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -72,6 +73,15 @@ type Config struct {
 	// (MIGRATE_ON_START, default false). Otherwise the server refuses to
 	// start until `server migrate up` has run.
 	MigrateOnStart bool
+
+	// SyncTokenKey signs sync tokens and trip page cursors (SYNC_TOKEN_KEY,
+	// base64 of at least 32 random bytes). Empty means "generate an
+	// ephemeral key", allowed only in dev environments: tokens then expire
+	// on restart (the app does a full resync).
+	SyncTokenKey []byte
+	// SyncDeploymentID is the deployment identity sync tokens carry when
+	// the database role can't read pg_control_system() (SYNC_DEPLOYMENT_ID).
+	SyncDeploymentID string
 }
 
 // IsDevEnvironment reports whether Env is one of local, ci or sandbox.
@@ -161,6 +171,19 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, errors.New(`MIGRATE_ON_START must be "true", "false" or unset`))
 	}
+	if v := strings.TrimSpace(getenv("SYNC_TOKEN_KEY")); v != "" {
+		key, err := decodeKey(v)
+		if err != nil || len(key) < 32 {
+			errs = append(errs, errors.New("SYNC_TOKEN_KEY must be base64 of at least 32 bytes (e.g. `openssl rand -base64 32`)"))
+		}
+		c.SyncTokenKey = key
+	} else if !c.IsDevEnvironment() {
+		errs = append(errs, errors.New("SYNC_TOKEN_KEY is required unless ENV is local, ci or sandbox"))
+	}
+	c.SyncDeploymentID = strings.TrimSpace(getenv("SYNC_DEPLOYMENT_ID"))
+	if !validDeploymentID(c.SyncDeploymentID) {
+		errs = append(errs, errors.New("SYNC_DEPLOYMENT_ID must be at most 64 characters from A-Z, a-z, 0-9, '.', '_', ':' and '-'"))
+	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))
 	}
@@ -197,6 +220,28 @@ func ValidateTestCode(code string) error {
 		return errors.New("must not be an ascending or descending run")
 	}
 	return nil
+}
+
+// decodeKey accepts standard or URL-safe base64, padded or not.
+func decodeKey(v string) ([]byte, error) {
+	v = strings.TrimRight(v, "=")
+	if b, err := base64.RawStdEncoding.DecodeString(v); err == nil {
+		return b, nil
+	}
+	return base64.RawURLEncoding.DecodeString(v)
+}
+
+func validDeploymentID(s string) bool {
+	if len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._:-", r)
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func orDefault(v, def string) string {
