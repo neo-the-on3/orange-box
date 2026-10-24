@@ -19,6 +19,12 @@ interface TripRepository {
     suspend fun trip(id: Long): TripEntity?
     suspend fun samples(tripId: Long): List<TripSampleEntity>
     suspend fun events(tripId: Long): List<TripEventEntity>
+
+    /** Samples of a batch of trips (a few at a time), in time order per trip. */
+    suspend fun samplesOf(tripIds: List<Long>): Map<Long, List<TripSampleEntity>> = tripIds.associateWith { samples(it) }
+
+    /** Events of a batch of trips (a few at a time), in time order per trip. */
+    suspend fun eventsOf(tripIds: List<Long>): Map<Long, List<TripEventEntity>> = tripIds.associateWith { events(it) }
 }
 
 class RoomTripRepository @Inject constructor(private val dao: TripDao) : TripRepository {
@@ -30,4 +36,6 @@ class RoomTripRepository @Inject constructor(private val dao: TripDao) : TripRep
     override suspend fun trip(id: Long) = dao.trip(id)
     override suspend fun samples(tripId: Long) = dao.samples(tripId)
     override suspend fun events(tripId: Long) = dao.events(tripId)
+    override suspend fun samplesOf(tripIds: List<Long>) = dao.samplesOf(tripIds).groupBy { it.tripId }
+    override suspend fun eventsOf(tripIds: List<Long>) = dao.eventsOf(tripIds).groupBy { it.tripId }
 }
