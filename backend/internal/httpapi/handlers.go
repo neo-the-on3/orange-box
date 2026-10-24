@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"time"
@@ -34,13 +35,32 @@ type Server struct {
 	testMode   bool
 	testCode   string
 	now        func() time.Time
+	ready      func(context.Context) error
+	logger     *slog.Logger
 }
+
+// readyTimeout bounds the readiness check in GET /v1/health.
+const readyTimeout = 2 * time.Second
+
+// retryAfterUnavailable is sent with the health 503.
+const retryAfterUnavailable = 5
 
 var _ api.StrictServerInterface = (*Server)(nil)
 
 // GetHealth implements GET /v1/health.
 func (s *Server) GetHealth(ctx context.Context, _ api.GetHealthRequestObject) (api.GetHealthResponseObject, error) {
 	id := reqctx.RequestID(ctx)
+	if s.ready != nil {
+		rctx, cancel := context.WithTimeout(ctx, readyTimeout)
+		err := s.ready(rctx)
+		cancel()
+		if err != nil {
+			s.logger.WarnContext(ctx, "readiness check failed", slog.Any("err", err))
+			return nil, problem.New(http.StatusServiceUnavailable, problem.CodeUnavailable,
+				"A backing service is unavailable; retry later.").
+				WithTitle("Service unavailable").WithRetryAfter(retryAfterUnavailable)
+		}
+	}
 	return api.GetHealth200JSONResponse{
 		Body: api.Health{
 			Status:     api.HealthStatusOk,

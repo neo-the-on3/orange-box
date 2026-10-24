@@ -65,13 +65,13 @@ func serve() int {
 // run serves on ln until ctx is cancelled, then shuts down gracefully within
 // cfg.ShutdownTimeout. It owns ln.
 func run(ctx context.Context, ln net.Listener, cfg config.Config, logger *slog.Logger) error {
-	members, closeStore, err := openMembers(ctx, cfg, logger)
+	store, err := openStore(ctx, cfg, logger)
 	if err != nil {
 		_ = ln.Close()
 		return err
 	}
-	defer closeStore()
-	handler, err := newHandler(cfg, logger, members)
+	defer store.close()
+	handler, err := newHandler(cfg, logger, store)
 	if err != nil {
 		_ = ln.Close()
 		return err
@@ -115,33 +115,39 @@ func run(ctx context.Context, ln net.Listener, cfg config.Config, logger *slog.L
 	return nil
 }
 
-// openMembers picks the member store: Postgres when DATABASE_URL is set
+// store is the storage the handlers use.
+type store struct {
+	members auth.MemberStore
+	ready   func(context.Context) error // nil when there is nothing to check
+	close   func()
+}
+
+// openStore picks the storage: Postgres when DATABASE_URL is set
 // (config.Load requires it outside dev environments), in-memory otherwise.
-// The returned func closes the store.
-func openMembers(ctx context.Context, cfg config.Config, logger *slog.Logger) (auth.MemberStore, func(), error) {
+func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (store, error) {
 	if cfg.DatabaseURL == "" {
 		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart")
-		return auth.NewMemoryMembers(), func() {}, nil
+		return store{members: auth.NewMemoryMembers(), close: func() {}}, nil
 	}
 	pool, err := db.Open(ctx, db.Options{URL: cfg.DatabaseURL, MaxConns: cfg.DBMaxConns})
 	if err != nil {
-		return nil, nil, err
+		return store{}, err
 	}
 	if cfg.MigrateOnStart {
 		if err := migrateUp(ctx, pool, logger); err != nil {
 			pool.Close()
-			return nil, nil, err
+			return store{}, err
 		}
 	}
 	if err := db.CheckMigrated(ctx, pool); err != nil {
 		pool.Close()
-		return nil, nil, err
+		return store{}, err
 	}
 	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
-	return db.NewMembers(pool), pool.Close, nil
+	return store{members: db.NewMembers(pool), ready: pool.Ping, close: pool.Close}, nil
 }
 
-func newHandler(cfg config.Config, logger *slog.Logger, members auth.MemberStore) (http.Handler, error) {
+func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler, error) {
 	tokens, err := newTokens(cfg, logger)
 	if err != nil {
 		return nil, err
@@ -153,7 +159,8 @@ func newHandler(cfg config.Config, logger *slog.Logger, members auth.MemberStore
 	return httpapi.NewRouter(httpapi.Deps{
 		Logger:              logger,
 		Tokens:              tokens,
-		Members:             members,
+		Members:             st.members,
+		Ready:               st.ready,
 		Codes:               auth.NewPendingCodes(),
 		TestMode:            cfg.AuthTestMode,
 		TestCode:            cfg.AuthTestCode,
