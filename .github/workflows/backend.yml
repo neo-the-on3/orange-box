@@ -36,10 +36,12 @@ jobs:
           cache: true
           cache-dependency-path: backend/go.sum
 
+      # Same paths as `make generate-check`: oapi-codegen (internal/api) and
+      # sqlc (internal/db/dbgen; sqlc is pinned in internal/db/generate.go).
       - name: generated code is up to date
         run: |
-          go generate ./internal/api/...
-          git diff --exit-code -- internal/api || { echo "::error::internal/api is stale: run 'make generate' and commit"; exit 1; }
+          go generate ./internal/api/... ./internal/db/...
+          git diff --exit-code -- internal/api internal/db/dbgen || { echo "::error::generated code is stale: run 'make generate' and commit"; exit 1; }
 
       - name: go vet
         run: go vet ./...
