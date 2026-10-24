@@ -28,11 +28,16 @@ for _ in $(seq 1 20); do
 done
 grep -q "Recording trip" "$OUT/notifications.txt" || { echo "driving notification missing" >&2; exit 1; }
 
+# Leave the app first: the live tiles animate, and uiautomator cannot dump a window that never goes idle
+# (it then leaves the previous dump in place). From the launcher, the tap also tests a background open.
+adb shell input keyevent KEYCODE_HOME
+sleep 2
 # A busy CI emulator sometimes ignores the first expand; retry, then fall back to a swipe down from the top.
 shade_open=false
 for i in 1 2 3; do
   if [ "$i" -lt 3 ]; then adb shell cmd statusbar expand-notifications; else adb shell input swipe 500 5 500 1400 400; fi
   sleep 2
+  shot "27-shade-try-$i"
   if wait_for_text "Recording trip" shade 5; then shade_open=true; break; fi
 done
 $shade_open || { echo "notification shade did not show the driving notification" >&2; exit 1; }
