@@ -25,7 +25,7 @@ grep -q 'content-desc="End driving"' "$OUT/dash-landscape.xml"
 shot 23-dashboard-landscape
 
 tap_attr text "Detailed Info." dash-toggle
-wait_for_text 'text="Accel Pedal Position"' dash-detail
+wait_for_regex 'content-desc="Accel Pedal Position, [0-9]+ %"' dash-detail
 sleep 1 # 500 ms transition
 shot 23-dashboard-landscape-detail
 tap_attr text "Detailed Info." dash-toggle-back
