@@ -125,6 +125,7 @@ func newHandler(cfg config.Config, logger *slog.Logger) (http.Handler, error) {
 		UploadConcurrency: cfg.UploadConcurrency,
 		UploadQueueWait:   cfg.UploadQueueWait,
 		UploadReadTimeout: cfg.UploadReadTimeout,
+		BodyConcurrency:   cfg.BodyConcurrency,
 	})
 }
 

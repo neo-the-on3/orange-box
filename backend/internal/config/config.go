@@ -47,6 +47,9 @@ type Config struct {
 	UploadConcurrency int
 	// UploadQueueWait is how long an upload waits for a slot before 503 (UPLOAD_QUEUE_WAIT, default 2s).
 	UploadQueueWait time.Duration
+	// BodyConcurrency caps non-upload request bodies processed at once
+	// (BODY_CONCURRENCY, default 16).
+	BodyConcurrency int
 	// UploadReadTimeout bounds how long an upload body may take to arrive
 	// once it holds a slot (UPLOAD_READ_TIMEOUT, default 10s, then 408).
 	UploadReadTimeout time.Duration
@@ -113,6 +116,10 @@ func Load(getenv func(string) string) (Config, error) {
 	c.UploadConcurrency, err = strconv.Atoi(orDefault(getenv("UPLOAD_CONCURRENCY"), "2"))
 	if err != nil || c.UploadConcurrency < 1 || c.UploadConcurrency > 256 {
 		errs = append(errs, errors.New("UPLOAD_CONCURRENCY must be a number from 1 to 256"))
+	}
+	c.BodyConcurrency, err = strconv.Atoi(orDefault(getenv("BODY_CONCURRENCY"), "16"))
+	if err != nil || c.BodyConcurrency < 1 || c.BodyConcurrency > 1024 {
+		errs = append(errs, errors.New("BODY_CONCURRENCY must be a number from 1 to 1024"))
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))

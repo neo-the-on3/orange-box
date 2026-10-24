@@ -19,9 +19,10 @@ COPY --from=build /out/server /server
 USER nonroot:nonroot
 ENV PORT=8080
 # Sized for a 512 MB host: the Go GC works harder as the heap nears 400 MiB,
-# leaving headroom for the runtime, stacks and the OS. With the default
-# UPLOAD_CONCURRENCY=2, peak upload memory is about 2 × 125 MB. Raise both
-# together on bigger hosts.
+# leaving headroom for the runtime, stacks and the OS. With the defaults
+# (UPLOAD_CONCURRENCY=2, BODY_CONCURRENCY=16) the worst measured load peaked
+# at 288 MiB in a --memory=512m container. Raise them together on bigger
+# hosts.
 ENV GOMEMLIMIT=400MiB
 EXPOSE 8080
 ENTRYPOINT ["/server"]

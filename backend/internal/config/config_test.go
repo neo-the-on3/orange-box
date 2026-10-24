@@ -18,7 +18,7 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if c.Port != 8080 || c.AuthTestMode || c.JWTIssuer != "orange-box" ||
 		c.RequestTimeout != 30*time.Second || c.ShutdownTimeout != 8*time.Second ||
-		c.UploadConcurrency != 2 || c.UploadQueueWait != 2*time.Second || c.UploadReadTimeout != 10*time.Second {
+		c.UploadConcurrency != 2 || c.UploadQueueWait != 2*time.Second || c.UploadReadTimeout != 10*time.Second || c.BodyConcurrency != 16 {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 }
@@ -114,6 +114,7 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"uploads text":  {"ENV": "local", "UPLOAD_CONCURRENCY": "many"},
 		"queue wait":    {"ENV": "local", "UPLOAD_QUEUE_WAIT": "-1s"},
 		"read timeout":  {"ENV": "local", "UPLOAD_READ_TIMEOUT": "soon"},
+		"bodies zero":   {"ENV": "local", "BODY_CONCURRENCY": "0"},
 	} {
 		if _, err := Load(env(e)); err == nil {
 			t.Errorf("%s: Load succeeded, want error", name)

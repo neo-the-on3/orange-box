@@ -34,8 +34,12 @@ const (
 	MaxCompressedBody = 1 << 20
 	// MaxUploadBody is the largest uncompressed (or inflated) upload body.
 	MaxUploadBody = 8 << 20
-	// MaxBody is the largest body accepted on every other operation.
-	MaxBody = 64 << 10
+	// MaxBody is the largest body accepted on every other operation. Their
+	// largest legitimate body (a vehicle or profile) is well under 2 KiB.
+	MaxBody = 16 << 10
+	// bodyReadTimeout bounds how long a non-upload body may take to arrive
+	// once it holds a body slot.
+	bodyReadTimeout = 5 * time.Second
 	// maxFieldErrors caps the errors list of a 422.
 	maxFieldErrors = 20
 )
@@ -101,9 +105,10 @@ type openAPIMiddleware struct {
 	tokens            TokenVerifier
 	uploads           *uploadLimiter
 	uploadReadTimeout time.Duration
+	bodies            *bodyLimiter
 }
 
-func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadReadTimeout time.Duration) (*openAPIMiddleware, error) {
+func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadReadTimeout time.Duration, bodies *bodyLimiter) (*openAPIMiddleware, error) {
 	doc, err := api.GetSpec()
 	if err != nil {
 		return nil, fmt.Errorf("load embedded spec: %w", err)
@@ -115,7 +120,7 @@ func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadRe
 	if err != nil {
 		return nil, fmt.Errorf("build OpenAPI router: %w", err)
 	}
-	return &openAPIMiddleware{doc: doc, router: router, tokens: tokens, uploads: uploads, uploadReadTimeout: uploadReadTimeout}, nil
+	return &openAPIMiddleware{doc: doc, router: router, tokens: tokens, uploads: uploads, uploadReadTimeout: uploadReadTimeout, bodies: bodies}, nil
 }
 
 func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
@@ -158,6 +163,17 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			if m.uploadReadTimeout > 0 {
 				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(m.uploadReadTimeout))
 			}
+		} else if hasBody(r) {
+			// Every other body takes one of a fixed number of body slots
+			// until the handler returns, so bursts (e.g. anonymous
+			// /auth/token bodies) can't add up in memory.
+			release, p := m.bodies.acquire(r.Context())
+			if p != nil {
+				problem.Write(w, r, p)
+				return
+			}
+			defer release()
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyReadTimeout))
 		}
 
 		body, p := readBody(r, upload)
@@ -165,8 +181,15 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			problem.Write(w, r, p)
 			return
 		}
+		values := 0
 		if len(body) > 0 {
-			if p := prescan(body, requestBodySchema(route.Operation, r.Header.Get("Content-Type"))); p != nil {
+			maxValues := MaxBodyValues
+			if upload {
+				maxValues = MaxJSONValues
+			}
+			var p *problem.Problem
+			values, p = prescan(body, requestBodySchema(route.Operation, r.Header.Get("Content-Type")), maxValues)
+			if p != nil {
 				problem.Write(w, r, p)
 				return
 			}
@@ -175,8 +198,8 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 		if err := m.validate(r, route, pathParams, body, false); err != nil {
 			// Fail-fast validation reports the first error only. For small
 			// bodies, validate again to list every invalid field: its cost
-			// is bounded by the body size.
-			if len(body) <= maxMultiErrorBody {
+			// is bounded by the body size and value count.
+			if len(body) <= maxMultiErrorBody && values <= maxMultiErrorValues {
 				if all := m.validate(r, route, pathParams, body, true); all != nil {
 					err = all
 				}
@@ -194,7 +217,19 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 // item even past maxItems and builds an error per item, which costs about
 // 4 KB of memory per byte-sized item ({}): 1.3 GB for a 1 MiB body. Larger
 // bodies are validated fail-fast and report their first invalid field.
-const maxMultiErrorBody = 8 << 10
+//
+// maxMultiErrorValues also caps the value count, so the second pass costs at
+// most a few MiB even for a body of tiny invalid items.
+const (
+	maxMultiErrorBody   = 8 << 10
+	maxMultiErrorValues = 1024
+)
+
+// hasBody reports whether r may carry a body (it has one of unknown or
+// non-zero length).
+func hasBody(r *http.Request) bool {
+	return r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0
+}
 
 // validate runs kin-openapi request validation over body.
 func (m *openAPIMiddleware) validate(r *http.Request, route *routers.Route, pathParams map[string]string, body []byte, multi bool) error {

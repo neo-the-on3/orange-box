@@ -41,6 +41,7 @@ const (
 	CodeNotImplemented      = "not_implemented"
 	CodeUploadsBusy         = "uploads_busy"
 	CodeUploadInProgress    = "upload_in_progress"
+	CodeServerBusy          = "server_busy"
 	CodeRequestTimeout      = "request_timeout"
 	CodeInternal            = "internal_error"
 )
