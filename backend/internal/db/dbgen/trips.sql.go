@@ -14,19 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const currentSyncWatermark = `-- name: CurrentSyncWatermark :one
-SELECT pg_snapshot_xmin(pg_current_snapshot())::xid8 AS watermark
-`
-
-// The watermark a sync token carries: the oldest transaction still running
-// now. Take it when a walk's first page is served, on the primary.
-func (q *Queries) CurrentSyncWatermark(ctx context.Context) (uint64, error) {
-	row := q.db.QueryRow(ctx, currentSyncWatermark)
-	var watermark uint64
-	err := row.Scan(&watermark)
-	return watermark, err
-}
-
 const getTrip = `-- name: GetTrip :one
 SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid FROM trips
 WHERE member_id = $1 AND id = $2 AND deleted_at IS NULL
@@ -237,7 +224,8 @@ type ListTripChangesParams struct {
 
 // Sync walk (GET /v1/trips?since=): live trips written at or after the
 // token's watermark, in change order. The cursor is the last row's
-// (writer_xid, id); pass (0, the nil UUID) for the first page.
+// (writer_xid, id); pass (0, the nil UUID) for the first page. Read the
+// first page in the transaction that took SyncSnapshot, after it.
 func (q *Queries) ListTripChanges(ctx context.Context, arg ListTripChangesParams) ([]Trip, error) {
 	rows, err := q.db.Query(ctx, listTripChanges,
 		arg.MemberID,
@@ -633,6 +621,32 @@ func (q *Queries) PurgeTripTombstones(ctx context.Context, arg PurgeTripTombston
 		return nil, err
 	}
 	return items, nil
+}
+
+const syncSnapshot = `-- name: SyncSnapshot :one
+SELECT pg_snapshot_xmin(pg_current_snapshot())::xid8 AS watermark, now()::timestamptz AS issued_at
+`
+
+type SyncSnapshotRow struct {
+	Watermark uint64
+	IssuedAt  time.Time
+}
+
+// The watermark a sync token carries (the oldest transaction still running
+// in this snapshot) and its issue time, on the primary.
+//
+// Order matters (#176): run it as the FIRST statement of the REPEATABLE
+// READ transaction that reads the walk's first page (db.Trips does). The
+// transaction's one snapshot is then both the token's watermark and what
+// the page sees, so a write that commits after the page was read has a
+// writer_xid at or above the watermark and comes back in the next walk.
+// Taken after the read, or in another transaction, it can sit above a
+// write the page did not see, and that write is lost.
+func (q *Queries) SyncSnapshot(ctx context.Context) (SyncSnapshotRow, error) {
+	row := q.db.QueryRow(ctx, syncSnapshot)
+	var i SyncSnapshotRow
+	err := row.Scan(&i.Watermark, &i.IssuedAt)
+	return i, err
 }
 
 const systemIdentifier = `-- name: SystemIdentifier :one
