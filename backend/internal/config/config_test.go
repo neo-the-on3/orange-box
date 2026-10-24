@@ -161,6 +161,14 @@ func TestLoadSyncTokenRules(t *testing.T) {
 			t.Errorf("SYNC_TOKEN_KEY=%q: err = %v", bad, err)
 		}
 	}
+	for bad, want := range map[string]string{
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=":                     "not random", // 32 zero bytes
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": "looks like hex",
+	} {
+		if _, err := Load(env(prod("SYNC_TOKEN_KEY", bad))); err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), bad) {
+			t.Errorf("SYNC_TOKEN_KEY=%q: err = %v", bad, err)
+		}
+	}
 	for _, good := range []string{"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY", "-_-_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"} {
 		c, err := Load(env(prod("SYNC_TOKEN_KEY", good, "SYNC_DEPLOYMENT_ID", "neon:prod-1")))
 		if err != nil || len(c.SyncTokenKey) < 32 || c.SyncDeploymentID != "neon:prod-1" {
