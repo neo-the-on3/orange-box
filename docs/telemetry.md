@@ -152,7 +152,9 @@ through for the Detailed Info grid.
 | `TripTotals.economyKmPerL` | distance / litres once ≥ 0.1 km and some fuel is burned (the dashboard caps it at 99.9) | – |
 
 The panel glows are mapped in `core:dashboard-ui` (`DashboardStateMapper`): the RPM panel is green during fuel cut,
-else tinted by eco level (1 green, 2–3 yellow, 4 red); the speed panel is red during overspeed, else orange during a
+else tinted green while eco time is counted (the `eco` rule: moving, rpm ≤ 2500 and |accel| ≤ 1.5 m/s²), shaded
+yellow when that happens under moderate or heavy load (`ecoLevel` ≥ 2), and untinted otherwise. The ECO lamp follows
+the same rule (#138), so it is never lit while no eco time is being counted; the speed panel is red during overspeed, else orange during a
 harsh accel/brake event (priority overspeed > harsh > none). Glows animate over 300 ms unless "Remove animations" is on.
 
 All thresholds live in `TelemetryConfig` and can be changed. The overspeed threshold is also a user setting

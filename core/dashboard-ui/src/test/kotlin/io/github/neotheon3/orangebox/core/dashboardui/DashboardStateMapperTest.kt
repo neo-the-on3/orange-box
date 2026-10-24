@@ -17,11 +17,11 @@ class DashboardStateMapperTest {
 
     private fun instant(
         speed: Double? = 59.0, rpm: Double? = 1698.0, fuelCut: Boolean = false, overspeed: Boolean = false,
-        harshAccel: Boolean = false, harshBrake: Boolean = false, eco: Int = 1, coolantWarning: Boolean = false,
+        harshAccel: Boolean = false, harshBrake: Boolean = false, eco: Int = 1, ecoRule: Boolean = true, coolantWarning: Boolean = false,
         batteryWarning: Boolean = false, kmPerL: Double? = 8.9, mil: Boolean? = false, dtc: Int? = 0,
     ) = InstantTelemetry(
         speedKph = speed, rpm = rpm, coolantC = 64.0, fuelLevelPercent = null, voltage = 14.0, fuelFlowLph = 2.0,
-        economyLPer100Km = null, accelMps2 = null, fuelCut = fuelCut, idling = false, eco = true, overspeed = overspeed,
+        economyLPer100Km = null, accelMps2 = null, fuelCut = fuelCut, idling = false, eco = ecoRule, overspeed = overspeed,
         warnings = emptySet(), harshAccel = harshAccel, harshBrake = harshBrake, ecoLevel = eco,
         coolantWarning = coolantWarning, batteryWarning = batteryWarning, instantKmPerL = kmPerL, milOn = mil, dtcCount = dtc,
     )
@@ -65,6 +65,47 @@ class DashboardStateMapperTest {
         assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(false, 3))
         assertEquals(PanelGlow.ECO_RED, DashboardStateMapper.leftGlow(false, 4))
         assertEquals(PanelGlow.NONE, DashboardStateMapper.leftGlow(false, 0))
+    }
+
+    @Test fun `eco lamp and glow are off at 130 kmh and 3510 rpm while overspeeding (#138)`() {
+        // Simulator cruise: light load (level 1) but rpm above 2500, so the eco rule is false and no eco time is counted.
+        val s = DashboardStateMapper.map(connected, snap(instant(speed = 130.0, rpm = 3510.0, overspeed = true, eco = 1, ecoRule = false)))
+        assertEquals(0, s.ecoLevel)
+        assertEquals(PanelGlow.NONE, s.leftGlow)
+        assertFalse(s.fuelCut)
+        assertEquals(PanelGlow.OVERSPEED, s.rightGlow)
+    }
+
+    @Test fun `engine to dashboard - 130 kmh cruise at 3510 rpm and 40 pct load counts no eco and shows no eco lamp`() {
+        val engine = io.github.neotheon3.orangebox.core.telemetry.TelemetryEngine()
+        var snapshot: TelemetrySnapshot? = null
+        for (k in 0..10) {
+            snapshot = engine.onSample(
+                io.github.neotheon3.orangebox.core.obd.pid.VehicleSample(
+                    k * 1_000L, mapOf(ObdPid.SPEED to 130.0, ObdPid.RPM to 3510.0, ObdPid.ENGINE_LOAD to 40.0),
+                ),
+            )
+        }
+        val snap = snapshot!!
+        assertTrue(snap.instant.overspeed)
+        assertFalse(snap.instant.eco)
+        assertEquals(0.0, snap.trip.ecoS, 0.0)
+        assertEquals("load alone would be green", 1, snap.instant.ecoLevel)
+        val s = DashboardStateMapper.map(connected, snap)
+        assertEquals(0, s.ecoLevel)
+        assertEquals(PanelGlow.NONE, s.leftGlow)
+        assertEquals(PanelGlow.OVERSPEED, s.rightGlow)
+    }
+
+    @Test fun `eco lamp follows the eco rule, load only shades it`() {
+        assertEquals(1, DashboardStateMapper.map(connected, snap(instant(eco = 1, ecoRule = true))).ecoLevel)
+        assertEquals(1, DashboardStateMapper.map(connected, snap(instant(eco = 0, ecoRule = true))).ecoLevel) // no load PID
+        assertEquals(2, DashboardStateMapper.map(connected, snap(instant(eco = 3, ecoRule = true))).ecoLevel)
+        assertEquals(2, DashboardStateMapper.map(connected, snap(instant(eco = 4, ecoRule = true))).ecoLevel)
+        for (level in 0..4) assertEquals(0, DashboardStateMapper.map(connected, snap(instant(eco = level, ecoRule = false))).ecoLevel)
+        assertEquals(PanelGlow.ECO_GREEN, DashboardStateMapper.map(connected, snap(instant(eco = 1))).leftGlow)
+        assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.map(connected, snap(instant(eco = 4))).leftGlow)
+        assertEquals(PanelGlow.NONE, DashboardStateMapper.map(connected, snap(instant(eco = 1, ecoRule = false))).leftGlow)
     }
 
     @Test fun `right glow - overspeed beats harsh beats none`() {

@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import io.github.neotheon3.orangebox.core.obd.pid.ObdPid
+import io.github.neotheon3.orangebox.core.telemetry.InstantTelemetry
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -38,7 +39,10 @@ data class DashboardUiState(
     val harshAccel: Boolean = false,
     val harshBrake: Boolean = false,
     val idling: Boolean = false,
-    /** 0 off, 1 green, 2–3 yellow, 4 red. */
+    /**
+     * ECO lamp and eco tint: 0 off, 1 green, 2 yellow. Lit only while eco time is being counted
+     * (the EventDetector eco rule, [InstantTelemetry.eco]); the load-based level only shades it ([ecoLamp]).
+     */
     val ecoLevel: Int = 0,
     val coolant: IndicatorLevel = IndicatorLevel.OFF,
     val battery: IndicatorLevel = IndicatorLevel.OFF,
@@ -87,7 +91,7 @@ object DashboardStateMapper {
             harshAccel = i.harshAccel,
             harshBrake = i.harshBrake,
             idling = i.idling,
-            ecoLevel = i.ecoLevel,
+            ecoLevel = ecoLamp(i.eco, i.ecoLevel),
             coolant = level(i.coolantC != null, i.coolantWarning),
             battery = level(i.voltage != null, i.batteryWarning),
             milOn = i.milOn == true,
@@ -99,10 +103,21 @@ object DashboardStateMapper {
             fuelUsedL = decimal(trip.fuelLitres),
             tripKm = decimal(trip.distanceKm),
             tripTime = elapsed(trip.durationS),
-            leftGlow = leftGlow(i.fuelCut, i.ecoLevel),
+            leftGlow = leftGlow(i.fuelCut, ecoLamp(i.eco, i.ecoLevel)),
             rightGlow = rightGlow(i.overspeed, i.harshAccel || i.harshBrake),
             detailPages = detailPages(snapshot, activePids),
         )
+    }
+
+    /**
+     * ECO lamp / tint level (#138). Off whenever eco time is not counted (moving, rpm <= 2500 and
+     * |accel| <= 1.5 m/s², see docs/telemetry.md), e.g. at 130 km/h / 3,500 rpm even with light load.
+     * While eco, the load/boost level only shades it: light load green, moderate or heavy load yellow.
+     */
+    fun ecoLamp(eco: Boolean, loadLevel: Int): Int = when {
+        !eco -> 0
+        loadLevel >= 2 -> 2
+        else -> 1
     }
 
     /** RPM panel: fuel cut (green, FUEL-CUT lit) wins over the eco tint. */
