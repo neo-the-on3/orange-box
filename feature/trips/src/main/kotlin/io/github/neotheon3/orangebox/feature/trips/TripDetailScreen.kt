@@ -47,6 +47,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.neotheon3.orangebox.feature.trips.charts.SeriesPoint
+import io.github.neotheon3.orangebox.feature.trips.charts.TripCharts
 import io.github.neotheon3.orangebox.feature.trips.map.MapTiles
 import io.github.neotheon3.orangebox.feature.trips.map.RouteMap
 import io.github.neotheon3.orangebox.feature.trips.map.RouteMarker
@@ -74,7 +76,9 @@ fun TripDetailScreen(
     onBack: () -> Unit = {},
     onTilesChanged: (Boolean) -> Unit = {},
     locale: Locale = Locale.getDefault(),
-    charts: @Composable (TripDetail) -> Unit = {},
+    charts: @Composable (TripDetail) -> Unit = { d ->
+        TripCharts(d.speedZones, d.speedSeries.map { (t, v) -> SeriesPoint(t, v) }, d.economySeries, locale, durationS = d.metrics.durationS)
+    },
 ) {
     Scaffold(
         topBar = {

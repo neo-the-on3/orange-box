@@ -12,6 +12,14 @@ object TripFormat {
         return String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, s % 3600 / 60, s % 60)
     }
 
+    /** M:SS under an hour, otherwise H:MM (chart axis labels). */
+    fun elapsedShort(seconds: Double): String {
+        val s = seconds.roundToLong().coerceAtLeast(0)
+        return if (s < 3600) String.format(Locale.ROOT, "%d:%02d", s / 60, s % 60) else String.format(Locale.ROOT, "%d:%02d h", s / 3600, s % 3600 / 60)
+    }
+
+    fun whole(v: Double, locale: Locale = Locale.getDefault()): String = String.format(locale, "%.0f", v)
+
     fun km(km: Double, locale: Locale = Locale.getDefault()): String = String.format(locale, "%.1f", km)
 
     fun decimal(v: Double, locale: Locale = Locale.getDefault()): String = String.format(locale, "%.1f", v)
