@@ -641,7 +641,7 @@ func TestIdempotencyKeys(t *testing.T) {
 	fp := []byte("fingerprint-1")
 	scope := dbgen.GetIdempotencyKeyParams{MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key}
 	claim := dbgen.ClaimIdempotencyKeyParams{
-		MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key, Fingerprint: fp,
+		MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key, Fingerprint: fp, ClaimToken: newID(),
 		LockedUntil: time.Now().Add(30 * time.Second), ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	if _, err := q.ClaimIdempotencyKey(ctx, claim); err != nil {
@@ -662,7 +662,7 @@ func TestIdempotencyKeys(t *testing.T) {
 		t.Fatalf("other member: %v", err)
 	}
 	// The lease is live, so it can't be reclaimed yet.
-	reclaim := dbgen.ReclaimIdempotencyKeyParams{MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key, Fingerprint: fp, LockedUntil: time.Now().Add(time.Minute)}
+	reclaim := dbgen.ReclaimIdempotencyKeyParams{MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key, Fingerprint: fp, ClaimToken: newID(), LockedUntil: time.Now().Add(time.Minute)}
 	if _, err := q.ReclaimIdempotencyKey(ctx, reclaim); !isNoRows(err) {
 		t.Fatalf("reclaim live lease: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestIdempotencyKeys(t *testing.T) {
 		t.Fatalf("reclaim expired lease: %v", err)
 	}
 	n, err := q.CompleteIdempotencyKey(ctx, dbgen.CompleteIdempotencyKeyParams{
-		MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key,
+		MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key, ClaimToken: reclaim.ClaimToken,
 		ResponseStatus: 200, ResponseBody: []byte(`{"results":[]}`), ResponseHeaders: json.RawMessage(`{"Content-Type":"application/json"}`),
 	})
 	if err != nil || n != 1 {
@@ -688,7 +688,8 @@ func TestIdempotencyKeys(t *testing.T) {
 	if err != nil || got.State != "completed" || *got.ResponseStatus != 200 || string(got.ResponseBody) != `{"results":[]}` || got.LockedUntil != nil {
 		t.Fatalf("stored key: %+v, %v", got, err)
 	}
-	if n, _ := q.ReleaseIdempotencyKey(ctx, dbgen.ReleaseIdempotencyKeyParams(scope)); n != 0 {
+	release := dbgen.ReleaseIdempotencyKeyParams{MemberID: member, Method: "POST", Route: "/v1/trips/batch", Key: key, ClaimToken: reclaim.ClaimToken}
+	if n, _ := q.ReleaseIdempotencyKey(ctx, release); n != 0 {
 		t.Error("released a completed key")
 	}
 	if _, err := pool.Exec(ctx, `UPDATE idempotency_keys SET expires_at = now() - interval '1 second' WHERE key = $1`, key); err != nil {
@@ -696,6 +697,111 @@ func TestIdempotencyKeys(t *testing.T) {
 	}
 	if n, err := q.PurgeExpiredIdempotencyKeys(ctx, 100); err != nil || n != 3 {
 		t.Fatalf("purge: %d, %v", n, err)
+	}
+}
+
+// TestIdempotencyStaleOwner is #175: after a retry takes over a key whose
+// lease ran out, the original (stale) request can neither complete nor
+// release it, and the new owner still can.
+func TestIdempotencyStaleOwner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	q := dbgen.New(pool)
+	member := newMember(t, q)
+	key := newID()
+	fp := []byte("fp")
+	stale, fresh := newID(), newID()
+	if _, err := q.ClaimIdempotencyKey(ctx, dbgen.ClaimIdempotencyKeyParams{
+		MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key, Fingerprint: fp, ClaimToken: stale,
+		LockedUntil: time.Now().Add(-time.Second), ExpiresAt: time.Now().Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ReclaimIdempotencyKey(ctx, dbgen.ReclaimIdempotencyKeyParams{
+		MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key, Fingerprint: fp, ClaimToken: fresh,
+		LockedUntil: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("takeover: %v", err)
+	}
+	complete := func(token uuid.UUID) int64 {
+		t.Helper()
+		n, err := q.CompleteIdempotencyKey(ctx, dbgen.CompleteIdempotencyKeyParams{
+			MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key, ClaimToken: token,
+			ResponseStatus: 201, ResponseBody: []byte(`{}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	release := func(token uuid.UUID) int64 {
+		t.Helper()
+		n, err := q.ReleaseIdempotencyKey(ctx, dbgen.ReleaseIdempotencyKeyParams{
+			MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key, ClaimToken: token,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := release(stale); n != 0 {
+		t.Fatalf("stale owner released the new claim (%d rows)", n)
+	}
+	if n := complete(stale); n != 0 {
+		t.Fatalf("stale owner completed the new claim (%d rows)", n)
+	}
+	got, err := q.GetIdempotencyKey(ctx, dbgen.GetIdempotencyKeyParams{MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key})
+	if err != nil || got.State != "in_progress" || got.ClaimToken == nil || *got.ClaimToken != fresh {
+		t.Fatalf("claim after stale attempts: %+v, %v", got, err)
+	}
+	if n := complete(fresh); n != 1 {
+		t.Fatalf("new owner's complete: %d rows", n)
+	}
+}
+
+// TestIdempotencyExpiredKeyReclaimable is #175: a key past expires_at that
+// the purge job hasn't removed yet counts as absent, whatever its state or
+// fingerprint.
+func TestIdempotencyExpiredKeyReclaimable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	q := dbgen.New(pool)
+	member := newMember(t, q)
+	key := newID()
+	first := dbgen.ClaimIdempotencyKeyParams{
+		MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key, Fingerprint: []byte("old"), ClaimToken: newID(),
+		LockedUntil: time.Now().Add(time.Minute), ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	if _, err := q.ClaimIdempotencyKey(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := q.CompleteIdempotencyKey(ctx, dbgen.CompleteIdempotencyKeyParams{
+		MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key, ClaimToken: first.ClaimToken,
+		ResponseStatus: 201, ResponseBody: []byte(`{"old":true}`), ResponseHeaders: json.RawMessage(`{}`),
+	}); err != nil || n != 1 {
+		t.Fatalf("complete: %d, %v", n, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE idempotency_keys SET expires_at = now() - interval '1 second' WHERE key = $1`, key); err != nil {
+		t.Fatal(err)
+	}
+	again := first
+	again.Fingerprint, again.ClaimToken = []byte("new"), newID()
+	if _, err := q.ClaimIdempotencyKey(ctx, again); err != nil {
+		t.Fatalf("claim of an expired key: %v", err)
+	}
+	got, err := q.GetIdempotencyKey(ctx, dbgen.GetIdempotencyKeyParams{MemberID: member, Method: "POST", Route: "/v1/vehicles", Key: key})
+	if err != nil || got.State != "in_progress" || string(got.Fingerprint) != "new" || *got.ClaimToken != again.ClaimToken ||
+		got.ResponseStatus != nil || got.ResponseBody != nil || got.ResponseHeaders != nil || got.CompletedAt != nil ||
+		!got.ExpiresAt.After(time.Now()) {
+		t.Fatalf("replaced key: %+v, %v", got, err)
+	}
+	// A live key is still not replaced.
+	third := again
+	third.ClaimToken = newID()
+	if _, err := q.ClaimIdempotencyKey(ctx, third); !isNoRows(err) {
+		t.Fatalf("claim of a live key: %v", err)
 	}
 }
 

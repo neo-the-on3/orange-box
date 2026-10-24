@@ -14,9 +14,20 @@ import (
 )
 
 const claimIdempotencyKey = `-- name: ClaimIdempotencyKey :one
-INSERT INTO idempotency_keys (member_id, method, route, key, fingerprint, locked_until, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7)
-ON CONFLICT (member_id, method, route, key) DO NOTHING
+INSERT INTO idempotency_keys (member_id, method, route, key, fingerprint, claim_token, locked_until, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6::uuid, $7::timestamptz, $8)
+ON CONFLICT (member_id, method, route, key) DO UPDATE SET
+    fingerprint      = EXCLUDED.fingerprint,
+    state            = 'in_progress',
+    claim_token      = EXCLUDED.claim_token,
+    locked_until     = EXCLUDED.locked_until,
+    response_status  = NULL,
+    response_headers = NULL,
+    response_body    = NULL,
+    created_at       = now(),
+    completed_at     = NULL,
+    expires_at       = EXCLUDED.expires_at
+WHERE idempotency_keys.expires_at < now()
 RETURNING member_id, key
 `
 
@@ -26,6 +37,7 @@ type ClaimIdempotencyKeyParams struct {
 	Route       string
 	Key         uuid.UUID
 	Fingerprint []byte
+	ClaimToken  uuid.UUID
 	LockedUntil time.Time
 	ExpiresAt   time.Time
 }
@@ -35,10 +47,12 @@ type ClaimIdempotencyKeyRow struct {
 	Key      uuid.UUID
 }
 
-// Claims a key for a new request. Returns no row when the key exists; the
-// caller reads it with GetIdempotencyKey and replays (same fingerprint,
-// completed), answers 409 (in progress), 422 (other fingerprint) or tries
-// ReclaimIdempotencyKey (lease expired).
+// Claims a key for a new request under claim_token (a fresh UUID per claim).
+// A stored key past expires_at counts as absent: it is replaced in the same
+// statement, even before the purge job removes it. Returns no row when a
+// live key exists; the caller reads it with GetIdempotencyKey and replays
+// (same fingerprint, completed), answers 409 (in progress), 422 (other
+// fingerprint) or tries ReclaimIdempotencyKey (lease expired).
 func (q *Queries) ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyKeyParams) (ClaimIdempotencyKeyRow, error) {
 	row := q.db.QueryRow(ctx, claimIdempotencyKey,
 		arg.MemberID,
@@ -46,6 +60,7 @@ func (q *Queries) ClaimIdempotencyKey(ctx context.Context, arg ClaimIdempotencyK
 		arg.Route,
 		arg.Key,
 		arg.Fingerprint,
+		arg.ClaimToken,
 		arg.LockedUntil,
 		arg.ExpiresAt,
 	)
@@ -63,7 +78,7 @@ UPDATE idempotency_keys SET
     response_body    = $3,
     completed_at     = now()
 WHERE member_id = $4 AND method = $5 AND route = $6 AND key = $7
-  AND state = 'in_progress'
+  AND state = 'in_progress' AND claim_token = $8::uuid
 `
 
 type CompleteIdempotencyKeyParams struct {
@@ -74,8 +89,11 @@ type CompleteIdempotencyKeyParams struct {
 	Method          string
 	Route           string
 	Key             uuid.UUID
+	ClaimToken      uuid.UUID
 }
 
+// Stores the response to replay. Affects no row unless claim_token is the
+// current claim's (a request whose key was reclaimed has lost it).
 func (q *Queries) CompleteIdempotencyKey(ctx context.Context, arg CompleteIdempotencyKeyParams) (int64, error) {
 	result, err := q.db.Exec(ctx, completeIdempotencyKey,
 		arg.ResponseStatus,
@@ -85,6 +103,7 @@ func (q *Queries) CompleteIdempotencyKey(ctx context.Context, arg CompleteIdempo
 		arg.Method,
 		arg.Route,
 		arg.Key,
+		arg.ClaimToken,
 	)
 	if err != nil {
 		return 0, err
@@ -93,7 +112,7 @@ func (q *Queries) CompleteIdempotencyKey(ctx context.Context, arg CompleteIdempo
 }
 
 const getIdempotencyKey = `-- name: GetIdempotencyKey :one
-SELECT member_id, method, route, key, fingerprint, state, locked_until, response_status, response_headers, response_body, created_at, completed_at, expires_at FROM idempotency_keys
+SELECT member_id, method, route, key, fingerprint, state, locked_until, response_status, response_headers, response_body, created_at, completed_at, expires_at, claim_token FROM idempotency_keys
 WHERE member_id = $1 AND method = $2 AND route = $3 AND key = $4
 `
 
@@ -126,6 +145,7 @@ func (q *Queries) GetIdempotencyKey(ctx context.Context, arg GetIdempotencyKeyPa
 		&i.CreatedAt,
 		&i.CompletedAt,
 		&i.ExpiresAt,
+		&i.ClaimToken,
 	)
 	return i, err
 }
@@ -149,14 +169,15 @@ func (q *Queries) PurgeExpiredIdempotencyKeys(ctx context.Context, maxRows int32
 }
 
 const reclaimIdempotencyKey = `-- name: ReclaimIdempotencyKey :one
-UPDATE idempotency_keys SET locked_until = $1::timestamptz
-WHERE member_id = $2 AND method = $3 AND route = $4 AND key = $5
-  AND state = 'in_progress' AND locked_until < now() AND fingerprint = $6
+UPDATE idempotency_keys SET locked_until = $1::timestamptz, claim_token = $2::uuid
+WHERE member_id = $3 AND method = $4 AND route = $5 AND key = $6
+  AND state = 'in_progress' AND locked_until < now() AND fingerprint = $7
 RETURNING member_id, key
 `
 
 type ReclaimIdempotencyKeyParams struct {
 	LockedUntil time.Time
+	ClaimToken  uuid.UUID
 	MemberID    uuid.UUID
 	Method      string
 	Route       string
@@ -169,11 +190,13 @@ type ReclaimIdempotencyKeyRow struct {
 	Key      uuid.UUID
 }
 
-// Takes over an in-progress key whose lease ran out (its request died),
-// if the fingerprint matches. Returns no row otherwise.
+// Takes over an in-progress key whose lease ran out (its request died or
+// stalled), if the fingerprint matches, under a fresh claim_token: the old
+// owner can then no longer complete or release it. Returns no row otherwise.
 func (q *Queries) ReclaimIdempotencyKey(ctx context.Context, arg ReclaimIdempotencyKeyParams) (ReclaimIdempotencyKeyRow, error) {
 	row := q.db.QueryRow(ctx, reclaimIdempotencyKey,
 		arg.LockedUntil,
+		arg.ClaimToken,
 		arg.MemberID,
 		arg.Method,
 		arg.Route,
@@ -188,24 +211,27 @@ func (q *Queries) ReclaimIdempotencyKey(ctx context.Context, arg ReclaimIdempote
 const releaseIdempotencyKey = `-- name: ReleaseIdempotencyKey :execrows
 DELETE FROM idempotency_keys
 WHERE member_id = $1 AND method = $2 AND route = $3 AND key = $4
-  AND state = 'in_progress'
+  AND state = 'in_progress' AND claim_token = $5::uuid
 `
 
 type ReleaseIdempotencyKeyParams struct {
-	MemberID uuid.UUID
-	Method   string
-	Route    string
-	Key      uuid.UUID
+	MemberID   uuid.UUID
+	Method     string
+	Route      string
+	Key        uuid.UUID
+	ClaimToken uuid.UUID
 }
 
 // Drops an in-progress claim when the request failed without a response
 // worth replaying (e.g. a 5xx), so the client can retry with the same key.
+// Affects no row unless claim_token is the current claim's.
 func (q *Queries) ReleaseIdempotencyKey(ctx context.Context, arg ReleaseIdempotencyKeyParams) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseIdempotencyKey,
 		arg.MemberID,
 		arg.Method,
 		arg.Route,
 		arg.Key,
+		arg.ClaimToken,
 	)
 	if err != nil {
 		return 0, err
