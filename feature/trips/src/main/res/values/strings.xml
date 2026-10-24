@@ -41,6 +41,8 @@
     <string name="unit_litres">%1$s L</string>
     <string name="unit_kg">%1$s kg</string>
     <string name="unit_mps2">%1$s m/s²</string>
+    <string name="unit_seconds">%1$s s</string>
+    <string name="event_peak">peak %1$s</string>
     <string name="event_harsh_accel">Harsh acceleration</string>
     <string name="event_harsh_brake">Harsh braking</string>
     <string name="event_overspeed">Overspeed</string>

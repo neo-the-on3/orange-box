@@ -156,13 +156,16 @@ private fun MetricsGrid(m: TripMetrics, locale: Locale) {
 @Composable
 private fun EventRow(index: Int, e: TripEventItem, locale: Locale) {
     val time = e.time.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM).withLocale(locale))
+    // The peak while the event ran (#164), then how long it lasted.
     val value = e.value?.let {
         when (e.type) {
-            TripEventType.HARSH_ACCEL, TripEventType.HARSH_BRAKE -> stringResource(R.string.unit_mps2, TripFormat.decimal(kotlin.math.abs(it), locale))
-            TripEventType.OVERSPEED -> stringResource(R.string.unit_kph, TripFormat.decimal(it, locale))
+            TripEventType.HARSH_ACCEL, TripEventType.HARSH_BRAKE ->
+                stringResource(R.string.event_peak, stringResource(R.string.unit_mps2, TripFormat.decimal(kotlin.math.abs(it), locale)))
+            TripEventType.OVERSPEED -> stringResource(R.string.event_peak, stringResource(R.string.unit_kph, TripFormat.decimal(it, locale)))
             TripEventType.FUEL_CUT -> null
         }
     }
+    val duration = e.durationS?.let { stringResource(R.string.unit_seconds, TripFormat.decimal(it, locale)) }
     ListItem(
         leadingContent = {
             Box(Modifier.size(28.dp).background(eventColor(e.type), CircleShape), contentAlignment = Alignment.Center) {
@@ -170,7 +173,7 @@ private fun EventRow(index: Int, e: TripEventItem, locale: Locale) {
             }
         },
         headlineContent = { Text(eventLabel(e.type)) },
-        supportingContent = { Text(listOfNotNull(time, value).joinToString(" · ")) },
+        supportingContent = { Text(listOfNotNull(time, value, duration).joinToString(" · ")) },
         modifier = Modifier.testTag("trip_event_$index"),
     )
 }

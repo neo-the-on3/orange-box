@@ -111,7 +111,7 @@ class DebugExports @Inject constructor(
         events.forEach { e ->
             w.beginObject()
             w.name("t").value(iso(e.timestampMillis)).name("type").value(e.type)
-            num(w, "value", e.value); num(w, "lat", e.latitude); num(w, "lon", e.longitude)
+            num(w, "value", e.value); num(w, "durationS", e.durationS); num(w, "lat", e.latitude); num(w, "lon", e.longitude)
             w.endObject()
         }
         w.endArray()
