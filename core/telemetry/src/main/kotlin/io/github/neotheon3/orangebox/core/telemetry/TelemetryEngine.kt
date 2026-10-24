@@ -146,9 +146,10 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val speed = sample[ObdPid.SPEED]
         val rpm = sample[ObdPid.RPM]
         val gap = prev != null && t - prev.t > config.maxGapMillis
-        if (gap) {
+        if (prev != null && gap) {
             speedHistory.clear()
-            harshAccelEvent.signalLost(t); harshBrakeEvent.signalLost(t); overspeedEvent.signalLost(t)
+            // Close at the last sample before the gap: the gap itself is not integrated into the trip totals.
+            harshAccelEvent.signalLost(prev.t); harshBrakeEvent.signalLost(prev.t); overspeedEvent.signalLost(prev.t)
         }
         val dtS = prev?.let { (t - it.t) / 1000.0 }?.takeIf { !gap }
 
