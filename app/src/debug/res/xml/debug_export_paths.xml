@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Android/data/<pkg>/files/Download/orange-box-exports (app-specific, no storage permission). -->
+    <external-files-path name="exports" path="Download/orange-box-exports/" />
+</paths>

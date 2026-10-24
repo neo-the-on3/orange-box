@@ -12,5 +12,16 @@
             android:name="androidx.compose.ui.tooling.PreviewActivity"
             android:exported="false"
             tools:replace="android:exported" />
+
+        <!-- Debug only: share exported trips / connection logs (DebugExports). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.debugexports"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/debug_export_paths" />
+        </provider>
     </application>
 </manifest>
