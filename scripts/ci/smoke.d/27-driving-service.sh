@@ -28,9 +28,14 @@ for _ in $(seq 1 20); do
 done
 grep -q "Recording trip" "$OUT/notifications.txt" || { echo "driving notification missing" >&2; exit 1; }
 
-adb shell cmd statusbar expand-notifications
-sleep 2
-wait_for_text "Recording trip" shade 10
+# A busy CI emulator sometimes ignores the first expand; retry, then fall back to a swipe down from the top.
+shade_open=false
+for i in 1 2 3; do
+  if [ "$i" -lt 3 ]; then adb shell cmd statusbar expand-notifications; else adb shell input swipe 500 5 500 1400 400; fi
+  sleep 2
+  if wait_for_text "Recording trip" shade 5; then shade_open=true; break; fi
+done
+$shade_open || { echo "notification shade did not show the driving notification" >&2; exit 1; }
 shot 27-notification-shade
 # "Start driving" (the action) if the notification is expanded, else its body: both open the dashboard.
 if grep -qi 'text="Start driving"' "$OUT/shade.xml"; then
