@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,7 +16,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,15 +33,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.neotheon3.orangebox.feature.trips.map.MapTiles
+import io.github.neotheon3.orangebox.feature.trips.map.RouteMap
+import io.github.neotheon3.orangebox.feature.trips.map.RouteMarker
+import ovh.plrapps.mapcompose.core.TileStreamProvider
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
@@ -43,15 +58,21 @@ import java.util.Locale
 @Composable
 fun TripDetailRoute(onBack: () -> Unit, viewModel: TripDetailViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    TripDetailScreen(state, onBack = onBack)
+    val context = LocalContext.current
+    val tiles = remember(state.tilesEnabled) {
+        if (state.tilesEnabled) MapTiles.Provider(MapTiles.sharedClient(context)) else null
+    }
+    TripDetailScreen(state, tiles, onBack = onBack, onTilesChanged = viewModel::setTilesEnabled)
 }
 
-/** Trip detail (Material 3): summary metrics and events. The route map (#44) and charts (#45) slot in above/below the metrics. */
+/** Trip detail (Material 3): route map (#44), summary metrics, charts (#45) and events. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TripDetailScreen(
     state: TripDetailUiState,
+    tiles: TileStreamProvider? = null,
     onBack: () -> Unit = {},
+    onTilesChanged: (Boolean) -> Unit = {},
     locale: Locale = Locale.getDefault(),
     charts: @Composable (TripDetail) -> Unit = {},
 ) {
@@ -75,6 +96,7 @@ fun TripDetailScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.trips_back))
                     }
                 },
+                actions = { MapMenu(state.tilesEnabled, onTilesChanged) },
             )
         },
     ) { padding ->
@@ -92,6 +114,7 @@ fun TripDetailScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                item(key = "map") { MapCard(detail, if (state.tilesEnabled) tiles else null) }
                 item(key = "metrics") { MetricsGrid(detail.metrics, locale) }
                 item(key = "gps") {
                     Text(
@@ -130,6 +153,52 @@ fun TripDetailScreen(
                     items(detail.fuelCuts.withIndex().toList(), key = { "fuel_cut_${it.index}" }) { (i, e) -> EventRow(i, e, locale, tag = "trip_fuel_cut_$i") }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MapMenu(tilesEnabled: Boolean, onTilesChanged: (Boolean) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val uri = LocalUriHandler.current
+    IconButton(onClick = { open = true }, modifier = Modifier.testTag("trip_detail_more")) {
+        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.trip_detail_more))
+    }
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.trip_detail_map_tiles)) },
+            trailingIcon = { Checkbox(checked = tilesEnabled, onCheckedChange = null) },
+            onClick = { open = false; onTilesChanged(!tilesEnabled) },
+            modifier = Modifier.testTag("trip_detail_tiles_toggle"),
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.trip_detail_report_map_issue)) },
+            onClick = { open = false; runCatching { uri.openUri(MapTiles.FIX_THE_MAP_URL) } },
+        )
+    }
+}
+
+@Composable
+private fun MapCard(detail: TripDetail, tiles: TileStreamProvider?) {
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        if (detail.hasRoute) {
+            val markers = detail.events.withIndex().mapNotNull { (i, e) ->
+                e.position?.let { RouteMarker("event_$i", it, eventLetter(e.type), eventColor(e.type), eventLabel(e.type)) }
+            }
+            RouteMap(
+                route = detail.route,
+                markers = markers,
+                tiles = tiles,
+                routeDescription = stringResource(R.string.trip_detail_map_description, detail.route.size),
+                modifier = Modifier.fillMaxWidth().height(260.dp),
+            )
+        } else {
+            ListItem(
+                leadingContent = { Icon(Icons.Filled.LocationOn, contentDescription = null) },
+                headlineContent = { Text(stringResource(R.string.trip_detail_no_location)) },
+                supportingContent = { Text(stringResource(R.string.trip_detail_no_location_hint)) },
+                modifier = Modifier.testTag("trip_detail_no_location"),
+            )
         }
     }
 }

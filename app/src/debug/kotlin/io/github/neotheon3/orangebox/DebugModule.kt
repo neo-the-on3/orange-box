@@ -14,7 +14,7 @@ import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Debug-only: honours `--es backend_mode off|fake|remote`, `--es onboarding skip|reset` and `--es demo_trips seed`. */
+/** Debug-only: honours `--es backend_mode off|fake|remote`, `--es onboarding skip|reset` and `--es demo_trips seed`, `--es map_tiles off|on`. */
 @Singleton
 class DebugLaunchOverrides @Inject constructor(
     private val backendConfigRepository: BackendConfigRepository,
@@ -26,6 +26,10 @@ class DebugLaunchOverrides @Inject constructor(
         if (intent?.getStringExtra(LaunchExtras.DEMO_TRIPS) == "seed") {
             val added = runBlocking { DemoTrips.seed(trips, System.currentTimeMillis()) }
             Log.i(TAG, "demo_trips seeded: $added")
+        }
+        when (intent?.getStringExtra(LaunchExtras.MAP_TILES)) {
+            "off" -> runBlocking { appPreferences.setMapTilesEnabled(false) }.also { Log.i(TAG, "map_tiles override applied: off") }
+            "on" -> runBlocking { appPreferences.setMapTilesEnabled(true) }.also { Log.i(TAG, "map_tiles override applied: on") }
         }
         val raw = intent?.getStringExtra(LaunchExtras.BACKEND_MODE) ?: return null
         val mode = LaunchExtras.resolveBackendMode(raw)
