@@ -26,6 +26,7 @@ class ObdPidTest(private val pid: ObdPid, private val hex: String, private val e
             row(ObdPid.INTAKE_TEMP, "46", 30.0),
             row(ObdPid.MAF, "0190", 4.0), row(ObdPid.MAF, "FFFF", 655.35),
             row(ObdPid.THROTTLE, "33", 20.0),
+            row(ObdPid.O2_B1S1_VOLTAGE, "5AFF", 0.45),
             row(ObdPid.RUN_TIME, "0E10", 3600.0),
             row(ObdPid.DISTANCE_WITH_MIL, "0100", 256.0),
             row(ObdPid.FUEL_RAIL_PRESSURE_REL, "03E8", 79.0),

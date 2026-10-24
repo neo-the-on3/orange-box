@@ -71,4 +71,14 @@ data class TelemetryConfig(
     val lowBatteryVolts: Double = 11.8,
     val overVoltageVolts: Double = 15.0,
     val lowFuelPercent: Double = 10.0,
+    /** Eco level bounds on engine load, %: below the first is level 1, at/above the last is level 4. */
+    val ecoLoadThresholds: List<Double> = listOf(50.0, 80.0, 90.0),
+    /** Diesel eco level bounds on boost (MAP − baro), kPa. */
+    val ecoBoostThresholdsKpa: List<Double> = listOf(50.0, 80.0, 100.0),
+    /** Dashboard coolant lamp turns to warning at this temperature, °C (earlier than [coolantOverheatC]). */
+    val coolantWarningC: Double = 100.0,
+    /** Normal charging voltage with the engine running; outside it the battery lamp warns. */
+    val chargingVoltsRange: ClosedFloatingPointRange<Double> = 13.2..14.8,
+    /** Instant km/L scale maximum (and the value shown during fuel cut). */
+    val instantKmPerLMax: Double = 30.0,
 )

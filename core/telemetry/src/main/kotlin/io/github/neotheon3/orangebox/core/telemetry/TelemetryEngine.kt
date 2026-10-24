@@ -31,6 +31,21 @@ data class InstantTelemetry(
     val harshAccel: Boolean = false,
     /** A harsh-braking event is in progress. */
     val harshBrake: Boolean = false,
+    /**
+     * Engine effort while moving, for the eco lamp and cluster tint: 0 = not shown (stopped or no data),
+     * 1 = light, 2–3 = moderate, 4 = heavy. See [TelemetryConfig.ecoLoadThresholds].
+     */
+    val ecoLevel: Int = 0,
+    /** Coolant at or above [TelemetryConfig.coolantWarningC]. */
+    val coolantWarning: Boolean = false,
+    /** Engine running and voltage outside [TelemetryConfig.chargingVoltsRange]. */
+    val batteryWarning: Boolean = false,
+    /** Instant economy, km/L, capped at [TelemetryConfig.instantKmPerLMax] (full during fuel cut). */
+    val instantKmPerL: Double? = null,
+    /** MIL lamp state from PID 01 01, null if unknown. */
+    val milOn: Boolean? = null,
+    /** Stored DTC count from PID 01 01, null if unknown. */
+    val dtcCount: Int? = null,
 )
 
 /** Totals since [TelemetryEngine.reset]. Times in seconds. */
@@ -53,9 +68,17 @@ data class TripTotals(
     /** Trip economy, L/100 km; null below 0.1 km. */
     val economyLPer100Km: Double? get() = if (distanceKm >= 0.1) fuelLitres / distanceKm * 100.0 else null
     val averageSpeedKph: Double? get() = if (durationS > 0) distanceKm / (durationS / 3600.0) else null
+    /** Trip economy, km/L; null below 0.1 km or with no fuel burned yet. */
+    val economyKmPerL: Double? get() = if (distanceKm >= 0.1 && fuelLitres > 0) distanceKm / fuelLitres else null
 }
 
-data class TelemetrySnapshot(val timestampMillis: Long, val instant: InstantTelemetry, val trip: TripTotals)
+/** [values] are the raw decoded PIDs of the sample, for detail views. */
+data class TelemetrySnapshot(
+    val timestampMillis: Long,
+    val instant: InstantTelemetry,
+    val trip: TripTotals,
+    val values: Map<ObdPid, Double> = emptyMap(),
+)
 
 /**
  * Clean-room derived metrics from decoded PIDs. Formulas: docs/telemetry.md. Deterministic and
@@ -140,16 +163,32 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val eco = moving && rpm != null && rpm <= config.ecoMaxRpm && (accel == null || abs(accel) <= config.ecoMaxAccel)
         val overspeed = overspeedEvent.active
         val economy = if (speed != null && flow != null && speed >= config.economyMinKph) flow / speed * 100.0 else null
+        val kmPerL = when {
+            fuelCut -> config.instantKmPerLMax
+            speed == null || flow == null -> null
+            speed < config.economyMinKph -> 0.0
+            flow <= 0.0 -> config.instantKmPerLMax
+            else -> (speed / flow).coerceAtMost(config.instantKmPerLMax)
+        }
+        val coolant = sample[ObdPid.COOLANT_TEMP]
+        val volts = sample[ObdPid.CONTROL_MODULE_VOLTAGE]
+        val engineOn = rpm != null && rpm > 0
 
         val instant = InstantTelemetry(
             speedKph = speed, rpm = rpm,
-            coolantC = sample[ObdPid.COOLANT_TEMP], fuelLevelPercent = sample[ObdPid.FUEL_LEVEL],
-            voltage = sample[ObdPid.CONTROL_MODULE_VOLTAGE],
+            coolantC = coolant, fuelLevelPercent = sample[ObdPid.FUEL_LEVEL],
+            voltage = volts,
             fuelFlowLph = flow, economyLPer100Km = economy, accelMps2 = accel,
             fuelCut = fuelCut, idling = idling, eco = eco, overspeed = overspeed,
             warnings = warnings(sample),
             harshAccel = harshAccelEvent.active,
             harshBrake = harshBrakeEvent.active,
+            ecoLevel = if (moving) ecoLevel(sample) else 0,
+            coolantWarning = coolant != null && coolant >= config.coolantWarningC,
+            batteryWarning = engineOn && volts != null && volts !in config.chargingVoltsRange,
+            instantKmPerL = kmPerL,
+            milOn = sample.monitor?.milOn,
+            dtcCount = sample.monitor?.dtcCount,
         )
 
         if (dtS != null && prev != null) integrate(prev, dtS, speed, flow)
@@ -160,7 +199,7 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             maxSpeedKph = speed?.let { maxOf(trip.maxSpeedKph, it) } ?: trip.maxSpeedKph,
         )
         last = Pending(t, speed, flow, instant)
-        return TelemetrySnapshot(t, instant, trip).also { lastSnapshot = it }
+        return TelemetrySnapshot(t, instant, trip, sample.values).also { lastSnapshot = it }
     }
 
     /** Integrates the interval (prev → now) with the trapezoid rule; state flags use the previous sample. */
@@ -185,6 +224,21 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             overspeedS = trip.overspeedS + if (p.overspeed) dtS else 0.0,
             speedZoneS = zones,
         )
+    }
+
+    /**
+     * Petrol/LPG: engine load (PID 04) against [TelemetryConfig.ecoLoadThresholds]. Diesel: boost
+     * (MAP − baro, kPa) against [TelemetryConfig.ecoBoostThresholdsKpa], falling back to load.
+     */
+    private fun ecoLevel(sample: VehicleSample): Int {
+        val diesel = (reportedFuelType ?: vehicle?.fuelType ?: config.defaultFuelType) == FuelType.DIESEL
+        val map = sample[ObdPid.INTAKE_MAP]
+        val (value, bounds) = if (diesel && map != null) {
+            (map - (sample[ObdPid.BAROMETRIC_PRESSURE] ?: STANDARD_BARO_KPA)) to config.ecoBoostThresholdsKpa
+        } else {
+            (sample[ObdPid.ENGINE_LOAD] ?: return 0) to config.ecoLoadThresholds
+        }
+        return 1 + bounds.count { value >= it }
     }
 
     private var reportedFuelType: FuelType? = null
@@ -240,6 +294,7 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
     private companion object {
         const val GAS_CONSTANT = 8.314462618 // J/(mol·K)
         const val MOLAR_MASS_AIR = 0.0289647 // kg/mol
+        const val STANDARD_BARO_KPA = 101.3
     }
 }
 

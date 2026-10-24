@@ -70,6 +70,27 @@ class PidPollerTest {
         assertEquals(83.0, last[ObdPid.COOLANT_TEMP]!!, 0.0)
     }
 
+    @Test fun `MIL state and DTC count read on slow ticks when PID 01 is supported`() = runTest {
+        // 0100 → 01, 0C (bits 1 and 12): 0x80100000
+        val t = FakeObdTransport(responder = {
+            when (it) {
+                "0100" -> "4100" + "80100000"
+                "0101" -> "4101" + "82076500" // MIL on, 2 DTCs
+                "010C" -> "410C0C80"
+                else -> if (it.startsWith("01")) error("unsupported PID $it polled") else FakeObdTransport.defaultResponse(it)
+            }
+        })
+        val conn = Conn(Elm327Session(t))
+        val poller = PidPoller(conn, PollingConfig(fastIntervalMillis = 500, slowEvery = 10), clock = { currentTime })
+        val samples = mutableListOf<VehicleSample>()
+        val job = launch { poller.samples.collect { samples += it } }
+        conn.state.value = connected
+        runCurrent(); advanceTimeBy(5_999); runCurrent()
+        job.cancel()
+        assertEquals(2, t.written.count { it == "0101" }) // ticks 0 and 10
+        assertEquals(io.github.neotheon3.orangebox.core.obd.MonitorStatus(milOn = true, dtcCount = 2), samples.last().monitor)
+    }
+
     @Test fun `stops on disconnect and resumes on reconnect`() = runTest {
         val t = transport()
         val conn = Conn(Elm327Session(t))

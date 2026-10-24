@@ -1,0 +1,123 @@
+package io.github.neotheon3.orangebox.core.dashboardui
+
+import io.github.neotheon3.orangebox.core.obd.Elm327Info
+import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
+import io.github.neotheon3.orangebox.core.obd.ObdProtocol
+import io.github.neotheon3.orangebox.core.obd.pid.ObdPid
+import io.github.neotheon3.orangebox.core.telemetry.InstantTelemetry
+import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
+import io.github.neotheon3.orangebox.core.telemetry.TripTotals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class DashboardStateMapperTest {
+    private val connected = ObdConnectionState.Connected(Elm327Info("ELM327 v1.5", ObdProtocol.CAN_11_500, 12.6))
+
+    private fun instant(
+        speed: Double? = 59.0, rpm: Double? = 1698.0, fuelCut: Boolean = false, overspeed: Boolean = false,
+        harshAccel: Boolean = false, harshBrake: Boolean = false, eco: Int = 1, coolantWarning: Boolean = false,
+        batteryWarning: Boolean = false, kmPerL: Double? = 8.9, mil: Boolean? = false, dtc: Int? = 0,
+    ) = InstantTelemetry(
+        speedKph = speed, rpm = rpm, coolantC = 64.0, fuelLevelPercent = null, voltage = 14.0, fuelFlowLph = 2.0,
+        economyLPer100Km = null, accelMps2 = null, fuelCut = fuelCut, idling = false, eco = true, overspeed = overspeed,
+        warnings = emptySet(), harshAccel = harshAccel, harshBrake = harshBrake, ecoLevel = eco,
+        coolantWarning = coolantWarning, batteryWarning = batteryWarning, instantKmPerL = kmPerL, milOn = mil, dtcCount = dtc,
+    )
+
+    private val trip = TripTotals(durationS = 269.4, distanceKm = 2.04, fuelLitres = 0.229, co2Grams = 529.0, ecoS = 91.0)
+
+    private fun snap(i: InstantTelemetry = instant(), values: Map<ObdPid, Double> = mapOf(ObdPid.RPM to 1698.0)) =
+        TelemetrySnapshot(0, i, trip, values)
+
+    @Test fun `no connection or no data shows placeholders and idle panels`() {
+        val idle = DashboardStateMapper.map(ObdConnectionState.Idle, null)
+        assertEquals(DashboardUiState(), idle)
+        assertEquals("---", idle.rpm); assertEquals("---", idle.speed)
+        assertEquals("--.-", idle.tripKmPerL); assertEquals("--.-", idle.tripKm); assertEquals("-:--:--", idle.tripTime)
+        assertFalse(idle.obdOn)
+        assertEquals(PanelGlow.NONE, idle.leftGlow)
+        assertTrue(idle.detailPages.flatten().all { it.status == TileStatus.NO_DATA && it.value == "---" || it.value == "--.-" })
+        assertEquals("link lost drops live data", DashboardUiState(), DashboardStateMapper.map(ObdConnectionState.LinkLost, snap()))
+        assertTrue("connected, waiting for first sample", DashboardStateMapper.map(connected, null).obdOn)
+    }
+
+    @Test fun `live values are formatted like the legacy cluster`() {
+        val s = DashboardStateMapper.map(connected, snap())
+        assertTrue(s.live); assertTrue(s.obdOn)
+        assertEquals("1698", s.rpm); assertEquals("59", s.speed)
+        // 2.04 km / 0.229 L = 8.908 km/L
+        assertEquals("8.9", s.tripKmPerL)
+        assertEquals("8.9", s.instantKmPerL)
+        assertEquals(8.9f / 30f, s.instantFraction, 1e-4f)
+        assertEquals("0.2", s.fuelUsedL)
+        assertEquals("2.0", s.tripKm)
+        assertEquals("0:04:29", s.tripTime)
+        assertEquals(IndicatorLevel.NORMAL, s.coolant)
+        assertEquals(IndicatorLevel.NORMAL, s.battery)
+    }
+
+    @Test fun `left glow - fuel cut wins over eco tint`() {
+        assertEquals(PanelGlow.FUEL_CUT, DashboardStateMapper.map(connected, snap(instant(fuelCut = true, eco = 4))).leftGlow)
+        assertEquals(PanelGlow.ECO_GREEN, DashboardStateMapper.leftGlow(false, 1))
+        assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(false, 2))
+        assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(false, 3))
+        assertEquals(PanelGlow.ECO_RED, DashboardStateMapper.leftGlow(false, 4))
+        assertEquals(PanelGlow.NONE, DashboardStateMapper.leftGlow(false, 0))
+    }
+
+    @Test fun `right glow - overspeed beats harsh beats none`() {
+        assertEquals(PanelGlow.OVERSPEED, DashboardStateMapper.map(connected, snap(instant(overspeed = true, harshBrake = true))).rightGlow)
+        assertEquals(PanelGlow.HARSH, DashboardStateMapper.map(connected, snap(instant(harshAccel = true))).rightGlow)
+        assertEquals(PanelGlow.HARSH, DashboardStateMapper.map(connected, snap(instant(harshBrake = true))).rightGlow)
+        assertEquals(PanelGlow.NONE, DashboardStateMapper.map(connected, snap()).rightGlow)
+    }
+
+    @Test fun `warnings and MIL`() {
+        val s = DashboardStateMapper.map(connected, snap(instant(coolantWarning = true, batteryWarning = true, mil = true, dtc = 2)))
+        assertEquals(IndicatorLevel.WARNING, s.coolant)
+        assertEquals(IndicatorLevel.WARNING, s.battery)
+        assertTrue(s.milOn); assertEquals(2, s.dtcCount)
+    }
+
+    @Test fun `detail grid - 3 pages of 9, warnings glow red, unsupported vs not read yet`() {
+        val values = mapOf(
+            ObdPid.CONTROL_MODULE_VOLTAGE to 12.0, ObdPid.COOLANT_TEMP to 105.0, ObdPid.SPEED to 0.0, ObdPid.RPM to 791.0,
+            ObdPid.BAROMETRIC_PRESSURE to 101.0,
+        )
+        val active = setOf(ObdPid.CONTROL_MODULE_VOLTAGE, ObdPid.COOLANT_TEMP, ObdPid.SPEED, ObdPid.RPM, ObdPid.BAROMETRIC_PRESSURE, ObdPid.FUEL_LEVEL)
+        val pages = DashboardStateMapper.map(
+            connected, snap(instant(coolantWarning = true, batteryWarning = true, dtc = 2), values), active,
+        ).detailPages
+        assertEquals(listOf(9, 9, 9), pages.map { it.size })
+        val p1 = pages[0]
+        assertEquals(R.string.detail_accel_pedal, p1[0].title)
+        assertEquals(TileStatus.UNSUPPORTED, p1[0].status); assertEquals("---", p1[0].value)
+        assertEquals("not read yet", TileStatus.NO_DATA, p1[1].status)
+        assertEquals("101", p1[2].value)
+        assertEquals("791", p1[4].value)
+        assertEquals(TileStatus.WARNING, p1[6].status); assertEquals("12.0", p1[6].value); assertTrue(p1[6].large)
+        assertEquals(TileStatus.WARNING, p1[7].status); assertEquals("105.0", p1[7].value)
+        assertEquals(TileStatus.WARNING, p1[8].status); assertEquals("2", p1[8].value)
+        val p3 = pages[2]
+        assertEquals("8.9", p3[0].value)
+        assertEquals("0.53", p3[2].value) // 529 g CO2
+        assertEquals("0:01:31", p3[6].value)
+        assertTrue(p3.drop(6).all { it.large && it.status == TileStatus.NORMAL })
+    }
+
+    @Test fun `normal large tiles glow blue`() {
+        val pages = DashboardStateMapper.map(connected, snap(values = mapOf(ObdPid.CONTROL_MODULE_VOLTAGE to 14.0, ObdPid.COOLANT_TEMP to 64.0))).detailPages
+        assertEquals(TileStatus.NORMAL, pages[0][6].status)
+        assertEquals(TileStatus.NORMAL, pages[0][7].status)
+        assertEquals("64.0", pages[0][7].value)
+        assertEquals("0 DTCs", TileStatus.NORMAL, pages[0][8].status)
+    }
+
+    @Test fun `elapsed formatting`() {
+        assertEquals("0:00:00", DashboardStateMapper.elapsed(0.0))
+        assertEquals("1:01:01", DashboardStateMapper.elapsed(3661.9))
+        assertEquals("-:--:--", DashboardStateMapper.elapsed(null))
+    }
+}
