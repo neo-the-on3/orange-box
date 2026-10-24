@@ -164,6 +164,8 @@ strict handlers.
   - a duplicate member name, or a name that differs from a declared
     property only by case (`TRIPS`, `DurationS`), is `422` with a pointer,
     in every object at every depth (including `oneOf` branches);
+  - U+0000 in any string or member name, raw or escaped as `\u0000`, is
+    `422` with a pointer (Postgres `text` can't store it);
   - more than 500,000 JSON values and member names in an upload body, or
     4,096 in any other body, is `413` (`batch_too_large`);
   - more than 64 levels of nesting is `400`.
