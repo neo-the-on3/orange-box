@@ -35,6 +35,8 @@ import io.github.neotheon3.orangebox.feature.setup.OnboardingDestination
 import io.github.neotheon3.orangebox.feature.setup.PermissionsDestination
 import io.github.neotheon3.orangebox.feature.setup.VehicleSetupDestination
 import io.github.neotheon3.orangebox.feature.setup.setupScreens
+import io.github.neotheon3.orangebox.feature.trips.TripsDestination
+import io.github.neotheon3.orangebox.feature.trips.tripsScreen
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
@@ -66,7 +68,9 @@ fun OrangeBoxNavHost(
                 onOpenSettings = { navController.navigate(SettingsDestination) { launchSingleTop = true } },
                 onOpenDashboard = { navController.openDashboard() },
                 extraMenuEntries = { debugEntries.homeMenuEntries(navController) },
+                onOpenTrips = { navController.navigate(TripsDestination) { launchSingleTop = true } },
             )
+            tripsScreen(onBack = { navController.popBackStack() })
             dashboardScreen(
                 onEndDriving = { navController.returnHome() },
                 onBack = { navController.returnHome() },

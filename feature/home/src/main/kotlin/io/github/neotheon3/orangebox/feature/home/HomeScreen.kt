@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -43,6 +44,7 @@ fun HomeRoute(
     onOpenSettings: () -> Unit,
     onOpenDashboard: () -> Unit,
     extraMenuEntries: List<HomeMenuEntry> = emptyList(),
+    onOpenTrips: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -51,6 +53,7 @@ fun HomeRoute(
         onOpenSettings = onOpenSettings,
         onOpenDashboard = onOpenDashboard,
         extraMenuEntries = extraMenuEntries,
+        onOpenTrips = onOpenTrips,
         onObdConnect = viewModel::onConnect,
         onObdRetry = viewModel::onRetry,
         onObdDisconnect = viewModel::onDisconnect,
@@ -67,12 +70,16 @@ fun HomeScreen(
     onObdConnect: () -> Unit = {},
     onObdRetry: () -> Unit = {},
     onObdDisconnect: () -> Unit = {},
+    onOpenTrips: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.home_title)) },
                 actions = {
+                    IconButton(onClick = onOpenTrips, modifier = Modifier.testTag("home_trips")) {
+                        Icon(Icons.Filled.DateRange, contentDescription = stringResource(R.string.home_open_trips))
+                    }
                     IconButton(onClick = onOpenSettings, modifier = Modifier.testTag("home_settings")) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.home_open_settings))
                     }

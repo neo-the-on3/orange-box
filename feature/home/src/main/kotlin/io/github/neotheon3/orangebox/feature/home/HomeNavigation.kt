@@ -12,8 +12,9 @@ fun NavGraphBuilder.homeScreen(
     onOpenSettings: () -> Unit,
     onOpenDashboard: () -> Unit,
     extraMenuEntries: @Composable () -> List<HomeMenuEntry> = { emptyList() },
+    onOpenTrips: () -> Unit = {},
 ) {
     composable<HomeDestination> {
-        HomeRoute(onOpenSettings = onOpenSettings, onOpenDashboard = onOpenDashboard, extraMenuEntries = extraMenuEntries())
+        HomeRoute(onOpenSettings = onOpenSettings, onOpenDashboard = onOpenDashboard, extraMenuEntries = extraMenuEntries(), onOpenTrips = onOpenTrips)
     }
 }
