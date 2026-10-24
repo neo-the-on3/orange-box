@@ -26,6 +26,25 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # Postgres for the integration tests in internal/db and cmd/server
+    # (they skip without DATABASE_URL). Pinned by digest; postgres:17 =
+    # 17.11. The superuser has CREATEDB, which the tests need for their
+    # throwaway databases. The password guards nothing: the container lives
+    # only for this job.
+    services:
+      postgres:
+        image: postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
+        env:
+          POSTGRES_USER: orangebox
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: orangebox
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orangebox -d orangebox"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -46,7 +65,11 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: go test
+      - name: go test (with Postgres)
+        env:
+          DATABASE_URL: postgres://orangebox:ci-only@localhost:5432/orangebox?sslmode=disable
+          # Fail, rather than skip, any Postgres test that can't reach it.
+          REQUIRE_DATABASE_TESTS: "true"
         run: go test -race ./...
 
       - name: golangci-lint
