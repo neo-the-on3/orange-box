@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -23,6 +26,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -49,47 +54,64 @@ private fun event(on: Boolean) =
 /** Left cluster: FUEL-CUT header lamp, RPM meter, COOLANT / BATTERY / ECO lamps. */
 @Composable
 fun RpmCluster(state: DashboardUiState, modifier: Modifier = Modifier, meterMax: TextUnit = DashboardType.MeterMax, compact: Boolean = false) {
-    ClusterPanel(state.leftGlow, modifier.testTag("cluster_rpm"), contentPadding = if (compact) 8.dp else 14.dp) {
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-            HeaderLamp(
-                DashboardIcons.FuelDrop, stringResource(R.string.dashboard_fuel_cut),
-                LampState(state.fuelCut, DashboardColors.FuelCut),
-            )
-            MeterText(
-                state.rpm, stringResource(R.string.dashboard_unit_rpm),
-                stringResource(R.string.dashboard_spoken_rpm, state.rpm),
-                Modifier.fillMaxWidth().weight(1f, fill = false).testTag("meter_rpm"), max = meterMax,
-            )
-            if (!compact) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    Lamp(DashboardIcons.Coolant, stringResource(R.string.dashboard_coolant), indicator(state.coolant))
-                    Lamp(DashboardIcons.Battery, stringResource(R.string.dashboard_battery), indicator(state.battery))
-                    Lamp(DashboardIcons.EcoLeaf, stringResource(R.string.dashboard_eco), eco(state.ecoLevel))
-                }
-            }
-        }
+    Cluster(
+        glow = state.leftGlow, tag = "rpm", modifier = modifier, compact = compact, meterMax = meterMax,
+        header = { HeaderLamp(DashboardIcons.FuelDrop, stringResource(R.string.dashboard_fuel_cut), LampState(state.fuelCut, DashboardColors.FuelCut)) },
+        value = state.rpm, unit = stringResource(R.string.dashboard_unit_rpm),
+        spoken = stringResource(R.string.dashboard_spoken_rpm, state.rpm),
+    ) {
+        Lamp(DashboardIcons.Coolant, stringResource(R.string.dashboard_coolant), indicator(state.coolant), Modifier.weight(1f))
+        Lamp(DashboardIcons.Battery, stringResource(R.string.dashboard_battery), indicator(state.battery), Modifier.weight(1f))
+        Lamp(DashboardIcons.EcoLeaf, stringResource(R.string.dashboard_eco), eco(state.ecoLevel), Modifier.weight(1f))
     }
 }
 
 /** Right cluster: OVERSPEED header lamp, speed meter, ACCEL. / BRAKE / IDLING lamps. */
 @Composable
 fun SpeedCluster(state: DashboardUiState, modifier: Modifier = Modifier, meterMax: TextUnit = DashboardType.MeterMax, compact: Boolean = false) {
-    ClusterPanel(state.rightGlow, modifier.testTag("cluster_speed"), contentPadding = if (compact) 8.dp else 14.dp) {
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-            HeaderLamp(
-                DashboardIcons.OverspeedGauge, stringResource(R.string.dashboard_overspeed),
-                LampState(state.overspeed, DashboardColors.Overspeed),
-            )
-            MeterText(
-                state.speed, stringResource(R.string.dashboard_unit_kmh),
-                stringResource(R.string.dashboard_spoken_speed, state.speed),
-                Modifier.fillMaxWidth().weight(1f, fill = false).testTag("meter_speed"), max = meterMax,
-            )
-            if (!compact) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    Lamp(DashboardIcons.AccelCar, stringResource(R.string.dashboard_accel), event(state.harshAccel))
-                    Lamp(DashboardIcons.BrakeCar, stringResource(R.string.dashboard_brake), event(state.harshBrake))
-                    Lamp(DashboardIcons.Idling, stringResource(R.string.dashboard_idling), event(state.idling))
+    Cluster(
+        glow = state.rightGlow, tag = "speed", modifier = modifier, compact = compact, meterMax = meterMax,
+        header = { HeaderLamp(DashboardIcons.OverspeedGauge, stringResource(R.string.dashboard_overspeed), LampState(state.overspeed, DashboardColors.Overspeed)) },
+        value = state.speed, unit = stringResource(R.string.dashboard_unit_kmh),
+        spoken = stringResource(R.string.dashboard_spoken_speed, state.speed),
+    ) {
+        Lamp(DashboardIcons.AccelCar, stringResource(R.string.dashboard_accel), event(state.harshAccel), Modifier.weight(1f))
+        Lamp(DashboardIcons.BrakeCar, stringResource(R.string.dashboard_brake), event(state.harshBrake), Modifier.weight(1f))
+        Lamp(DashboardIcons.Idling, stringResource(R.string.dashboard_idling), event(state.idling), Modifier.weight(1f))
+    }
+}
+
+/**
+ * Shared cluster layout. Square-ish panels (landscape) stack header / meter / lamps like the legacy
+ * cluster; wide, short panels (portrait, ≥ 1.6:1) put the lamps bottom-left and the meter on the right
+ * so the number keeps the full height.
+ */
+@Composable
+private fun Cluster(
+    glow: PanelGlow,
+    tag: String,
+    modifier: Modifier,
+    compact: Boolean,
+    meterMax: TextUnit,
+    header: @Composable () -> Unit,
+    value: String,
+    unit: String,
+    spoken: String,
+    lamps: @Composable RowScope.() -> Unit,
+) {
+    ClusterPanel(glow, modifier.testTag("cluster_$tag"), contentPadding = if (compact) 8.dp else 12.dp) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val wide = maxWidth > maxHeight * 1.6f
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                header()
+                if (wide && !compact) {
+                    Row(Modifier.fillMaxWidth().weight(1f), verticalAlignment = Alignment.Bottom) {
+                        Row(Modifier.weight(1f), content = lamps)
+                        MeterText(value, unit, spoken, Modifier.weight(1.1f).fillMaxHeight().testTag("meter_$tag"), max = meterMax)
+                    }
+                } else {
+                    MeterText(value, unit, spoken, Modifier.fillMaxWidth().weight(1f).testTag("meter_$tag"), max = meterMax)
+                    if (!compact) Row(Modifier.fillMaxWidth(), content = lamps)
                 }
             }
         }
@@ -105,31 +127,36 @@ fun ConnectChips(state: DashboardUiState, modifier: Modifier = Modifier, vertica
     } else {
         LampState(false, DashboardColors.LampOff)
     }
-    val chips: @Composable () -> Unit = {
-        Chip(DashboardIcons.MilEngine, stringResource(R.string.dashboard_mil), milState)
-        Chip(DashboardIcons.ObdPlug, stringResource(R.string.dashboard_obd), LampState(state.obdOn, DashboardColors.Obd))
-    }
+    val mil = stringResource(R.string.dashboard_mil)
+    val obd = stringResource(R.string.dashboard_obd)
+    val obdState = LampState(state.obdOn, DashboardColors.Obd)
     val m = modifier
         .background(DashboardColors.CardFill, shape)
         .border(1.dp, DashboardColors.CardRim, shape)
         .padding(4.dp)
         .testTag("connect_chips")
     if (vertical) {
-        Column(m, verticalArrangement = Arrangement.SpaceEvenly, horizontalAlignment = Alignment.CenterHorizontally) { chips() }
+        Column(m, verticalArrangement = Arrangement.spacedBy(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Chip(DashboardIcons.MilEngine, mil, milState, Modifier.fillMaxWidth())
+            Chip(DashboardIcons.ObdPlug, obd, obdState, Modifier.fillMaxWidth())
+        }
     } else {
-        Row(m, horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) { chips() }
+        Row(m, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Chip(DashboardIcons.MilEngine, mil, milState, Modifier.weight(1f))
+            Chip(DashboardIcons.ObdPlug, obd, obdState, Modifier.weight(1f))
+        }
     }
 }
 
 @Composable
-private fun Chip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, state: LampState) {
+private fun Chip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, state: LampState, modifier: Modifier) {
     val spoken = state.stateLabel ?: stringResource(if (state.on) R.string.dashboard_state_on else R.string.dashboard_state_off)
     val tint = if (state.on) state.color else DashboardColors.LampOff
     Column(
-        Modifier
+        modifier
             .heightIn(min = 40.dp)
             .border(1.dp, tint.copy(alpha = if (state.on) 0.9f else 0.4f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .padding(horizontal = 4.dp, vertical = 2.dp)
             .clearAndSetSemantics { contentDescription = "$label, $spoken" },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -142,16 +169,27 @@ private fun Chip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: S
     }
 }
 
-/** FUEL card: trip km/L, instant bar 0–30, litres used. */
+/**
+ * FUEL card: trip km/L, instant bar 0–30, litres used. Value rows share the card height; the bar's
+ * tick labels are dropped when the card is too short for them (small landscape phones, large fonts).
+ */
 @Composable
 fun FuelCard(state: DashboardUiState, modifier: Modifier = Modifier) {
-    CenterCard(stringResource(R.string.dashboard_fuel), DashboardIcons.FuelPump, modifier.testTag("card_fuel")) {
-        ValueWithUnit(
-            state.tripKmPerL, stringResource(R.string.dashboard_unit_kml),
-            stringResource(R.string.dashboard_spoken_economy, state.tripKmPerL, state.instantKmPerL),
-        )
-        FuelBar(state.instantFraction, Modifier.padding(vertical = 3.dp))
-        ValueWithUnit(state.fuelUsedL, stringResource(R.string.dashboard_unit_l), stringResource(R.string.dashboard_spoken_fuel_used, state.fuelUsedL))
+    BoxWithConstraints(modifier.testTag("card_fuel")) {
+        val fontScale = LocalDensity.current.fontScale
+        val showTicks = maxHeight == Dp.Infinity || maxHeight >= 112.dp * fontScale
+        CenterCard(stringResource(R.string.dashboard_fuel), DashboardIcons.FuelPump, Modifier.fillMaxWidth().then(if (maxHeight == Dp.Infinity) Modifier else Modifier.fillMaxHeight())) {
+            ValueWithUnit(
+                state.tripKmPerL, stringResource(R.string.dashboard_unit_kml),
+                stringResource(R.string.dashboard_spoken_economy, state.tripKmPerL, state.instantKmPerL),
+                Modifier.weight(1f),
+            )
+            FuelBar(state.instantFraction, Modifier.padding(vertical = 2.dp), showTicks = showTicks)
+            ValueWithUnit(
+                state.fuelUsedL, stringResource(R.string.dashboard_unit_l),
+                stringResource(R.string.dashboard_spoken_fuel_used, state.fuelUsedL), Modifier.weight(1f),
+            )
+        }
     }
 }
 
@@ -160,9 +198,9 @@ fun FuelCard(state: DashboardUiState, modifier: Modifier = Modifier) {
 fun TripCard(state: DashboardUiState, modifier: Modifier = Modifier) {
     val spoken = stringResource(R.string.dashboard_spoken_trip, state.tripKm, state.tripTime)
     CenterCard(stringResource(R.string.dashboard_trip), DashboardIcons.TripDoc, modifier.testTag("card_trip")) {
-        Column(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = spoken }) {
-            ValueWithUnit(state.tripKm, stringResource(R.string.dashboard_unit_km), spoken)
-            ValueWithUnit(state.tripTime, "", spoken)
+        Column(Modifier.fillMaxWidth().weight(1f).clearAndSetSemantics { contentDescription = spoken }) {
+            ValueWithUnit(state.tripKm, stringResource(R.string.dashboard_unit_km), spoken, Modifier.weight(1f))
+            ValueWithUnit(state.tripTime, "", spoken, Modifier.weight(1f))
         }
     }
 }

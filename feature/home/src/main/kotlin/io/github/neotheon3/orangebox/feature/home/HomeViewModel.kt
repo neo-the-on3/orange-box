@@ -15,12 +15,16 @@ import kotlinx.coroutines.flow.stateIn
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySource
 import javax.inject.Inject
+import io.github.neotheon3.orangebox.core.dashboardui.DashboardStateMapper
+import io.github.neotheon3.orangebox.core.dashboardui.DashboardUiState
 
 data class HomeUiState(
     val backend: BackendConfig = BackendConfig(),
     val loading: Boolean = true,
     val obd: ObdConnectionState = ObdConnectionState.Idle,
     val live: TelemetrySnapshot? = null,
+    /** Same mapping as the driving dashboard, so Home and dashboard show identical values. */
+    val dashboard: DashboardUiState = DashboardUiState(),
 ) {
     val showRemoteWarning: Boolean
         get() = !loading && backend.mode == BackendMode.REMOTE && !backend.isRemoteReady
@@ -33,7 +37,10 @@ class HomeViewModel @Inject constructor(
     telemetry: TelemetrySource,
 ) : ViewModel() {
     val uiState: StateFlow<HomeUiState> = combine(backendConfigRepository.config, obd.state, telemetry.latest) { backend, obdState, live ->
-        HomeUiState(backend = backend, loading = false, obd = obdState, live = live)
+        HomeUiState(
+            backend = backend, loading = false, obd = obdState, live = live,
+            dashboard = DashboardStateMapper.map(obdState, live),
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
     fun onConnect() = obd.connect()

@@ -30,7 +30,7 @@ class ObdStatusCardTest {
     private val obd = FakeObdConnection()
     private val vm by lazy { HomeViewModel(FakeBackendConfigRepository(), obd, io.github.neotheon3.orangebox.core.testing.FakeTelemetrySource()) }
 
-    private fun render() = compose.setContent { OrangeBoxTheme { HomeRoute(onOpenSettings = {}, viewModel = vm) } }
+    private fun render() = compose.setContent { OrangeBoxTheme { HomeRoute(onOpenSettings = {}, onOpenDashboard = {}, viewModel = vm) } }
 
     @Test fun `idle shows connect which calls connect`() {
         render()

@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var launchOverrides: LaunchOverrides
     @Inject lateinit var debugEntries: DebugEntries
     @Inject lateinit var appPreferences: AppPreferencesRepository
+    @Inject lateinit var driveSession: io.github.neotheon3.orangebox.core.driving.DriveSession
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -28,7 +29,7 @@ class MainActivity : ComponentActivity() {
             OrangeBoxTheme {
                 // Null until DataStore answers (a few ms); the NavHost waits so its start destination is right.
                 val prefs by appPreferences.preferences.collectAsStateWithLifecycle(initialValue = null)
-                prefs?.let { OrangeBoxNavHost(debugEntries = debugEntries, showOnboarding = !it.onboardingComplete) }
+                prefs?.let { OrangeBoxNavHost(debugEntries = debugEntries, showOnboarding = !it.onboardingComplete, driveSession = driveSession) }
             }
         }
     }

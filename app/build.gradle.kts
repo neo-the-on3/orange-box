@@ -79,6 +79,8 @@ dependencies {
     implementation(project(":feature:home"))
     implementation(project(":feature:settings"))
     implementation(project(":feature:setup"))
+    implementation(project(":feature:driving"))
+    implementation(project(":core:driving"))
     implementation(project(":core:database"))
     implementation(project(":core:common"))
     implementation(project(":core:obd"))

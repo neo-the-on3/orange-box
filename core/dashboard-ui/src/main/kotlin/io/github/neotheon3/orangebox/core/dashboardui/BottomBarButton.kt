@@ -30,6 +30,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.ui.text.TextStyle
 
 /** Minimum bottom-bar target (issue #98: ≥ 56 dp). */
 val BottomBarButtonSize: Dp = 56.dp
@@ -84,7 +89,7 @@ fun BottomBarToggle(
             .padding(4.dp)
             .background(if (selected) DashboardColors.DetailButtonOn else Color(0xFF151515), RoundedCornerShape(9.dp))
             .border(1.dp, DashboardColors.CardRim, RoundedCornerShape(9.dp))
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -92,7 +97,12 @@ fun BottomBarToggle(
             Icon(icon, contentDescription = null, tint = DashboardColors.Text, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
         }
-        Text(label, color = DashboardColors.Text, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(
+            label,
+            style = TextStyle(color = DashboardColors.Text, fontWeight = FontWeight.Medium),
+            maxLines = 1,
+            autoSize = TextAutoSize.StepBased(minFontSize = with(LocalDensity.current) { 10.dp.toSp() }, maxFontSize = 16.sp, stepSize = 0.5.sp),
+        )
     }
 }
 

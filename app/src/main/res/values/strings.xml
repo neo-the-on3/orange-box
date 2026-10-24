@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Orange Box</string>
+    <string name="drive_ended">Drive ended</string>
+    <string name="drive_ended_undo">Undo</string>
 </resources>

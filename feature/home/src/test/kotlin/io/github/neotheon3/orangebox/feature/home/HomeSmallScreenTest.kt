@@ -27,7 +27,7 @@ import org.robolectric.annotation.Config
 class HomeSmallScreenTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun `live data rows below the fold can be scrolled into view`() {
+    @Test fun `mini dashboard rows below the fold can be scrolled into view`() {
         val engine = TelemetryEngine()
         // Coasting at 60 km/h with a low battery so the fuel-cut row and a warning are shown too.
         engine.onSample(VehicleSample(0, mapOf(ObdPid.SPEED to 60.0, ObdPid.RPM to 2000.0, ObdPid.THROTTLE to 0.0)))
@@ -45,11 +45,14 @@ class HomeSmallScreenTest {
             loading = false,
             obd = ObdConnectionState.Connected(Elm327Info("ELM327 v1.5", ObdProtocol.CAN_11_500, 14.1)),
             live = snap,
+            dashboard = io.github.neotheon3.orangebox.core.dashboardui.DashboardStateMapper.map(
+                ObdConnectionState.Connected(Elm327Info("ELM327 v1.5", ObdProtocol.CAN_11_500, 14.1)), snap,
+            ),
         )
         compose.setContent { OrangeBoxTheme { HomeScreen(state, onOpenSettings = {}) } }
         // Home must be a vertical scroll container (it was a plain Column before the fix).
         compose.onNodeWithTag("home_scroll").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
-        listOf("home_live_economy", "home_live_trip", "home_live_fuel_cut", "home_live_warning_low_battery").forEach {
+        listOf("home_live_lamps", "home_live_trip", "home_live_fuel_flow", "home_live_warning_low_battery").forEach {
             compose.onNodeWithTag(it).performScrollTo().assertIsDisplayed()
         }
         // …and at 640 dp the content really is taller than the screen.
