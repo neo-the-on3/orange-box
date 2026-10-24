@@ -123,9 +123,10 @@ type GetVehicleForUpdateParams struct {
 	ID       uuid.UUID
 }
 
-// DELETE /v1/vehicles/{id}: locks the live vehicle so the If-Match check,
-// the delete and a cascade happen against the version that is deleted. A
-// concurrent PATCH waits, then finds no live row.
+// PATCH and DELETE /v1/vehicles/{id}: locks the live vehicle so the
+// If-Match check and the write (and a cascade) happen against the version
+// they replace. Concurrent writers wait their turn; after a delete they
+// find no live row.
 func (q *Queries) GetVehicleForUpdate(ctx context.Context, arg GetVehicleForUpdateParams) (Vehicle, error) {
 	row := q.db.QueryRow(ctx, getVehicleForUpdate, arg.MemberID, arg.ID)
 	var i Vehicle

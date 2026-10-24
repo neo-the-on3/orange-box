@@ -28,7 +28,7 @@ func NewVehicles(pool *pgxpool.Pool) *Vehicles {
 	return &Vehicles{pool: pool, q: dbgen.New(pool)}
 }
 
-// maxAttempts bounds the retry loops that settle races.
+// maxAttempts bounds CreateVehicle's retry when it races a tombstone purge.
 const maxAttempts = 5
 
 // CreateVehicle implements store.Vehicles. Concurrent creates with the same
@@ -101,37 +101,47 @@ func (s *Vehicles) ListVehicles(ctx context.Context, member uuid.UUID, includeAr
 	return out, nil
 }
 
-// UpdateVehicle implements store.Vehicles with optimistic concurrency: the
-// write only applies to the version check saw.
+// UpdateVehicle implements store.Vehicles. The row is locked for the
+// whole read-check-write, as in DeleteVehicle, so concurrent patches (and a
+// delete) take turns: each check sees the version it writes over, an
+// If-Match: * patch never fails for losing a race, and none is lost.
 func (s *Vehicles) UpdateVehicle(ctx context.Context, member, id uuid.UUID, check func(store.Vehicle) error, patch func(store.VehicleFields) store.VehicleFields) (store.Vehicle, error) {
-	for range maxAttempts {
-		cur, err := s.GetVehicle(ctx, member, id)
-		if err != nil {
-			return store.Vehicle{}, err
+	var out store.Vehicle
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		row, err := q.GetVehicleForUpdate(ctx, dbgen.GetVehicleForUpdateParams{MemberID: member, ID: id})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ErrNotFound
 		}
+		if err != nil {
+			return err
+		}
+		cur := toVehicle(row)
 		if err := check(cur); err != nil {
-			return store.Vehicle{}, err
+			return err
 		}
 		next := patch(cur.VehicleFields)
 		if reflect.DeepEqual(next, cur.VehicleFields) { // compares the values pointed to
-			return cur, nil // nothing changed: same version, same ETag
+			out = cur // nothing changed: same version, same ETag
+			return nil
 		}
 		p, err := updateParams(next)
 		if err != nil {
-			return store.Vehicle{}, err
+			return err
 		}
 		p.MemberID, p.ID, p.ExpectedVersion = member, id, cur.Version
-		row, err := s.q.UpdateVehicle(ctx, p)
-		if err == nil {
-			return toVehicle(row), nil
+		updated, err := q.UpdateVehicle(ctx, p)
+		if err != nil {
+			// No row can't happen under the lock; report it rather than retry.
+			return fmt.Errorf("update vehicle: %w", err)
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return store.Vehicle{}, err
-		}
-		// Changed or deleted since we read it: start over, so check sees
-		// the new version (a specific If-Match then fails) or the delete.
+		out = toVehicle(updated)
+		return nil
+	})
+	if err != nil {
+		return store.Vehicle{}, err
 	}
-	return store.Vehicle{}, errors.New("vehicles: update kept losing races; retry")
+	return out, nil
 }
 
 // DeleteVehicle implements store.Vehicles.
