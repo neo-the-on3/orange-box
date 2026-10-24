@@ -79,8 +79,10 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `REQUEST_TIMEOUT`  | `30s`        | Per-request context deadline. |
 | `SHUTDOWN_TIMEOUT` | `8s`         | Graceful shutdown budget (inside Docker's 10 s stop grace). |
 | `LOG_LEVEL`        | `info`       | `debug`, `info`, `warn` or `error`. |
-| `UPLOAD_CONCURRENCY` | `4`        | Upload bodies processed at once (1–256). |
+| `UPLOAD_CONCURRENCY` | `2`        | Upload bodies processed at once (1–256). Sized for a 512 MB host; see below. |
 | `UPLOAD_QUEUE_WAIT`  | `2s`       | How long an upload waits for a slot before `503 uploads_busy`. |
+| `UPLOAD_READ_TIMEOUT` | `10s`     | How long an upload body may take to arrive once it has a slot; then `408 request_timeout`. Send large batches gzipped (1 MiB max). |
+| `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
 | `DATABASE_URL`     | none         | Postgres DSN (planned, #105). |
 
 Keep local values in a `.env` (git-ignored); never commit secrets. To make a
@@ -111,7 +113,20 @@ strict handlers.
   requests can't make the server buffer or inflate anything.
 - At most `UPLOAD_CONCURRENCY` upload bodies are read, inflated and
   validated at once; a further upload waits up to `UPLOAD_QUEUE_WAIT`, then
-  gets `503` (`uploads_busy`) with `Retry-After`.
+  gets `503` (`uploads_busy`) with `Retry-After`. Each member may have one
+  upload in flight; a second one gets `429` (`upload_in_progress`) with
+  `Retry-After: 1`. An upload body must arrive within `UPLOAD_READ_TIMEOUT`
+  of getting its slot, else `408` (`request_timeout`).
+- Before decoding, the JSON body is pre-scanned once without allocating:
+  an array longer than its schema's `maxItems` is `422` with a pointer
+  (e.g. `/trips`) after reading at most `maxItems + 1` of its elements;
+  more than 500,000 JSON values in total is `413` (`batch_too_large`); more
+  than 64 levels of nesting is `400`. Validation fails fast on bodies over
+  8 KiB (the `422` lists the first invalid field); smaller bodies list up to
+  20. Together these bound the cost of a request: the worst legitimate
+  8 MiB upload measured ~125 MB peak RSS and under 1 s.
+- Memory sizing: with the defaults (2 upload slots, `GOMEMLIMIT=400MiB`)
+  the server fits a 512 MB host.
 
 - `X-Request-Id`: a client UUID is echoed, otherwise a UUIDv7 is generated.
   Every problem carries it as `requestId`.

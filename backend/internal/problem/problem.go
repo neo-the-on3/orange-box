@@ -40,6 +40,8 @@ const (
 	CodeEmailUnavailable    = "email_sign_in_unavailable"
 	CodeNotImplemented      = "not_implemented"
 	CodeUploadsBusy         = "uploads_busy"
+	CodeUploadInProgress    = "upload_in_progress"
+	CodeRequestTimeout      = "request_timeout"
 	CodeInternal            = "internal_error"
 )
 
