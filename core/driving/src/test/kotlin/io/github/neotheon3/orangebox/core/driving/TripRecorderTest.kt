@@ -141,6 +141,28 @@ class TripRecorderTest {
         assertEquals(2.0, r.recorder.active.value!!.totals.distanceKm, 0.03)
     }
 
+    @Test fun `a poll stall longer than the grace on a live link does not end the trip (#142)`() = runTest {
+        val r = rig()
+        r.drive(1, 50.0, 1500.0)
+        r.drive(20, 50.0, 1500.0)
+        // Still Connected, but no samples arrive for 90 s (busy ELM327 / stalled device).
+        r.scope.advanceTimeBy(90_000); r.scope.runCurrent()
+        assertNull(r.trips.rows.values.single().endedAtMillis)
+        r.drive(10, 50.0, 1500.0) // polling resumes with the engine running: same trip
+        assertEquals(1, r.trips.rows.size)
+        assertNull(r.trips.rows.values.single().endedAtMillis)
+    }
+
+    @Test fun `after a stall the trip ends as engine_off once rpm 0 is read`() = runTest {
+        val r = rig()
+        r.drive(1, 50.0, 1500.0)
+        r.drive(10, 50.0, 1500.0)
+        r.scope.advanceTimeBy(40_000); r.scope.runCurrent() // stall
+        assertNull(r.trips.rows.values.single().endedAtMillis)
+        r.drive(2, 0.0, 0.0) // the first samples after the stall read the engine off
+        assertEquals(TripRecorder.END_ENGINE_OFF, r.trips.rows.values.single().endReason)
+    }
+
     @Test fun `link lost for longer than the grace ends the trip as disconnected`() = runTest {
         val r = rig()
         r.drive(10, 72.0, 2000.0)

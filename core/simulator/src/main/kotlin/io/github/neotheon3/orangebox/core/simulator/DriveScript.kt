@@ -108,15 +108,17 @@ class DriveScriptPlayer(
     fun start(script: DriveScript) {
         job?.cancel()
         controller.update { it.copy(engineOn = true, runningScript = script.id) }
+        val startedAt = clock()
+        fun frame(): DriveFrame = script.frameAt(((clock() - startedAt) / 1000.0).coerceIn(0.0, script.durationS))
+        // The dongle evaluates the script at each read (#142); the loop below only refreshes the UI state.
+        controller.motion = { frame().let { f -> SimulatorController.Motion(f.speedKph.roundToInt(), f.rpm, f.throttlePercent) } }
         job = scope.launch {
-            val startedAt = clock()
             while (true) {
-                val t = (clock() - startedAt) / 1000.0
-                val f = script.frameAt(t.coerceAtMost(script.durationS))
+                val f = frame()
                 controller.update {
                     it.copy(speedKph = f.speedKph.roundToInt(), rpm = f.rpm, throttlePercent = f.throttlePercent)
                 }
-                if (t >= script.durationS) break
+                if (f.tS >= script.durationS) break
                 delay(tickMillis)
             }
             controller.update { it.copy(runningScript = null) }
@@ -129,19 +131,28 @@ class DriveScriptPlayer(
         val wasRunning = job?.isActive == true
         job?.cancel()
         job = null
+        if (!wasRunning) controller.motion = null
         controller.update { if (it.runningScript == null) it else it.copy(runningScript = null, throttlePercent = 0) }
         if (wasRunning) job = scope.launch { coastToIdle() }
     }
 
     /** Speed falls linearly with elapsed [clock] time, so a late tick can't slow the deceleration. */
     private suspend fun coastToIdle() {
-        val v0 = controller.state.value.speedKph.toDouble()
+        val v0 = controller.readState().speedKph.toDouble()
         val startedAt = clock()
-        while (true) {
-            val v = (v0 - decayKphPerSecond * (clock() - startedAt) / 1000.0).coerceAtLeast(0.0)
-            controller.update { it.copy(speedKph = v.roundToInt(), rpm = DriveScript.gearRpm(v), throttlePercent = 0) }
-            if (v <= 0.0) break
-            delay(tickMillis)
+        fun speed() = (v0 - decayKphPerSecond * (clock() - startedAt) / 1000.0).coerceAtLeast(0.0)
+        val motion = { speed().let { v -> SimulatorController.Motion(v.roundToInt(), DriveScript.gearRpm(v), 0) } }
+        controller.motion = motion
+        try {
+            while (true) {
+                val v = speed()
+                controller.update { it.copy(speedKph = v.roundToInt(), rpm = DriveScript.gearRpm(v), throttlePercent = 0) }
+                if (v <= 0.0) break
+                delay(tickMillis)
+            }
+        } finally {
+            // Only if a newer start()/coast has not installed its own motion meanwhile.
+            if (controller.motion === motion) controller.motion = null
         }
     }
 }

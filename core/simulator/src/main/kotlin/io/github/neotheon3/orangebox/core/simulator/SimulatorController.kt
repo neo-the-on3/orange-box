@@ -14,6 +14,27 @@ class SimulatorController(initial: SimulatorState = SimulatorState()) {
 
     fun set(state: SimulatorState) { _state.value = state }
 
+    /**
+     * Speed / RPM / throttle of a playing drive script, evaluated at the moment of the call. Set by
+     * [DriveScriptPlayer] while it plays or coasts, null otherwise.
+     */
+    @Volatile var motion: (() -> Motion)? = null
+
+    /** Car motion the simulated dongle reports. */
+    data class Motion(val speedKph: Int, val rpm: Int, val throttlePercent: Int)
+
+    /**
+     * What the simulated dongle answers with *now*: [state], with the playing script's motion evaluated
+     * at the time of the read. The [state] flow only gets the player's periodic refresh (for the UI);
+     * reading it would answer with a value up to one (possibly overrunning) tick old while the app stamps
+     * the sample with the read time, which skewed accelerations on slow devices (#142).
+     */
+    fun readState(): SimulatorState {
+        val s = _state.value
+        val m = motion?.invoke() ?: return s
+        return s.copy(speedKph = m.speedKph, rpm = m.rpm, throttlePercent = m.throttlePercent)
+    }
+
     fun reset() { _state.value = SimulatorState() }
 
     fun addPendingDtc(code: String): Boolean = addDtc(code, DtcList.PENDING)

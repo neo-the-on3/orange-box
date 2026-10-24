@@ -14,7 +14,7 @@ class SimulatedElm327(private val controller: SimulatorController) {
     private var searched = false
 
     fun respond(command: String): String {
-        val s = controller.state.value
+        val s = controller.readState()
         val cmd = command.trim().uppercase().replace(" ", "")
         return when {
             cmd == "ATZ" -> { searched = false; "ELM327 v1.5" }
