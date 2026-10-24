@@ -38,13 +38,24 @@ and validated. Implemented so far:
   UTC milliseconds. Pages carry an opaque `nextCursor`; the last page of an
   unfiltered walk carries `nextSince`. A token that a tombstone purge has
   overtaken, or one from another member or deployment, gets `400
-  sync_window_expired` (do a full walk). Without `DATABASE_URL` they answer
-  `501`.
+  sync_window_expired` (do a full walk). `updatedAt` only moves forward
+  (wall clock at write time, milliseconds, at least 1 ms past the previous
+  value). `/v1/trips/days` computes local days with the Go time zone
+  database embedded in the binary, so aliases such as `Asia/Calcutta` work.
+  A deleted trip's item in a replayed batch comes back as `trip_deleted`.
+  Without `DATABASE_URL` they answer `501`.
+- Server-side trip size limits the spec doesn't state yet (proposed on
+  #161; `internal/httpapi/limits.go`), enforced like schema limits (`422`
+  with a pointer): `vehicleId` ≤ 64 characters, `app.version` ≤ 64,
+  `app.os` ≤ 32, `app.osVersion` ≤ 128, `speedBands` ≤ 32 items, each `dtc`
+  list ≤ 128 codes; a trip is at most 16 KiB of JSON, and a page of trips
+  ends early (with a cursor) before 512 KiB.
 - `Idempotency-Key` on every operation that declares it (`POST /v1/vehicles`
   and `POST /v1/trips/batch` so far): a retry with the same key and
   request gets the stored response, another request under the key `422
   idempotency_key_reused`, a retry while the first runs `409
-  idempotency_in_flight`. Needs Postgres; without it the header is only
+  idempotency_in_flight` (also on uploads, where a different upload in flight
+  gets `429 upload_in_progress`). Needs Postgres; without it the header is only
   validated.
 - Every other operation answers `501` (`code=not_implemented`) after routing,
   auth and validation, so clients and contract tests see the real shapes.
