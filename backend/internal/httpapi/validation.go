@@ -116,6 +116,9 @@ func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadRe
 	if err != nil {
 		return nil, fmt.Errorf("load embedded spec: %w", err)
 	}
+	if err := applyServerLimits(doc); err != nil {
+		return nil, fmt.Errorf("server limits: %w", err)
+	}
 	// Match on paths only: the spec's servers are placeholders, and the real
 	// host is whatever the deployment is reached under.
 	doc.Servers = nil

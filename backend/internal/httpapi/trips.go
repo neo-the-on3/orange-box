@@ -95,6 +95,19 @@ func (s *Server) UploadTrips(ctx context.Context, req api.UploadTripsRequestObje
 	out.Results = makeLike(out.Results, len(in))
 	uploads := make([]store.TripUpload, 0, len(in))
 	index := make([]int, 0, len(in))
+	// No trip may be larger than maxTripBytes as JSON: the whole batch is
+	// rejected, like any other invalid field.
+	for i, t := range in {
+		b, err := json.Marshal(t)
+		if err != nil {
+			return nil, err
+		}
+		if len(b) > maxTripBytes {
+			return nil, problem.New(http.StatusUnprocessableEntity, problem.CodeValidationFailed, "1 field is invalid").
+				WithTitle("Validation failed").
+				WithErrors(problem.FieldError{Pointer: fmt.Sprintf("/trips/%d", i), Detail: fmt.Sprintf("must be at most %d bytes as JSON", maxTripBytes)})
+		}
+	}
 	for i, t := range in {
 		out.Results[i].ClientId = t.ClientTripId
 		vehicle, ok := vehicleID(t.VehicleId)
@@ -273,15 +286,30 @@ func toAPITrip(t store.Trip) (api.Trip, error) {
 	return out, nil
 }
 
-func toAPITrips(trips []store.Trip) ([]api.Trip, error) {
-	out := make([]api.Trip, len(trips))
-	for i, t := range trips {
-		var err error
-		if out[i], err = toAPITrip(t); err != nil {
-			return nil, err
+// pageOfTrips converts up to limit of rows, stopping early before the
+// page's JSON would exceed tripPageBudget (but always with at least one
+// trip). more reports whether rows has trips beyond the page, so the page
+// needs a cursor after its last trip.
+func pageOfTrips(rows []store.Trip, limit int) (items []api.Trip, more bool, err error) {
+	n := min(len(rows), limit)
+	items = make([]api.Trip, 0, n)
+	size := 0
+	for _, t := range rows[:n] {
+		item, err := toAPITrip(t)
+		if err != nil {
+			return nil, false, err
 		}
+		b, err := json.Marshal(item)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(items) > 0 && size+len(b)+1 > tripPageBudget {
+			break
+		}
+		size += len(b) + 1
+		items = append(items, item)
 	}
-	return out, nil
+	return items, len(items) < len(rows), nil
 }
 
 // GetTrip implements GET /v1/trips/{tripId}.
@@ -440,21 +468,19 @@ func (s *Server) listTripHistory(ctx context.Context, member uuid.UUID, p api.Li
 	if cur == nil {
 		next = page.Snapshot
 	}
-	rows := page.Trips
+	items, more, err := pageOfTrips(page.Trips, limit)
+	if err != nil {
+		return nil, err
+	}
 	nextCursor, nextSince := "", ""
-	if len(rows) > limit {
-		rows = rows[:limit]
-		last := rows[limit-1]
+	if more {
+		last := page.Trips[len(items)-1]
 		nextCursor = s.sync.Cursor(member, synctoken.Cursor{
 			Kind: synctoken.History, Filter: historyFilter(p), Next: next,
 			History: store.HistoryPos{StartedAt: last.StartedAt, ID: last.ID},
 		})
 	} else if !filtered && next != nil {
 		nextSince = s.sync.Token(member, *next)
-	}
-	items, err := toAPITrips(rows)
-	if err != nil {
-		return nil, err
 	}
 	return api.ListTrips200JSONResponse{Items: items, NextCursor: api.NullIfEmpty(nextCursor), NextSince: api.NullIfEmpty(nextSince)}, nil
 }
@@ -479,17 +505,15 @@ func (s *Server) listTripChanges(ctx context.Context, member uuid.UUID, since st
 	if next == nil {
 		return nil, errors.New("list trip changes: walk without a snapshot")
 	}
-	rows := page.Trips
-	nextCursor, nextSince := "", ""
-	if len(rows) > limit {
-		rows = rows[:limit]
-		nextCursor = s.sync.Cursor(member, synctoken.Cursor{Kind: synctoken.Changes, Since: &since, Next: next, Change: rows[limit-1].Change})
-	} else {
-		nextSince = s.sync.Token(member, *next)
-	}
-	items, err := toAPITrips(rows)
+	items, more, err := pageOfTrips(page.Trips, limit)
 	if err != nil {
 		return nil, err
+	}
+	nextCursor, nextSince := "", ""
+	if more {
+		nextCursor = s.sync.Cursor(member, synctoken.Cursor{Kind: synctoken.Changes, Since: &since, Next: next, Change: page.Trips[len(items)-1].Change})
+	} else {
+		nextSince = s.sync.Token(member, *next)
 	}
 	return api.ListTrips200JSONResponse{Items: items, NextCursor: api.NullIfEmpty(nextCursor), NextSince: api.NullIfEmpty(nextSince)}, nil
 }
