@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -346,7 +347,24 @@ func (s *scanner) pointer() string {
 			tokens[i] = strconv.Itoa(p.index)
 		}
 	}
-	return pointer(tokens)
+	return truncatePointer(pointer(tokens))
+}
+
+// maxPointerLen caps the pointers prescan reports: member names come from
+// the client and can be long.
+const maxPointerLen = 256
+
+// truncatePointer shortens p to at most maxPointerLen bytes on a UTF-8
+// boundary, marking the cut with "…".
+func truncatePointer(p string) string {
+	if len(p) <= maxPointerLen {
+		return p
+	}
+	cut := maxPointerLen - len("…")
+	for cut > 0 && !utf8.RuneStart(p[cut]) {
+		cut--
+	}
+	return p[:cut] + "…"
 }
 
 func unescapeKey(raw []byte) string {

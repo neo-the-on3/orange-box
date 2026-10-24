@@ -105,10 +105,10 @@ type openAPIMiddleware struct {
 	tokens            TokenVerifier
 	uploads           *uploadLimiter
 	uploadReadTimeout time.Duration
-	bodies            *bodyLimiter
+	bodies            bodyPools
 }
 
-func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadReadTimeout time.Duration, bodies *bodyLimiter) (*openAPIMiddleware, error) {
+func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadReadTimeout time.Duration, bodies bodyPools) (*openAPIMiddleware, error) {
 	doc, err := api.GetSpec()
 	if err != nil {
 		return nil, fmt.Errorf("load embedded spec: %w", err)
@@ -147,8 +147,12 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 		}
 
 		// Upload bodies can be up to 8 MiB in memory each, so only a few are
-		// processed at once; the slot is held until the handler returns.
+		// read and processed at once; the slot is taken before the body is
+		// read (reading first would buffer unbounded memory) and held until
+		// the handler returns. A slow sender holds it for at most
+		// UPLOAD_READ_TIMEOUT, and only one per member.
 		upload := isUpload(route.Operation.OperationID)
+		var body []byte
 		if upload {
 			memberID, _ := reqctx.MemberID(r.Context())
 			release, p := m.uploads.acquire(r.Context(), memberID)
@@ -163,21 +167,43 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			if m.uploadReadTimeout > 0 {
 				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(m.uploadReadTimeout))
 			}
+			if body, p = readBody(r, true); p != nil {
+				problem.Write(w, r, p)
+				return
+			}
 		} else if hasBody(r) {
-			// Every other body takes one of a fixed number of body slots
-			// until the handler returns, so bursts (e.g. anonymous
-			// /auth/token bodies) can't add up in memory.
-			release, p := m.bodies.acquire(r.Context())
+			// Every other body (at most MaxBody) is read first, under a
+			// short deadline and without a processing slot, so slow senders
+			// can't hold slots. Anonymous requests count against a cap on
+			// anonymous requests in flight from here to the end, which
+			// bounds their buffered bodies. Then the request takes a slot
+			// from its pool (anonymous or member) for prescan, validation,
+			// decoding and the handler.
+			_, member := reqctx.MemberID(r.Context())
+			if !member {
+				release, p := m.bodies.anonReads.tryAcquire()
+				if p != nil {
+					problem.Write(w, r, p)
+					return
+				}
+				defer release()
+			}
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyReadTimeout))
+			if body, p = readBody(r, false); p != nil {
+				problem.Write(w, r, p)
+				return
+			}
+			pool := m.bodies.members
+			if !member {
+				pool = m.bodies.anonymous
+			}
+			release, p := pool.acquire(r.Context())
 			if p != nil {
 				problem.Write(w, r, p)
 				return
 			}
 			defer release()
-			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyReadTimeout))
-		}
-
-		body, p := readBody(r, upload)
-		if p != nil {
+		} else if body, p = readBody(r, false); p != nil {
 			problem.Write(w, r, p)
 			return
 		}

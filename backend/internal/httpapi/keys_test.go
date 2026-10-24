@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -75,53 +78,121 @@ func TestNonUploadBodyLimits(t *testing.T) {
 	}
 }
 
-// With every body slot taken, another body waits UploadQueueWait and then
-// gets 503 server_busy without being read; bodiless requests aren't limited.
-func TestBodyConcurrencyLimit(t *testing.T) {
+// slowSender opens a raw connection that announces a body of n bytes and
+// then sends one byte every interval until ctx ends: a slowloris client.
+func slowSender(ctx context.Context, t *testing.T, addr, path, auth string, n int, interval time.Duration) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	hdr := "POST " + path + " HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: " + strconv.Itoa(n) + "\r\n"
+	if auth != "" {
+		hdr += "Authorization: Bearer " + auth + "\r\nIdempotency-Key: " + uuid.NewString() + "\r\n"
+	}
+	if _, err := io.WriteString(conn, hdr+"\r\n{"); err != nil {
+		t.Error(err)
+	}
+	go func() {
+		defer conn.Close()
+		tick := time.NewTicker(interval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				if _, err := io.WriteString(conn, " "); err != nil {
+					return
+				}
+			}
+		}
+	}()
+}
+
+// Regression for the fourth #163 review: the body slot was taken before the
+// body was read, so 32 anonymous connections dripping 1 byte/s made sign-ins
+// and POST /v1/vehicles return 503. Bodies are now read before a slot is
+// taken, and anonymous and member requests have separate pools.
+func TestSlowAnonymousSendersDontStarve(t *testing.T) {
 	t.Parallel()
 	e := newTestEnvWith(t, true, func(d *Deps) {
-		d.BodyConcurrency = 1
-		d.UploadQueueWait = 50 * time.Millisecond
+		d.BodyConcurrency = 2
+		d.AnonBodyConcurrency = 2
+		d.UploadQueueWait = 200 * time.Millisecond
 	})
-
-	pr, pw := io.Pipe()
-	slow := &countingReader{r: pr, first: make(chan struct{})}
-	done := make(chan int)
-	go func() {
-		req := httptest.NewRequest(http.MethodPost, "/v1/auth/otp", slow)
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
-		done <- rec.Code
-	}()
-	select {
-	case <-slow.first:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first request never started reading its body")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr := e.srv.Listener.Addr().String()
+	for range 32 {
+		slowSender(ctx, t, addr, "/v1/auth/token", "", 1000, 100*time.Millisecond)
 	}
+	time.Sleep(300 * time.Millisecond) // every slow body is now being read
 
-	second := &countingReader{r: strings.NewReader(`{"email":"b@test.orangebox.invalid"}`)}
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/otp", second)
+	for i := range 8 {
+		token, _ := e.signIn("slow" + strconv.Itoa(i) + "@test.orangebox.invalid") // fails the test on any non-2xx
+		r := e.do(http.MethodPost, "/v1/vehicles", strings.NewReader(`{"make":"Hyundai","model":"i20","fuelType":"gasoline"}`),
+			"Content-Type", "application/json", "Idempotency-Key", uuid.NewString(), "Authorization", "Bearer "+token)
+		if r.status != http.StatusNotImplemented {
+			t.Errorf("POST /v1/vehicles during the slow senders: %d %s", r.status, r.body)
+		}
+	}
+}
+
+// Anonymous requests in flight (reading included) are capped, which bounds
+// buffered anonymous bodies. Beyond the cap an anonymous request gets 503
+// server_busy at once, without its body being read; members are unaffected.
+func TestAnonymousReadCap(t *testing.T) {
+	t.Parallel()
+	e := newTestEnvWith(t, true, func(d *Deps) { d.AnonReadConcurrency = 2 })
+	token, _ := e.signIn("member@test.orangebox.invalid")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr := e.srv.Listener.Addr().String()
+	for range 2 {
+		slowSender(ctx, t, addr, "/v1/auth/otp", "", 1000, 100*time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	body := &countingReader{r: strings.NewReader(`{"email":"x@test.orangebox.invalid"}`)}
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/otp", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	e.h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"server_busy"`) ||
 		rec.Header().Get("Retry-After") != "1" {
-		t.Errorf("second body: %d %v %s", rec.Code, rec.Header(), rec.Body)
+		t.Errorf("anonymous beyond the cap: %d %v %s", rec.Code, rec.Header(), rec.Body)
 	}
-	if second.n.Load() != 0 {
-		t.Error("busy request's body was read")
+	if body.n.Load() != 0 {
+		t.Error("body read beyond the cap")
 	}
-	if r := e.do(http.MethodGet, "/v1/health", nil); r.status != http.StatusOK {
-		t.Errorf("health while bodies busy: %d", r.status)
+	// A member's write doesn't count against the anonymous cap.
+	r := e.do(http.MethodPost, "/v1/vehicles", strings.NewReader(`{"make":"Hyundai","model":"i20","fuelType":"gasoline"}`),
+		"Content-Type", "application/json", "Idempotency-Key", uuid.NewString(), "Authorization", "Bearer "+token)
+	if r.status != http.StatusNotImplemented {
+		t.Errorf("member during the anonymous cap: %d %s", r.status, r.body)
 	}
+	cancel()
+}
 
-	_, _ = io.WriteString(pw, `{"email":"a@test.orangebox.invalid"}`)
-	_ = pw.Close()
-	if code := <-done; code != http.StatusAccepted {
-		t.Errorf("first request: %d", code)
+// With every processing slot of a pool taken, a further request waits
+// UploadQueueWait and then gets 503 server_busy.
+func TestBodyLimiter(t *testing.T) {
+	t.Parallel()
+	l := newBodyLimiter(1, 20*time.Millisecond)
+	release, p := l.acquire(context.Background())
+	if p != nil {
+		t.Fatal(p.Detail)
 	}
-	if r := e.postJSON("/v1/auth/otp", `{"email":"c@test.orangebox.invalid"}`); r.status != http.StatusAccepted {
-		t.Errorf("after release: %d %s", r.status, r.body)
+	if _, p := l.acquire(context.Background()); p == nil || p.Status != http.StatusServiceUnavailable ||
+		p.Code != "server_busy" || p.RetryAfter != 1 {
+		t.Errorf("full pool: %+v", p)
+	}
+	release()
+	if r2, p := l.acquire(context.Background()); p != nil {
+		t.Errorf("after release: %+v", p)
+	} else {
+		r2()
 	}
 }

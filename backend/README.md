@@ -81,7 +81,9 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `LOG_LEVEL`        | `info`       | `debug`, `info`, `warn` or `error`. |
 | `UPLOAD_CONCURRENCY` | `2`        | Upload bodies processed at once (1–256). Sized for a 512 MB host; see below. |
 | `UPLOAD_QUEUE_WAIT`  | `2s`       | How long an upload waits for a slot before `503 uploads_busy`. |
-| `BODY_CONCURRENCY`   | `16`       | Non-upload request bodies (auth, profile, vehicles) read, decoded and validated at once (1–1024); a further one waits up to `UPLOAD_QUEUE_WAIT`, then gets `503 server_busy` with `Retry-After: 1`. |
+| `BODY_CONCURRENCY`   | `16`       | Signed-in non-upload requests with a body (profile, vehicles) pre-scanned, validated, decoded and handled at once (1–1024); a further one waits up to `UPLOAD_QUEUE_WAIT`, then gets `503 server_busy` with `Retry-After: 1`. Bodies are read before a slot is taken. |
+| `ANON_BODY_CONCURRENCY` | `8`     | The same for anonymous requests (sign-in), in a separate pool so they can't starve members (1–1024). |
+| `ANON_READ_CONCURRENCY` | `1024`  | Anonymous requests with a body in flight, reading included (1–65536); bounds buffered anonymous bodies to 16 MiB. Beyond it, `503 server_busy` at once. |
 | `UPLOAD_READ_TIMEOUT` | `10s`     | How long an upload body may take to arrive once it has a slot; then `408 request_timeout`. Send large batches gzipped (1 MiB max). |
 | `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
 | `DATABASE_URL`     | none         | Postgres DSN (planned, #105). |
@@ -118,8 +120,14 @@ strict handlers.
   upload in flight; a second one gets `429` (`upload_in_progress`) with
   `Retry-After: 1`. An upload body must arrive within `UPLOAD_READ_TIMEOUT`
   of getting its slot, else `408` (`request_timeout`).
-- Every other request with a body takes one of `BODY_CONCURRENCY` body
-  slots, and the body must arrive within 5 s.
+- Every other body (16 KiB at most) is read first, within 5 s and without
+  a processing slot, so slow senders can't hold slots. Anonymous requests
+  count against `ANON_READ_CONCURRENCY` from the start of the read to the
+  end of the handler. The request then takes a slot from its pool
+  (`ANON_BODY_CONCURRENCY` or `BODY_CONCURRENCY`) for prescan, validation,
+  decoding and the handler. Uploads are different: the upload slot is
+  taken before the body is read (8 MiB bodies can't be buffered freely), so
+  a slow upload holds it for at most `UPLOAD_READ_TIMEOUT`, one per member.
 - Before decoding, the JSON body is pre-scanned once, with almost no
   allocation:
   - an array longer than its schema's `maxItems` is `422` with a pointer
@@ -132,6 +140,9 @@ strict handlers.
   - more than 64 levels of nesting is `400`.
 - Validation fails fast on bodies over 8 KiB or 1,024 values (the `422`
   lists the first invalid field); smaller bodies list up to 20.
+- Nullable optional fields are generated as `nullable.Nullable[T]`
+  (`nullable-type: true`), so merge patches can tell `null` (clear the
+  field) from absent (leave it).
 - The generated handlers decode bodies with `encoding/json/v2` (exact-case
   member names, duplicates rejected; see `internal/api/decode.go` and the
   one-line template override in `internal/api/templates/`), so a handler

@@ -414,12 +414,16 @@ func TestIntegerAsFloatIs422(t *testing.T) {
 			t.Errorf("%s: %d %s", n, r.status, r.body)
 			continue
 		}
-		errs, _ := r.json(t)["errors"].([]any)
+		m := r.json(t)
+		errs, _ := m["errors"].([]any)
 		if len(errs) != 1 || errs[0].(map[string]any)["pointer"] != "/odometerKm" {
 			t.Errorf("%s: errors = %v", n, errs)
+			continue
 		}
-		if strings.Contains(string(r.body), n) {
-			t.Errorf("%s: value echoed: %s", n, r.body)
+		// Only the problem's own text can echo a value (the instance and
+		// requestId may contain "1e3" by chance).
+		if detail := errs[0].(map[string]any)["detail"].(string) + " " + m["detail"].(string); strings.Contains(detail, n) {
+			t.Errorf("%s: value echoed: %s", n, detail)
 		}
 	}
 }

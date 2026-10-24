@@ -47,9 +47,15 @@ type Config struct {
 	UploadConcurrency int
 	// UploadQueueWait is how long an upload waits for a slot before 503 (UPLOAD_QUEUE_WAIT, default 2s).
 	UploadQueueWait time.Duration
-	// BodyConcurrency caps non-upload request bodies processed at once
+	// BodyConcurrency caps signed-in non-upload bodies processed at once
 	// (BODY_CONCURRENCY, default 16).
 	BodyConcurrency int
+	// AnonBodyConcurrency caps anonymous bodies processed at once, in a
+	// separate pool (ANON_BODY_CONCURRENCY, default 8).
+	AnonBodyConcurrency int
+	// AnonReadConcurrency caps anonymous requests with a body in flight,
+	// reading included (ANON_READ_CONCURRENCY, default 1024).
+	AnonReadConcurrency int
 	// UploadReadTimeout bounds how long an upload body may take to arrive
 	// once it holds a slot (UPLOAD_READ_TIMEOUT, default 10s, then 408).
 	UploadReadTimeout time.Duration
@@ -120,6 +126,14 @@ func Load(getenv func(string) string) (Config, error) {
 	c.BodyConcurrency, err = strconv.Atoi(orDefault(getenv("BODY_CONCURRENCY"), "16"))
 	if err != nil || c.BodyConcurrency < 1 || c.BodyConcurrency > 1024 {
 		errs = append(errs, errors.New("BODY_CONCURRENCY must be a number from 1 to 1024"))
+	}
+	c.AnonBodyConcurrency, err = strconv.Atoi(orDefault(getenv("ANON_BODY_CONCURRENCY"), "8"))
+	if err != nil || c.AnonBodyConcurrency < 1 || c.AnonBodyConcurrency > 1024 {
+		errs = append(errs, errors.New("ANON_BODY_CONCURRENCY must be a number from 1 to 1024"))
+	}
+	c.AnonReadConcurrency, err = strconv.Atoi(orDefault(getenv("ANON_READ_CONCURRENCY"), "1024"))
+	if err != nil || c.AnonReadConcurrency < 1 || c.AnonReadConcurrency > 65536 {
+		errs = append(errs, errors.New("ANON_READ_CONCURRENCY must be a number from 1 to 65536"))
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))

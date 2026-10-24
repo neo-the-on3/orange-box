@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
@@ -103,6 +104,20 @@ func TestPrescanBudget(t *testing.T) {
 	}
 	if _, p := prescan(body, nil, 20); p == nil || p.Status != http.StatusRequestEntityTooLarge {
 		t.Errorf("over budget: %+v", p)
+	}
+}
+
+// Pointers are capped at maxPointerLen bytes, cut on a UTF-8 boundary.
+func TestPrescanPointerTruncated(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("é", 1000)
+	_, p := prescan([]byte(`{"`+long+`":1,"`+long+`":2}`), nil, MaxJSONValues)
+	if p == nil || len(p.Errors) != 1 {
+		t.Fatalf("got %+v", p)
+	}
+	ptr := p.Errors[0].Pointer
+	if len(ptr) > maxPointerLen || !strings.HasSuffix(ptr, "…") || !utf8.ValidString(ptr) || !strings.HasPrefix(ptr, "/éé") {
+		t.Errorf("pointer %q (%d bytes)", ptr, len(ptr))
 	}
 }
 

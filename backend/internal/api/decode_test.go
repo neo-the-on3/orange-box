@@ -28,3 +28,32 @@ func TestDecodeJSONBody(t *testing.T) {
 		t.Errorf("valid body: %v %+v", err, b)
 	}
 }
+
+// Merge patches must tell an explicit null (clear the field) from an absent
+// one (leave it alone).
+func TestDecodePatchNullVersusAbsent(t *testing.T) {
+	t.Parallel()
+	var absent, null, set ProfilePatch
+	for body, v := range map[string]*ProfilePatch{
+		`{"displayName":"A"}`:  &absent,
+		`{"countryCode":null}`: &null,
+		`{"countryCode":"IN"}`: &set,
+	} {
+		if err := decodeJSONBody(strings.NewReader(body), v); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+	}
+	if absent.CountryCode.IsSpecified() {
+		t.Error("absent countryCode is specified")
+	}
+	if !null.CountryCode.IsSpecified() || !null.CountryCode.IsNull() {
+		t.Error("null countryCode isn't an explicit null")
+	}
+	if v, err := set.CountryCode.Get(); err != nil || v != "IN" {
+		t.Errorf("countryCode = %q, %v", v, err)
+	}
+	var vp VehiclePatch
+	if err := decodeJSONBody(strings.NewReader(`{"plateNumber":null}`), &vp); err != nil || !vp.PlateNumber.IsNull() {
+		t.Errorf("VehiclePatch plateNumber: %v %+v", err, vp)
+	}
+}
