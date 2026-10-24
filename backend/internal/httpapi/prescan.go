@@ -35,6 +35,7 @@ var (
 	errTooManyValues = errors.New("too many JSON values")
 	errTooDeep       = errors.New("JSON nested too deeply")
 	errSyntax        = errors.New("JSON syntax error") // left to the validator to report
+	errNUL           = errors.New("string contains U+0000")
 )
 
 // maxItemsError reports an array longer than its schema's maxItems.
@@ -69,7 +70,11 @@ func (e *keyError) Error() string { return e.pointer + ": " + e.detail }
 //     property declared by the object's schema only by case (422 with a
 //     pointer). kin-openapi treats "TRIPS" as an unknown property, while
 //     encoding/json would decode it into Trips (case-insensitive, last
-//     duplicate wins), so the handler could see unvalidated data.
+//     duplicate wins), so the handler could see unvalidated data;
+//   - U+0000 in any string, value or member name, raw or escaped as \u0000
+//     (422 with a pointer: the value's, or for a name the object's).
+//     Postgres text can't store it, so it would otherwise fail the write
+//     with a 500, and nothing the API stores needs it.
 //
 // maxValues counts objects, arrays, scalars and member names. prescan
 // returns how many it saw (up to the first error).
@@ -162,6 +167,9 @@ func (s *scanner) value(schemas []*openapi3.Schema, depth int) error {
 		return s.array(schemas, depth+1)
 	case '"':
 		_, err := s.str()
+		if errors.Is(err, errNUL) {
+			return &keyError{pointer: s.pointer(), detail: "must not contain U+0000"}
+		}
 		return err
 	default:
 		return s.scalar()
@@ -187,6 +195,10 @@ func (s *scanner) object(schemas []*openapi3.Schema, depth int) error {
 			return errSyntax
 		}
 		key, err := s.str()
+		if errors.Is(err, errNUL) {
+			// The name itself is not echoed: point at its object.
+			return &keyError{pointer: s.pointer(), detail: "has a member name that contains U+0000"}
+		}
 		if err != nil {
 			return err
 		}
@@ -302,12 +314,19 @@ func (s *scanner) array(schemas []*openapi3.Schema, depth int) error {
 }
 
 // str skips a string at s.i and returns its raw contents (escapes intact).
+// It returns errNUL for a string holding U+0000, raw or as \u0000 (no other
+// escape decodes to it: a surrogate pair is never U+0000).
 func (s *scanner) str() ([]byte, error) {
 	start := s.i + 1
 	for j := start; j < len(s.b); j++ {
 		switch s.b[j] {
+		case 0:
+			return nil, errNUL
 		case '\\':
 			j++ // skip the escaped byte; \uXXXX's hex digits are plain bytes
+			if j+4 < len(s.b) && s.b[j] == 'u' && string(s.b[j+1:j+5]) == "0000" {
+				return nil, errNUL
+			}
 		case '"':
 			s.i = j + 1
 			return s.b[start:j], nil
