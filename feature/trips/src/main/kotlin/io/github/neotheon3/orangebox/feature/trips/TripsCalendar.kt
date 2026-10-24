@@ -19,6 +19,7 @@ data class TripListItem(
     val end: LocalDateTime?,
     val distanceKm: Double,
     val durationS: Double,
+    val ecoS: Double,
     val economyKmPerL: Double?,
     val harshEvents: Int,
     val overspeedEvents: Int,
@@ -40,6 +41,9 @@ data class TripsUiState(
     val loading: Boolean = false,
 ) {
     val weeks: List<List<CalendarDay>> get() = days.chunked(7)
+    /** [trips] grouped by local start day, newest day first (order preserved inside a day). */
+    val tripsByDay: List<Pair<LocalDate, List<TripListItem>>> get() =
+        trips.groupBy { it.start.toLocalDate() }.toList()
     val isEmptyMonth: Boolean get() = !loading && summary.trips == 0
 }
 
@@ -54,6 +58,7 @@ object TripsCalendar {
         end = trip.endedAtMillis?.let { LocalDateTime.ofInstant(Instant.ofEpochMilli(it), zone) },
         distanceKm = trip.distanceKm,
         durationS = trip.durationS,
+        ecoS = trip.ecoS,
         economyKmPerL = TripFormat.economyKmPerL(trip),
         harshEvents = trip.harshAccelCount + trip.harshBrakeCount,
         overspeedEvents = trip.overspeedCount,

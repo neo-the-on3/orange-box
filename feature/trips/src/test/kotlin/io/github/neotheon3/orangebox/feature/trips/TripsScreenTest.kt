@@ -80,7 +80,8 @@ class TripsScreenTest {
         compose.onAllNodesWithTag("trips_day_marker", useUnmergedTree = true).assertCountEquals(4)
         compose.onNodeWithTag("trips_day_2026-10-03").assertContentDescriptionContains("2 trips", substring = true)
         compose.onNodeWithText("5 trips · 98.9 km · 2:54:00").assertIsDisplayed()
-        compose.onNodeWithText("52.3 km · 1:04:00 · 15.4 km/L").assertIsDisplayed()
+        compose.onNodeWithText("52.3 km · 1:04:00 · 15.4 km/L · eco 0:00:00").assertIsDisplayed()
+        compose.onNodeWithTag("trips_day_header_2026-10-21").assertExists()
         compose.onNodeWithText("Wed 21 Oct, 09:10 – 10:14").assertIsDisplayed()
         compose.onNodeWithText("3 events").assertIsDisplayed()
         compose.onAllNodesWithTag("trips_empty").assertCountEquals(0)
@@ -92,6 +93,7 @@ class TripsScreenTest {
         compose.onNodeWithTag("trips_day_2026-10-03").assertIsSelected()
         compose.onAllNodesWithTag("trip_row_4").assertCountEquals(0)
         compose.onNodeWithTag("trip_row_2").assertIsDisplayed()
+        compose.onAllNodesWithTag("trips_day_header_2026-10-03").assertCountEquals(0)
         render("trips-day-selected")
     }
 

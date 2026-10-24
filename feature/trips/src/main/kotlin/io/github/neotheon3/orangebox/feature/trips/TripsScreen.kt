@@ -116,7 +116,19 @@ fun TripsScreen(state: TripsUiState, actions: TripsActions, locale: Locale = Loc
                     )
                 }
             }
-            items(state.trips, key = { it.id }) { trip -> TripRow(trip, locale) { actions.onOpenTrip(trip.id) } }
+            state.tripsByDay.forEach { (day, trips) ->
+                if (state.selectedDay == null) {
+                    item(key = "day_$day") {
+                        Text(
+                            day.format(DateTimeFormatter.ofPattern("EEEE d MMMM", locale)),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 4.dp, top = 8.dp).testTag("trips_day_header_$day"),
+                        )
+                    }
+                }
+                items(trips, key = { it.id }) { trip -> TripRow(trip, locale) { actions.onOpenTrip(trip.id) } }
+            }
         }
     }
 }
@@ -245,6 +257,7 @@ private fun TripRow(trip: TripListItem, locale: Locale, onClick: () -> Unit) {
                         stringResource(R.string.trips_distance_km, TripFormat.km(trip.distanceKm, locale)),
                         TripFormat.elapsed(trip.durationS),
                         trip.economyKmPerL?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale)) },
+                        stringResource(R.string.trips_eco_time, TripFormat.elapsed(trip.ecoS)),
                     ).joinToString(" · "),
                 )
             },
