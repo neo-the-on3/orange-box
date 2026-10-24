@@ -33,6 +33,7 @@ export_entry() {
     sleep 1
     ui_dump "$name-menu"
     if grep -q "text=\"$label\"" "$OUT/$name-menu.xml"; then
+      shot "48-$name-menu"
       tap_attr text "$label" "$name-menu" && return 0
     fi
     adb shell input keyevent KEYCODE_ESCAPE || true
