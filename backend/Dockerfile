@@ -10,11 +10,11 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # Runtime stage: distroless static image, runs as a non-root user.
-# Chainguard's image is used instead of gcr.io/distroless to keep Google
-# services out of the stack.
-FROM cgr.dev/chainguard/static:latest
+# The no-Google rule covers services (Sign-In, Firebase, Google Cloud
+# hosting), not open-source images like distroless.
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/server /server
-USER 65532:65532
+USER nonroot:nonroot
 ENV PORT=8080
 EXPOSE 8080
 ENTRYPOINT ["/server"]
