@@ -157,6 +157,7 @@ class SimulatedElm327Transport(
     private var pending: String? = null
 
     override suspend fun open() {
+        controller.state.value.connectDelaySeconds.takeIf { it > 0 }?.let { delay(it * 1_000L) }
         val s = controller.state.value
         if (!s.paired) throw ObdError.NotPaired("Simulated dongle is not paired")
         if (s.connectionFailure) throw ObdError.Io("Simulated connection failure")

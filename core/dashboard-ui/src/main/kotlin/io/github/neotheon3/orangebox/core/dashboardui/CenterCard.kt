@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -90,33 +91,56 @@ fun ValueWithUnit(value: String, unit: String, spoken: String, modifier: Modifie
 }
 
 /**
- * Instant economy bar, 0–[max] km/L (track `#1e253b`, fill `#819ff7`), with 0/10/20/30 tick labels.
- * [fraction] is clamped to 0..1.
+ * Instant economy bar, 0–[max] km/L (track `#1e253b`, fill `#819ff7`), with tick marks every 10.
+ * With [showTicks] the 0/10/20/30 labels sit under the bar; without (short cards, e.g. landscape) a compact
+ * scale keeps the bar readable: "0" and "[max]" either side of it, on the same line. [fraction] is clamped to 0..1.
  */
 @Composable
 fun FuelBar(fraction: Float, modifier: Modifier = Modifier, max: Int = 30, showTicks: Boolean = true) {
+    val ticks = (0..max step 10).toList()
     // Decorative: the economy value next to it carries the spoken reading.
     Column(modifier.fillMaxWidth().clearAndSetSemantics { }) {
-        Canvas(Modifier.fillMaxWidth().height(6.dp)) {
-            drawRoundRect(DashboardColors.FuelTrack, cornerRadius = CornerRadius(1.dp.toPx()))
-            val f = fraction.coerceIn(0f, 1f)
-            if (f > 0f) {
-                drawRoundRect(DashboardColors.FuelFill, size = Size(size.width * f, size.height), cornerRadius = CornerRadius(1.dp.toPx()))
+        if (showTicks) {
+            FuelBarTrack(fraction, ticks, max, Modifier.fillMaxWidth())
+            Box(Modifier.fillMaxWidth().padding(top = 1.dp)) {
+                ticks.forEachIndexed { i, t ->
+                    val align = when (i) {
+                        0 -> Alignment.CenterStart
+                        ticks.lastIndex -> Alignment.CenterEnd
+                        else -> androidx.compose.ui.BiasAlignment(-1f + 2f * i / ticks.lastIndex, 0f)
+                    }
+                    ScaleLabel("$t", Modifier.align(align))
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                ScaleLabel("0", Modifier.padding(end = 3.dp))
+                FuelBarTrack(fraction, ticks, max, Modifier.weight(1f))
+                ScaleLabel("$max", Modifier.padding(start = 3.dp))
             }
         }
-        if (showTicks) Box(Modifier.fillMaxWidth().padding(top = 1.dp)) {
-            val ticks = (0..max step 10).toList()
-            ticks.forEachIndexed { i, t ->
-                val align = when (i) {
-                    0 -> Alignment.CenterStart
-                    ticks.lastIndex -> Alignment.CenterEnd
-                    else -> androidx.compose.ui.BiasAlignment(-1f + 2f * i / ticks.lastIndex, 0f)
-                }
-                Text(
-                    "$t", color = DashboardColors.TileTitle, fontSize = DashboardType.Caption * 0.8f,
-                    lineHeight = DashboardType.Caption * 0.9f, modifier = Modifier.align(align),
-                )
-            }
+    }
+}
+
+@Composable
+private fun ScaleLabel(text: String, modifier: Modifier = Modifier) = Text(
+    text, color = DashboardColors.TileTitle, fontSize = DashboardType.Caption * 0.8f,
+    lineHeight = DashboardType.Caption * 0.9f, maxLines = 1, softWrap = false, modifier = modifier,
+)
+
+@Composable
+private fun FuelBarTrack(fraction: Float, ticks: List<Int>, max: Int, modifier: Modifier) {
+    Canvas(modifier.height(6.dp)) {
+        drawRoundRect(DashboardColors.FuelTrack, cornerRadius = CornerRadius(1.dp.toPx()))
+        val f = fraction.coerceIn(0f, 1f)
+        if (f > 0f) {
+            drawRoundRect(DashboardColors.FuelFill, size = Size(size.width * f, size.height), cornerRadius = CornerRadius(1.dp.toPx()))
+        }
+        // Inner tick marks (10, 20): thin dividers across the track.
+        val w = 1.dp.toPx()
+        ticks.drop(1).dropLast(1).forEach { t ->
+            val x = size.width * t / max
+            drawRect(DashboardColors.Background.copy(alpha = 0.7f), topLeft = Offset(x - w / 2, 0f), size = Size(w, size.height))
         }
     }
 }

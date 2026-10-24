@@ -117,6 +117,7 @@ Reachable from Home's overflow/menu on debug builds. On release builds the activ
 | Connection failure | `open()` throws (drives backoff → Failed after 5 attempts); turning it on mid-session drops the link |
 | Unsupported protocol | `ATSP0`/`0100` replies `UNABLE TO CONNECT` → `Failed(UnsupportedProtocol)` |
 | Slow responses | Adds a 1.5 s delay per response |
+| Delay connect (10 s) | The simulated dongle takes 10 s to open its link, so the app can be backgrounded first (background "Start driving" notification) |
 | Garbled responses | Corrupts about 30% of responses (the session drops invalid frames) |
 | Garbled protocol reply (ATDPN, always) | Every `ATDPN` reply is garbage. `connect` re-queries 3 times, fails with "Could not determine the vehicle protocol (ATDPN unreadable)", retries on the back-off schedule and ends in Failed |
 | Backend mode Off / Fake / Remote | Writes `BackendConfig` |

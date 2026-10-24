@@ -27,6 +27,11 @@ data class SimulatorState(
     val garbledResponses: Boolean = false,
     /** Every ATDPN reply is garbage, so the protocol can never be determined (tests the fail-after-re-queries path). */
     val garbledProtocolReplies: Boolean = false,
+    /**
+     * Seconds the simulated dongle takes to open its link (0 = immediate). Lets testers background the app
+     * between tapping connect and the dongle connecting, to see the background "Start driving" notification.
+     */
+    val connectDelaySeconds: Int = 0,
     /** Name of the drive script being played; not persisted (playback does not resume after restart). */
     @kotlinx.serialization.Transient val runningScript: String? = null,
 ) {
@@ -39,6 +44,7 @@ data class SimulatorState(
             if (slowResponses) add("Slow (1.5 s)")
             if (garbledResponses) add("Garbled (~30%)")
             if (garbledProtocolReplies) add("Garbled ATDPN (always)")
+            if (connectDelaySeconds > 0) add("Delay connect (${connectDelaySeconds} s)")
         }
 
     /** RPM the dongle reports: 0 with the engine off. */
@@ -53,5 +59,7 @@ data class SimulatorState(
         val RPM_RANGE = 0..8000
         val COOLANT_RANGE = -40..215
         val FUEL_RANGE = 0..100
+        /** The Simulator screen's "Delay connect" toggle. */
+        const val CONNECT_DELAY_SECONDS = 10
     }
 }

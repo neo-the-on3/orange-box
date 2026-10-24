@@ -147,6 +147,9 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
             ToggleRow("Connection failure", sim.connectionFailure, "sim_fail_connection") { v -> actions.update { it.copy(connectionFailure = v) } }
             ToggleRow("Unsupported protocol", sim.unsupportedProtocol, "sim_fail_protocol") { v -> actions.update { it.copy(unsupportedProtocol = v) } }
             ToggleRow("Slow responses (1.5 s)", sim.slowResponses, "sim_slow") { v -> actions.update { it.copy(slowResponses = v) } }
+            ToggleRow(
+                "Delay connect (${SimulatorState.CONNECT_DELAY_SECONDS} s)", sim.connectDelaySeconds > 0, "sim_delay_connect",
+            ) { v -> actions.update { it.copy(connectDelaySeconds = if (v) SimulatorState.CONNECT_DELAY_SECONDS else 0) } }
             ToggleRow("Garbled responses (~30%)", sim.garbledResponses, "sim_garbled") { v -> actions.update { it.copy(garbledResponses = v) } }
             ToggleRow("Garbled protocol reply (ATDPN, always)", sim.garbledProtocolReplies, "sim_garbled_atdpn") { v ->
                 actions.update { it.copy(garbledProtocolReplies = v) }
