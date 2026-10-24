@@ -793,3 +793,45 @@ func TestTripUploadRetryInFlight(t *testing.T) {
 		t.Fatalf("replay: %d %s", again.status, again.body)
 	}
 }
+
+// TestTripReplayAfterDelete: a deletion tombstone beats a stored replay.
+// Replaying a batch after one of its trips was deleted reports that item
+// as trip_deleted; the rest replays as stored.
+func TestTripReplayAfterDelete(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("replay-delete")
+	vehicle := m.vehicle()
+	a, b, c := uuid.New(), uuid.New(), uuid.New()
+	key := uuid.NewString()
+	body := batch(
+		tripJSON(a, vehicle, "completed", "2026-10-23T13:00:00Z", "2026-10-23T14:00:00Z"),
+		tripJSON(b, vehicle, "completed", "2026-10-22T13:00:00Z", "2026-10-22T14:00:00Z"),
+		tripJSON(c, uuid.NewString(), "completed", "2026-10-21T13:00:00Z", "2026-10-21T14:00:00Z"),
+	)
+	first := m.call(http.MethodPost, "/v1/trips/batch", body, "Idempotency-Key", key)
+	if first.status != http.StatusOK || statuses(results(t, first)) != "created,created,rejected:vehicle_not_found" {
+		t.Fatalf("first: %d %s", first.status, first.body)
+	}
+	orig := results(t, first)
+	if r := m.call(http.MethodDelete, "/v1/trips/client:"+a.String(), ""); r.status != http.StatusNoContent {
+		t.Fatalf("delete: %d", r.status)
+	}
+	r := m.call(http.MethodPost, "/v1/trips/batch", body, "Idempotency-Key", key)
+	if r.status != http.StatusOK {
+		t.Fatalf("replay: %d %s", r.status, r.body)
+	}
+	got := results(t, r)
+	if statuses(got) != "rejected:trip_deleted,created,rejected:vehicle_not_found" {
+		t.Fatalf("replay after delete = %s", statuses(got))
+	}
+	if _, present := got[0]["id"]; !present || got[0]["id"] != nil {
+		t.Errorf("deleted item id = %v, want null", got[0]["id"])
+	}
+	if p := got[0]["problem"].(map[string]any); p["status"] != float64(410) || p["requestId"] != r.header.Get("X-Request-Id") {
+		t.Errorf("deleted item problem = %v", p)
+	}
+	if got[1]["id"] != orig[1]["id"] || got[2]["problem"].(map[string]any)["requestId"] != orig[2]["problem"].(map[string]any)["requestId"] {
+		t.Errorf("the other items changed: %v, was %v", got[1:], orig[1:])
+	}
+}

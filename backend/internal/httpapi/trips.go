@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -155,6 +156,46 @@ func (s *Server) UploadTrips(ctx context.Context, req api.UploadTripsRequestObje
 		}
 	}
 	return api.UploadTrips200JSONResponse{Body: out}, nil
+}
+
+// uploadTripsReplay rewrites a stored POST /v1/trips/batch response for
+// replay: a deletion tombstone beats a stored replay (spec, Idempotency),
+// so an accepted item whose trip has since been deleted is replayed as
+// rejected with trip_deleted, like a new upload of it would be.
+func (s *Server) uploadTripsReplay(ctx context.Context, member uuid.UUID, status int, stored []byte) ([]byte, error) {
+	if s.trips == nil || status != http.StatusOK {
+		return stored, nil
+	}
+	var res api.BatchResult
+	if err := json.Unmarshal(stored, &res); err != nil {
+		return nil, fmt.Errorf("stored trip batch response: %w", err)
+	}
+	var accepted []uuid.UUID
+	for _, it := range res.Results {
+		if it.Status != api.BatchResultResultsStatusRejected {
+			accepted = append(accepted, it.ClientId)
+		}
+	}
+	if len(accepted) == 0 {
+		return stored, nil
+	}
+	deleted, err := s.trips.DeletedClientTrips(ctx, member, accepted)
+	if err != nil || len(deleted) == 0 {
+		return stored, err
+	}
+	for i := range res.Results {
+		it := &res.Results[i]
+		if it.Status != api.BatchResultResultsStatusRejected && deleted[it.ClientId] {
+			it.Status = api.BatchResultResultsStatusRejected
+			it.Id = api.NullIfEmpty("")
+			it.Problem = itemProblem(ctx, http.StatusGone, problem.CodeTripDeleted, "This trip was deleted. Do not send it again.")
+		}
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(res); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // itemProblem is the problem of one rejected batch item.

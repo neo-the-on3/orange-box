@@ -38,7 +38,9 @@ import (
 //     stale request can no longer complete or release it (#175).
 //
 // An operation may register a replay guard that can override a stored
-// replay (POST /v1/vehicles: a deletion tombstone beats it with 410).
+// replay (POST /v1/vehicles: a deletion tombstone beats it with 410), or a
+// rewrite that adjusts it (POST /v1/trips/batch: items deleted since are
+// replayed as trip_deleted).
 
 const (
 	idempotencyTTL = 24 * time.Hour
@@ -56,10 +58,16 @@ var replayedHeaders = []string{"Content-Type", "ETag", "Location"}
 // replayGuard may answer instead of a stored replay. A nil problem replays.
 type replayGuard func(ctx context.Context, member uuid.UUID, body []byte) (*problem.Problem, error)
 
+// replayRewrite may change a stored response body before it is replayed
+// (POST /v1/trips/batch: items whose trip has since been deleted become
+// trip_deleted). It returns stored unchanged when nothing applies.
+type replayRewrite func(ctx context.Context, member uuid.UUID, status int, stored []byte) ([]byte, error)
+
 type idempotency struct {
 	store    store.Idempotency
 	lease    time.Duration
-	guards   map[string]replayGuard // by lower-case operationId
+	guards   map[string]replayGuard   // by lower-case operationId
+	rewrites map[string]replayRewrite // by lower-case operationId
 	logger   *slog.Logger
 	classify func(error) store.Failure
 }
@@ -207,6 +215,14 @@ func (m *idempotency) replay(w http.ResponseWriter, r *http.Request, route *rout
 			return
 		}
 	}
+	out := rec.Body
+	if rewrite := m.rewrites[strings.ToLower(route.Operation.OperationID)]; rewrite != nil {
+		var err error
+		if out, err = rewrite(r.Context(), member, rec.Status, rec.Body); err != nil {
+			m.fail(w, r, err)
+			return
+		}
+	}
 	h := w.Header()
 	for _, name := range replayedHeaders {
 		if v, ok := rec.Headers[name]; ok {
@@ -214,7 +230,7 @@ func (m *idempotency) replay(w http.ResponseWriter, r *http.Request, route *rout
 		}
 	}
 	w.WriteHeader(rec.Status)
-	_, _ = w.Write(rec.Body)
+	_, _ = w.Write(out)
 }
 
 func (m *idempotency) fail(w http.ResponseWriter, r *http.Request, err error) {
