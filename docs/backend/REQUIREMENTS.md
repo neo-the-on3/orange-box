@@ -75,7 +75,14 @@ All paths are under `https://{host}/v1`. Full detail is in `openapi-v2.yaml`; ev
 
 - **HTTPS only**, TLS 1.2 or newer (TLS 1.3 preferred). Refuse plain HTTP rather than redirecting it. HSTS on any web-facing host. The app disables cleartext and uses no custom TrustManagers, so certificates must chain to a public CA.
 - **Sign-in (e-mail + OTP)**: the app calls `POST /v1/auth/otp` with the user's e-mail address. The server always answers `202` (no account enumeration) and e-mails a random 6-digit code through a transactional e-mail provider. The code expires after 10 minutes, is stored only as a hash, and allows at most 5 attempts. Sends are rate-limited (proposal: about 3 per address per 15 minutes, plus a per-IP limit). The app then calls `POST /v1/auth/token` (`grantType=email_otp`, e-mail and code). On success the server finds the member by the normalised (lower-case) e-mail address, or creates one on the first successful sign-in (`isNewMember=true`). A wrong or expired code returns `400` with `code=invalid_grant`; exhausted attempts return `400` with `code=otp_attempts_exceeded`.
-- **Tokens (proposal)**: an access JWT (ES256, with a `kid` header for key rotation) valid for 15 minutes, with `sub` = member id and `aud` = `orange-box-api`. A refresh token valid for 30 days, single use and rotated on every refresh; reusing an old one revokes the whole token family. Store refresh tokens hashed.
+- **Per-address OTP lockout (proposal)**: failed verifications are counted per address across all codes (wrong code, expired code, or no pending code). 10 failures within a rolling hour lock the address for 1 hour; 20 failures within a rolling 24 hours lock it for 24 hours. While locked, `POST /v1/auth/token` returns `400` with `code=otp_locked` and `Retry-After`, without checking the code, and `POST /v1/auth/otp` still returns `202` but sends nothing. This caps guessing at about 20 codes per address per day (about 1 in 50,000 for a 6-digit code). The lockout applies to every well-formed address, member or not, so it reveals nothing about registration, and it only blocks new code sign-ins: existing sessions keep working. Store the counters server-side (Postgres or the rate-limit store), keyed by a hash of the normalised address.
+- **Test-mode sign-in (sandbox, local and CI only; never in production)**: so CI and contract tests (Schemathesis) can get tokens through the real `email_otp` grant without a mailbox, the server supports a test mode:
+  - Enabled only by `AUTH_TEST_MODE=true`, and only together with a configured 6-digit `AUTH_TEST_CODE`. The server **refuses to start** if `AUTH_TEST_MODE=true` and `ENV=production` (and if `AUTH_TEST_MODE=true` without `AUTH_TEST_CODE`). It logs a warning at startup and exposes a metric while test mode is on.
+  - Applies only to addresses in the reserved domain `@test.orangebox.invalid` (`.invalid` is reserved by RFC 2606 and can never receive mail). For those addresses `POST /v1/auth/otp` sends no e-mail and returns the normal `202`, and `POST /v1/auth/token` accepts `AUTH_TEST_CODE`. All other addresses get real e-mailed codes.
+  - The API surface does not change: no extra grant type or endpoint. Per-code and per-address limits still apply, so tests should use a fresh local part per run (e.g. `ci-<run-id>@test.orangebox.invalid`). The sandbox may raise the per-IP limits for the CI runner.
+  - `AUTH_TEST_CODE` is kept in the environment's secret store (GitHub Actions secret for CI), never in the repo. For local development a mail catcher such as Mailpit can be used instead.
+- **Refresh concurrency**: the app runs at most one refresh at a time. A refresh token presented again within 30 seconds of its first use (a lost response being retried) gets another token pair in the same family instead of triggering reuse detection.
+- **Tokens (proposal)**: an access JWT (ES256, with a `kid` header for key rotation) valid for 15 minutes, with `sub` = member id and `aud` = `orange-box-api`. A refresh token valid for 30 days, single use and rotated on every refresh; reusing an old one (outside the 30-second grace window) revokes the whole token family. Store refresh tokens hashed. `DELETE /v1/me` must take effect at once: the auth middleware checks a per-member `tokensValidAfter` timestamp (or a deleted flag) on every request, so outstanding access JWTs are rejected before their 15-minute expiry.
 - **Identity comes from the token only.** Never accept a member id in a body or query string for authorisation. Every resource is scoped to the token's member; another member's resource returns `404`.
 - **Least data**: legacy phone number, mobile carrier, sex, birth date, IP and weather are not collected. The OBD adapter's Bluetooth MAC stays on the phone. VIN and plate number are optional and treated as personal data.
 - **Rankings privacy**: off by default (`rankingOptIn=false`). Leaderboards show only `displayName`, an optional region and a make/model label, never e-mail, VIN or plate. Legacy ranking DTOs carried other members' `loginId` and e-mail; that must not happen here.
@@ -124,7 +131,7 @@ Conventions: timestamps in UTC ISO-8601 with `Z`; metric units in field names; s
 | Logging | Structured logs with `X-Request-Id`, member id (or a hash of it), route, status and latency. Never log tokens, one-time codes, e-mail, VIN, plate, precise location or request bodies |
 | Observability | Metrics for rate, errors and latency per route; upload backlog and aggregation lag; alerting on 5xx rate and auth failures |
 | Rate limiting | `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` on responses, `Retry-After` on `429`/`503`. Starting values: 120 req/min per member overall and 60 uploads/min per member |
-| Caching | Catalogue and reference data: `ETag` plus `Cache-Control: public, max-age=86400`; `If-None-Match` → `304` |
+| Caching | Catalogue and reference data: `ETag` plus `Cache-Control: private, max-age=86400` (these routes need auth, so not `public`); `If-None-Match` → `304` |
 | Compatibility | Additive changes only within `/v1`; clients ignore unknown fields and map unknown enum values to `other` |
 
 ## 9. Error format
@@ -144,15 +151,15 @@ Every error is `application/problem+json` (RFC 9457):
 }
 ```
 
-Status codes used: `400` malformed or expired cursor, `401` missing or expired token (with `WWW-Authenticate`), `403` not allowed, `404` missing or not owned, `409` idempotent request in flight, `412` stale `If-Match`, `413` too large, `415` bad media type or encoding, `422` validation or idempotency-key reuse, `428` `If-Match` missing, `429` rate limited, `503` maintenance. Problem bodies contain no PII, tokens or stack traces. `code` values are stable and documented.
+Status codes used: `400` malformed or expired cursor, `401` missing or expired token (with `WWW-Authenticate`), `403` not allowed, `404` missing or not owned, `409` idempotent request in flight, `412` stale `If-Match`, `413` too large, `415` bad media type or encoding, `422` validation or idempotency-key reuse, `428` `If-Match` missing (declared optional in the spec and enforced in the handler), `429` rate limited (documented on every operation), `500` unexpected error, `503` maintenance. Every operation has a `default` problem+json response. Problem bodies contain no PII, tokens or stack traces. `code` values are stable and documented.
 
 ## 10. Environments and base URL configuration
 
 | Environment | Purpose | Who provides it |
 |---|---|---|
 | Local | Developer machine, e.g. Docker Compose | Backend developer |
-| Sandbox | Stable HTTPS host with seeded data, test accounts and a way to mint test tokens; resettable | Backend developer (requested) |
-| Production | Real users | Backend developer / operator |
+| Sandbox | Stable HTTPS host with seeded data and test accounts; runs with `AUTH_TEST_MODE=true` so CI can sign in as `@test.orangebox.invalid` addresses (section 5); resettable | Backend developer (requested) |
+| Production | Real users. `AUTH_TEST_MODE` must be off; the server refuses to start otherwise | Backend developer / operator |
 
 How the app finds the server:
 - `BackendConfig { mode, baseUrl }` is stored on the device and edited in **Settings → Server (advanced)**. The base URL must be `https://`; anything else is rejected. The app appends `/v1/...`.
@@ -164,7 +171,8 @@ How the app finds the server:
 
 - `openapi-v2.yaml` is the contract. The app's **Fake mode** and its MockWebServer contract tests are built from the spec's schemas and examples, so drift shows up in the app's CI.
 - The spec is validated with `openapi-spec-validator` and `redocly lint` (both pass on this draft). We suggest adding the same check to the backend's CI.
-- **Requested from the backend developer**: a sandbox environment (section 10) with test accounts and a test-token path that works from GitHub Actions, published API docs generated from the spec, and contract tests on the server side (e.g. Schemathesis or Dredd against the spec).
+- **Test sign-in**: CI and Schemathesis sign in through the normal `email_otp` grant using test-mode addresses (`@test.orangebox.invalid` plus `AUTH_TEST_CODE`, section 5). Test mode is never available in production.
+- **Requested from the backend developer**: a sandbox environment (section 10) with test accounts and test-mode sign-in that works from GitHub Actions, published API docs generated from the spec, and contract tests on the server side (e.g. Schemathesis or Dredd against the spec).
 - Propose changes as pull requests to `docs/backend/openapi-v2.yaml` in `neo-the-on3/orange-box`, so app and server agree before code changes.
 
 ## 12. Versioning policy
@@ -175,7 +183,7 @@ How the app finds the server:
 
 ## 13. Open questions for the backend developer
 
-1. **Auth e-mail delivery**: which transactional e-mail provider sends the one-time codes, and from which sending domain (SPF/DKIM/DMARC)? Are the proposed OTP limits (10-minute expiry, 5 attempts, about 3 sends per address per 15 minutes) workable?
+1. **Auth e-mail delivery**: which transactional e-mail provider sends the one-time codes, and from which sending domain (SPF/DKIM/DMARC)? Are the proposed OTP limits (10-minute expiry, 5 attempts per code, about 3 sends per address per 15 minutes, lockout after 10 failures per hour or 20 per day) workable?
 2. **App sign-in**: the v1 app has no sign-in. Remote mode needs an e-mail + one-time code sign-in flow added in M9.
 3. **Hosting and data residency**: where will data live (region, cloud)? Does GDPR or India's DPDP Act apply? Who is the data controller?
 4. **Raw telemetry**: store every sample (time-series DB?) or only trip summaries plus downsampled tracks? This drives cost and the retention proposal.
