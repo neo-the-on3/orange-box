@@ -15,13 +15,17 @@ close_share_sheet() {
     if ! focus | grep -q "$PKG/"; then shown=1; break; fi
     sleep 1
   done
+  # Let the chooser finish drawing, so the shot shows it and Back reaches it rather than Home.
+  sleep 2
   shot "$1"
   [ "$shown" = 1 ] || { echo "share sheet did not open: $(focus)" >&2; return 1; }
+  # Check focus before each Back: one Back too many leaves the app for the launcher.
   for _ in 1 2 3; do
+    focus | grep -q "$PKG/" && return 0
     adb shell input keyevent KEYCODE_BACK
     sleep 2
-    focus | grep -q "$PKG/" && return 0
   done
+  focus | grep -q "$PKG/" && return 0
   echo "app not back in front after closing the share sheet: $(focus)" >&2
   return 1
 }
@@ -33,6 +37,7 @@ export_entry() {
     sleep 1
     ui_dump "$name-menu"
     if grep -q "text=\"$label\"" "$OUT/$name-menu.xml"; then
+      shot "48-$name-menu"
       tap_attr text "$label" "$name-menu" && return 0
     fi
     adb shell input keyevent KEYCODE_ESCAPE || true
