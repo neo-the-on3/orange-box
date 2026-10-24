@@ -1,21 +1,15 @@
 name: Backend
 
+# Manual only, to save GitHub Actions minutes: no pull_request or push
+# triggers. Run it once per PR, just before merge, on the branch rebased onto
+# the latest main:
+#   gh workflow run backend.yml --ref <branch>
+# Run `make ci` in backend/ for the same checks locally while developing.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'docs/backend/**'
-      - '.github/workflows/backend.yml'
-  pull_request:
-    paths:
-      - 'backend/**'
-      - 'docs/backend/**'
-      - '.github/workflows/backend.yml'
   workflow_dispatch:
 
 concurrency:
-  group: backend-${{ github.workflow }}-${{ github.ref }}
+  group: backend-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -28,7 +22,7 @@ jobs:
   go:
     name: Go vet, test, lint, vuln, build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -38,6 +32,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
+          # Caches the module download dir and the build cache (GOCACHE).
           cache: true
           cache-dependency-path: backend/go.sum
 
@@ -57,6 +52,8 @@ jobs:
         with:
           version: v2.15.0
           working-directory: backend
+          # Lint results are cached by the action (keyed on go.sum); keep it on.
+          skip-cache: false
 
       - name: govulncheck
         run: |
@@ -72,7 +69,7 @@ jobs:
   spec:
     name: OpenAPI spec lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
