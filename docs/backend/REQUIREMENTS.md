@@ -34,7 +34,7 @@ Consequences for the server:
 ## 3. Scope
 
 **In scope**
-- Auth: OIDC sign-in (Google ID token), short-lived access tokens, refresh, logout.
+- Auth: e-mail + one-time code (OTP) sign-in, short-lived access tokens, refresh, logout.
 - Member profile, and account deletion with real erasure.
 - Vehicles CRUD with optimistic concurrency.
 - Vehicle catalogue (makes → models → variants) and reference data (countries, regions), read-only and cacheable.
@@ -48,7 +48,7 @@ Consequences for the server:
 - Dashcam/video, including the legacy `video` references in telemetry messages.
 - YouTube upload.
 - Push notifications (legacy GCM/FingerPush).
-- Facebook login and the legacy Google+ sign-in. Only OIDC ID-token verification is in scope.
+- Legacy social logins (third-party account sign-in). Only e-mail + one-time code sign-in is in scope; no third-party identity provider.
 - Server-rendered web pages (`/m/view.do`, `/m/chart.do`, `/web/contractDetail_*.html`), the notice board, the WebView JS bridge, and session cookies.
 - Any compatibility with the legacy `/smart.json` RPC format.
 
@@ -59,7 +59,7 @@ All paths are under `https://{host}/v1`. Full detail is in `openapi-v2.yaml`; ev
 | Resource | Methods and paths | Purpose | Legacy equivalent |
 |---|---|---|---|
 | Health | `GET /v1/health` | Liveness; the app tests a base URL with it | none |
-| Auth | `POST /v1/auth/token`, `POST /v1/auth/logout` | Exchange an ID token or refresh token for tokens; revoke | `checkMember`, `regMember`, `/mbrLogin.do` login/logout |
+| Auth | `POST /v1/auth/otp`, `POST /v1/auth/token`, `POST /v1/auth/logout` | Request an e-mailed one-time code; exchange the code or a refresh token for tokens; revoke | `checkMember`, `regMember`, `/mbrLogin.do` login/logout |
 | Me | `GET`, `PATCH`, `DELETE /v1/me` | Profile; account deletion | `checkMember`, `regMember`, `withdrawMember` |
 | Vehicles | `GET`/`POST /v1/vehicles`; `GET`/`PATCH`/`DELETE /v1/vehicles/{id}` | Vehicle CRUD (ETag/If-Match) | `getMemberCarList`, `insertCar`, `updateCar` |
 | Catalogue | `GET /v1/catalogue/makes`, `/makes/{id}/models`, `/variants`, `/variants/{id}` | Vehicle picker with filters and facets | `getCarModelList` (6-step `targetField` cascade) |
@@ -74,20 +74,19 @@ All paths are under `https://{host}/v1`. Full detail is in `openapi-v2.yaml`; ev
 ## 5. Auth and security requirements
 
 - **HTTPS only**, TLS 1.2 or newer (TLS 1.3 preferred). Refuse plain HTTP rather than redirecting it. HSTS on any web-facing host. The app disables cleartext and uses no custom TrustManagers, so certificates must chain to a public CA.
-- **Sign-in (preferred model)**: the app obtains a Google ID token with Credential Manager and calls `POST /v1/auth/token` (`grantType=id_token`). The server verifies the signature against the provider JWKS, plus `iss`, `aud` (the app's OAuth client id), `exp` and `nonce`. It finds or creates the member by (`iss`, `sub`), never by e-mail.
-- **Tokens (proposal)**: an access JWT (RS256 or ES256) valid for 15 minutes, with `sub` = member id and `aud` = `orange-box-api`. A refresh token valid for 30 days, single use and rotated on every refresh; reusing an old one revokes the whole token family. Store refresh tokens hashed.
-- **Alternative model**: accept the provider's ID token directly as the bearer token and skip `/v1/auth/token`. It's simpler but ties sessions to roughly 1-hour ID-token lifetimes. This is open question 1.
+- **Sign-in (e-mail + OTP)**: the app calls `POST /v1/auth/otp` with the user's e-mail address. The server always answers `202` (no account enumeration) and e-mails a random 6-digit code through a transactional e-mail provider. The code expires after 10 minutes, is stored only as a hash, and allows at most 5 attempts. Sends are rate-limited (proposal: about 3 per address per 15 minutes, plus a per-IP limit). The app then calls `POST /v1/auth/token` (`grantType=email_otp`, e-mail and code). On success the server finds the member by the normalised (lower-case) e-mail address, or creates one on the first successful sign-in (`isNewMember=true`). A wrong or expired code returns `400` with `code=invalid_grant`; exhausted attempts return `400` with `code=otp_attempts_exceeded`.
+- **Tokens (proposal)**: an access JWT (ES256, with a `kid` header for key rotation) valid for 15 minutes, with `sub` = member id and `aud` = `orange-box-api`. A refresh token valid for 30 days, single use and rotated on every refresh; reusing an old one revokes the whole token family. Store refresh tokens hashed.
 - **Identity comes from the token only.** Never accept a member id in a body or query string for authorisation. Every resource is scoped to the token's member; another member's resource returns `404`.
 - **Least data**: legacy phone number, mobile carrier, sex, birth date, IP and weather are not collected. The OBD adapter's Bluetooth MAC stays on the phone. VIN and plate number are optional and treated as personal data.
 - **Rankings privacy**: off by default (`rankingOptIn=false`). Leaderboards show only `displayName`, an optional region and a make/model label, never e-mail, VIN or plate. Legacy ranking DTOs carried other members' `loginId` and e-mail; that must not happen here.
 - **Abuse controls**: rate limits per member and per IP, request size limits, and input validation from the JSON Schemas in the spec. Trips marked `simulated=true` are excluded from rankings and points.
-- **Secrets**: no secrets in the app. The server holds its signing keys in a KMS or secret manager and rotates them, publishing its JWKS if clients ever need it.
+- **Secrets**: no secrets in the app. The server holds its JWT signing keys and e-mail provider credentials in its host's secret store (environment secrets) and rotates the signing keys by `kid`.
 
 ## 6. Data model summary
 
 | Entity | Key fields | Notes |
 |---|---|---|
-| Member | `id`, OIDC (`iss`, `sub`), `displayName`, `email` (from token), `countryCode`, `regionCode`, `rankingOptIn` | Legacy `SmartMember`, minimised |
+| Member | `id`, `email` (verified by one-time code, lower-case, unique), `displayName`, `countryCode`, `regionCode`, `rankingOptIn` | Legacy `SmartMember`, minimised |
 | Vehicle | `id`, `clientVehicleId`, `make`, `model`, `fuelType`, `engineDisplacementCc`, `modelYear`, `variantId?`, `vin?`, `plateNumber?`, `odometerKm`, `idleStopGo`, `obdAdapter{elmVersion, obdProtocol}`, `archived`, `updatedAt`, ETag | Legacy `SmartCar`; MAC dropped |
 | Catalogue | Make → Model (`bodyType`, year range) → Variant (`fuelType`, `engineDisplacementCc`, `releaseYear`, `officialFuelEconomyKmPerL`) | Legacy `SmartCarModel`; the data source is open question 5 |
 | Reference | Country (ISO 3166-1), Region (ISO 3166-2) | Legacy `SmartCode` |
@@ -122,7 +121,7 @@ Conventions: timestamps in UTC ISO-8601 with `Z`; metric units in field names; s
 | Scalability | Initial sizing for 10k members and 1k concurrent drivers; horizontally scalable stateless API |
 | Retention | Raw samples 12 months; trip summaries and DTC reports until the user deletes them or their account; request logs 30 days; idempotency keys 24 h–7 d |
 | Privacy and deletion | `DELETE /v1/me` revokes tokens immediately and erases all member data within 30 days, backups included as they rotate. Provide a data export on request (open question). Follow GDPR-style principles: data minimisation, purpose limitation and documented processors. Check India's DPDP Act if hosting or users are in India |
-| Logging | Structured logs with `X-Request-Id`, member id (or a hash of it), route, status and latency. Never log tokens, ID tokens, e-mail, VIN, plate, precise location or request bodies |
+| Logging | Structured logs with `X-Request-Id`, member id (or a hash of it), route, status and latency. Never log tokens, one-time codes, e-mail, VIN, plate, precise location or request bodies |
 | Observability | Metrics for rate, errors and latency per route; upload backlog and aggregation lag; alerting on 5xx rate and auth failures |
 | Rate limiting | `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` on responses, `Retry-After` on `429`/`503`. Starting values: 120 req/min per member overall and 60 uploads/min per member |
 | Caching | Catalogue and reference data: `ETag` plus `Cache-Control: public, max-age=86400`; `If-None-Match` → `304` |
@@ -176,8 +175,8 @@ How the app finds the server:
 
 ## 13. Open questions for the backend developer
 
-1. **Auth model**: token exchange (`/v1/auth/token` with our own JWTs and refresh tokens) or direct OIDC ID-token bearer verification? Which providers besides Google, if any?
-2. **App sign-in**: the v1 app has no sign-in. Remote mode needs a sign-in flow added in M9. Confirm Google via Credential Manager is acceptable.
+1. **Auth e-mail delivery**: which transactional e-mail provider sends the one-time codes, and from which sending domain (SPF/DKIM/DMARC)? Are the proposed OTP limits (10-minute expiry, 5 attempts, about 3 sends per address per 15 minutes) workable?
+2. **App sign-in**: the v1 app has no sign-in. Remote mode needs an e-mail + one-time code sign-in flow added in M9.
 3. **Hosting and data residency**: where will data live (region, cloud)? Does GDPR or India's DPDP Act apply? Who is the data controller?
 4. **Raw telemetry**: store every sample (time-series DB?) or only trip summaries plus downsampled tracks? This drives cost and the retention proposal.
 5. **Vehicle catalogue source**: the legacy catalogue (about 700 Korean-market models) lived on the dead server. What licensed or open data source will back `/v1/catalogue`, and for which markets?
