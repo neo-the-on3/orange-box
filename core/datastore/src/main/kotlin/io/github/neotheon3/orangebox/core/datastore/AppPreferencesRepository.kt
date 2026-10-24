@@ -29,6 +29,7 @@ interface AppPreferencesRepository {
     suspend fun setOnboardingStep(step: String?)
     /** Stores the dashboard settings (overspeed clamped, invalid emergency numbers dropped to the default). */
     suspend fun setDashboard(dashboard: DashboardPreferences)
+    suspend fun setMapTilesEnabled(enabled: Boolean)
 }
 
 @Singleton
@@ -50,6 +51,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                 overspeedKph = DashboardPreferences.clampOverspeed(p[DASH_OVERSPEED] ?: DashboardPreferences.DEFAULT_OVERSPEED_KPH),
                 autoShowDashboard = p[DASH_AUTO_SHOW] ?: false,
             ),
+            mapTilesEnabled = p[MAP_TILES] ?: true,
         )
     }.distinctUntilChanged()
 
@@ -68,6 +70,8 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         dataStore.edit { if (step == null) it.remove(ONBOARDING_STEP) else it[ONBOARDING_STEP] = step }
     }
 
+    override suspend fun setMapTilesEnabled(enabled: Boolean) { dataStore.edit { it[MAP_TILES] = enabled } }
+
     override suspend fun setDashboard(dashboard: DashboardPreferences) {
         dataStore.edit {
             it[DASH_BUTTON] = dashboard.button.name
@@ -85,6 +89,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val DASH_LAUNCH = stringPreferencesKey("dashboard_quick_launch_package")
         val DASH_OVERSPEED = intPreferencesKey("dashboard_overspeed_kph")
         val DASH_AUTO_SHOW = booleanPreferencesKey("dashboard_auto_show")
+        val MAP_TILES = booleanPreferencesKey("map_tiles_enabled")
         val ONBOARDING_STEP = stringPreferencesKey("onboarding_step")
         val ONBOARDING = booleanPreferencesKey("onboarding_complete")
         val DISCLAIMER = booleanPreferencesKey("disclaimer_accepted")

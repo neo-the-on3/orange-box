@@ -12,4 +12,6 @@ data class AppPreferences(
     /** Onboarding step reached but not finished (enum name), so a restart resumes there. Null when not started or done. */
     val onboardingStep: String? = null,
     val dashboard: DashboardPreferences = DashboardPreferences(),
+    /** Trip-detail map backdrop from OpenStreetMap's tile server (the route is drawn either way). */
+    val mapTilesEnabled: Boolean = true,
 )
