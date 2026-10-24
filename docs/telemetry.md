@@ -194,3 +194,28 @@ Highway coast-down is eco: its window still half covers the 100 km/h cruise, and
 The legacy app's "eco speed" is a different metric (time between 60 and 80 km/h,
 `DEFAULT_ECO_MIN_ECO_SPEED`/`DEFAULT_ECO_MAX_ECO_SPEED`, computed inside its closed OBD library). By design
 it isn't reproduced here (see the note at the top).
+
+### On-device tolerances
+
+On a real device or a slow emulator, a scripted drive passes when it is within these bounds of the golden
+values above. They cover the sampling scatter described above. The playback-clock bug (#120) was a
+systematic drift, and these bounds would not have hidden it.
+
+| Metric | Tolerance |
+|---|---|
+| Eco time (City, Harsh) | ±3 s of golden |
+| Overspeed duration (Highway) | ±2 s of golden |
+| Harsh accel/brake peaks | +15 % / −10 % of nominal |
+| Event counts (harsh accel/brake, overspeed) | exact |
+| Highway eco | 0–2 s, all from the coast-down |
+
+Reference run, 0.1.0.16 on the API 25 ARM emulator. Everything is inside the bounds:
+
+| Metric | Golden / nominal | Measured | Deviation |
+|---|---|---|---|
+| City eco | 91 s | 90.4 s | −0.6 s |
+| Harsh eco | 19 s | 19.7 s | +0.7 s |
+| Highway overspeed | 46.5 s | 46.05 s | −0.45 s |
+| Highway eco | 0–2 s | 1.4 s | in range |
+| Harsh brake peaks | 5.56 m/s² | 5.96 / 5.80 m/s² | +7.2 % / +4.3 % |
+| Harsh accel peaks | 4.17 m/s² | 4.63 / 4.24 m/s² | +11.0 % / +1.7 % |
