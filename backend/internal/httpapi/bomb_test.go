@@ -265,14 +265,16 @@ func TestArrayBombMaxItems(t *testing.T) {
 	}
 }
 
-// Arrays the schema leaves unbounded (a trip's dtc.stored) are covered by
-// the MaxJSONValues budget: over it is 413 before decoding; under it,
-// fail-fast validation keeps the cost proportional to the body.
+// Arrays the schema leaves unbounded (here under a property the schema
+// doesn't declare) are covered by the MaxJSONValues budget: over it is 413
+// before decoding; under it, fail-fast validation keeps the cost
+// proportional to the body. A trip's dtc lists, unbounded in the spec, have
+// a server-side maxItems (limits.go), so prescan stops them early.
 func TestArrayBombUnbounded(t *testing.T) {
 	e := newTestEnv(t, true)
 	token, _ := e.signIn("nestedbomb@test.orangebox.invalid")
 	post := func(n int) (*httptest.ResponseRecorder, uint64, time.Duration) {
-		body := gzipJSON(t, `{"trips":[{"dtc":{"stored":[`, `{}`, `]}}]}`, n)
+		body := gzipJSON(t, `{"trips":[{"x":{"y":[`, `{}`, `]}}]}`, n)
 		req := httptest.NewRequest(http.MethodPost, "/v1/trips/batch", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Content-Encoding", "gzip")
@@ -292,13 +294,34 @@ func TestArrayBombUnbounded(t *testing.T) {
 
 	rec, alloc, elapsed = post(MaxJSONValues - 16)
 	t.Logf("under budget: %d, %d MiB allocated, %v", rec.Code, alloc>>20, elapsed)
-	if rec.Code != http.StatusUnprocessableEntity ||
-		!strings.Contains(rec.Body.String(), `"pointer":"/trips/0/dtc/stored/0"`) {
+	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("under budget: status %d %s", rec.Code, rec.Body)
 	}
 	// Decoding 500k empty objects into map[string]any is ~100 B each.
 	if alloc > 160<<20 || elapsed > 3*time.Second {
 		t.Errorf("under budget: allocated %d MiB in %v", alloc>>20, elapsed)
+	}
+}
+
+// dtc.stored has a server-side maxItems: prescan reports the 129th code
+// without decoding the rest.
+func TestArrayBombDtcCodes(t *testing.T) {
+	e := newTestEnv(t, true)
+	token, _ := e.signIn("dtcbomb@test.orangebox.invalid")
+	body := gzipJSON(t, `{"trips":[{"dtc":{"stored":[`, `"P0420"`, `]}}]}`, (MaxUploadBody-64)/8)
+	req := httptest.NewRequest(http.MethodPost, "/v1/trips/batch", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec, alloc, elapsed := measure(e.h, req)
+	t.Logf("1M DTC codes: %d, %d MiB allocated, %v", rec.Code, alloc>>20, elapsed)
+	if rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), `{"pointer":"/trips/0/dtc/stored","detail":"must have at most 128 items"}`) {
+		t.Fatalf("status %d %s", rec.Code, rec.Body)
+	}
+	if alloc > 40<<20 || elapsed > 2*time.Second {
+		t.Errorf("allocated %d MiB in %v", alloc>>20, elapsed)
 	}
 }
 
