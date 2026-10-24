@@ -1,21 +1,14 @@
 name: CI
 
+# Run manually, just before merging, on a branch rebased onto the latest main (see CONTRIBUTING.md):
+#   gh workflow run ci.yml --ref <branch>
+# No push or pull_request triggers: they spent Actions minutes on every push, and the dispatched run on the
+# rebased branch tests the same tree that lands on main (rebase merge).
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'backend/**'
-      - 'docs/backend/**'
-      - '.github/workflows/backend.yml'
-  pull_request:
-    paths-ignore:
-      - 'backend/**'
-      - 'docs/backend/**'
-      - '.github/workflows/backend.yml'
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
