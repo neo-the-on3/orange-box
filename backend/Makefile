@@ -20,7 +20,7 @@ run: ## Run locally in test mode; needs AUTH_TEST_CODE in your environment (see 
 	ENV=local AUTH_TEST_MODE=true go run ./cmd/server
 
 .PHONY: test
-test: ## Run unit tests with the race detector
+test: ## Run tests with the race detector (Postgres tests run only when DATABASE_URL is set)
 	go test -race ./...
 
 .PHONY: vet
@@ -44,12 +44,24 @@ spec-lint: ## Lint the OpenAPI spec (needs Node and Python)
 	fi
 
 .PHONY: generate
-generate: ## Regenerate internal/api from the spec (oapi-codegen strict server + stubs)
-	go generate ./internal/api/...
+generate: ## Regenerate internal/api from the spec and internal/db/dbgen from the SQL (sqlc)
+	go generate ./internal/api/... ./internal/db/...
 
 .PHONY: generate-check
 generate-check: generate ## Fail if the committed generated code is out of date
-	@git diff --exit-code -- internal/api || (echo "generated code is stale: run make generate and commit" && exit 1)
+	@git diff --exit-code -- internal/api internal/db/dbgen || (echo "generated code is stale: run make generate and commit" && exit 1)
+
+.PHONY: migrate-up
+migrate-up: ## Apply pending migrations to DATABASE_URL
+	go run ./cmd/server migrate up
+
+.PHONY: migrate-down
+migrate-down: ## Roll back the latest migration on DATABASE_URL
+	go run ./cmd/server migrate down
+
+.PHONY: migrate-status
+migrate-status: ## Show which migrations DATABASE_URL has applied
+	go run ./cmd/server migrate status
 
 .PHONY: docker
 docker: ## Build the container image
