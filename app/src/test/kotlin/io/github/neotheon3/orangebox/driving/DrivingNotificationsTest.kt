@@ -18,8 +18,13 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
+/**
+ * Plain [android.app.Application]: these tests only exercise [DrivingNotifications]. OrangeBoxApplication
+ * would also install the app's DrivingController on a background dispatcher, and nothing it does may
+ * touch the notifications these tests post and read.
+ */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33, 34])
+@Config(sdk = [33, 34], application = android.app.Application::class)
 class DrivingNotificationsTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val nm = context.getSystemService(NotificationManager::class.java)

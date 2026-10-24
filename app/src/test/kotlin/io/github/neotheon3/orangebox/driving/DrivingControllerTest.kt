@@ -125,4 +125,40 @@ class DrivingControllerTest {
         assertNull(n.fullScreenIntent)
         assertEquals(1, n.actions.size)
     }
+
+    /**
+     * Regression for the flaky DrivingNotificationsTest on main CI (run 40096982902): the controller's
+     * first "not connected" value cancelled Start driving asynchronously, so it could remove a notification
+     * posted after install(). A queued dispatcher makes that late delivery deterministic here.
+     */
+    @Test fun `the initial not-connected state never cancels a Start driving posted after install`() {
+        val queued = kotlinx.coroutines.test.StandardTestDispatcher()
+        val lateScope = CoroutineScope(SupervisorJob() + queued)
+        try {
+            val prefs = FakeAppPreferencesRepository(AppPreferences())
+            val recorder = TripRecorder(lateScope, conn, FakeTelemetrySource(), NoTrips, LocationSource { emptyFlow() })
+            DrivingController(app, lateScope, conn, recorder, DriveSession(lateScope, conn), prefs).install(app)
+            DrivingNotifications.postDriveStart(app, autoShow = false, fullScreenAllowed = false)
+            queued.scheduler.advanceUntilIdle()
+            assertEquals(1, shadowOf(nm).allNotifications.count { it.channelId == DrivingNotifications.CHANNEL_DRIVE_START })
+        } finally {
+            lateScope.cancel()
+        }
+    }
+
+    @Test fun `a stale Start driving is cleared at install when not connected`() {
+        DrivingNotifications.ensureChannels(app)
+        DrivingNotifications.postDriveStart(app, autoShow = false, fullScreenAllowed = false)
+        controller(autoShow = false)
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+    }
+
+    @Test fun `a real disconnect still cancels Start driving`() {
+        controller(autoShow = false)
+        connect()
+        assertEquals(1, shadowOf(nm).allNotifications.count { it.channelId == DrivingNotifications.CHANNEL_DRIVE_START })
+        conn.state.value = ObdConnectionState.LinkLost
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertTrue(shadowOf(nm).allNotifications.none { it.channelId == DrivingNotifications.CHANNEL_DRIVE_START })
+    }
 }

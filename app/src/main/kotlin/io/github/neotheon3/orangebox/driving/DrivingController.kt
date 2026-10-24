@@ -61,9 +61,16 @@ class DrivingController @Inject constructor(
                 DrivingNotifications.cancelOngoing(context)
             }
         }
+        // A "Start driving" left by an earlier process is stale unless we are connected right now. Clear it
+        // here, synchronously, instead of from the collector below: an asynchronous cancel of the first
+        // "not connected" value would land at an arbitrary later time and could remove a fresh notification.
+        val connectedNow = connection.state.value is ObdConnectionState.Connected
+        if (!connectedNow) DrivingNotifications.cancelDriveStart(context)
         scope.launch {
+            var wasUp = false
             connection.state.map { it is ObdConnectionState.Connected }.distinctUntilChanged().collect { up ->
-                if (up) onConnected() else DrivingNotifications.cancelDriveStart(context)
+                if (up) onConnected() else if (wasUp) DrivingNotifications.cancelDriveStart(context)
+                wasUp = up
             }
         }
     }
