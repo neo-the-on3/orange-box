@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Home → Trips (month calendar + list) → trip detail (metrics, events).
+# Home → Trips (month calendar + list) → trip detail with the route map, and a trip without location.
 # The emulator has no GPS fix, so debug demo trips are seeded first (`--es demo_trips seed`).
+# Map tiles are switched off (`--es map_tiles off`): CI must not send automated traffic to
+# tile.openstreetmap.org (OSMF tile policy); the route is drawn without tiles.
 set -euo pipefail
 # shellcheck source=scripts/ci/smoke-lib.sh
 source "${SMOKE_LIB:-scripts/ci/smoke-lib.sh}"
@@ -24,7 +26,7 @@ tap_regex() {
   return 1
 }
 
-adb shell am start -W -n "$PKG/$ACTIVITY" --es demo_trips seed > /dev/null
+adb shell am start -W -n "$PKG/$ACTIVITY" --es demo_trips seed --es map_tiles off > /dev/null
 sleep 2
 adb logcat -d | grep -q "demo_trips seeded" || { echo "demo_trips extra not applied" >&2; exit 1; }
 
@@ -38,11 +40,18 @@ fi
 wait_for_regex 'text="[0-9.]+ km · 0:25:00' trips-list 15
 shot 45-trips
 
-# Trip detail: metrics and events (the route map comes with #44).
+# The 25-minute demo trip has a route and events.
 tap_regex '[0-9.]+ km · 0:25:00[^"]*' trips-open-detail
+wait_for_regex 'content-desc="Route map, [0-9]+ recorded positions"' trip-detail-map 15
 wait_for_text "Average speed" trip-detail 15
-wait_for_regex 'text="[0-9]+ GPS points · [0-9]+ speed readings"' trip-detail-gps 10
 shot 46-trip-detail
+adb shell input keyevent KEYCODE_BACK
+wait_for_text "Previous month" trips-back-1 10
+
+# The 18-minute demo trip has no location.
+tap_regex '[0-9.]+ km · 0:18:00[^"]*' trips-open-noloc
+wait_for_text "No route for this trip" trip-detail-noloc 15
+shot 47-trip-detail-no-location
 adb shell input keyevent KEYCODE_BACK
 wait_for_text "Previous month" trips-back 10
 adb shell input keyevent KEYCODE_BACK

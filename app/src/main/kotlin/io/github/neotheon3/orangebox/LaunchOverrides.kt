@@ -19,6 +19,8 @@ object LaunchExtras {
     const val ONBOARDING = "onboarding"
     /** Debug only: `seed` inserts a few demo trips (one with a route) once. */
     const val DEMO_TRIPS = "demo_trips"
+    /** Debug only: `off`/`on` sets the trip-map tile switch (CI smoke runs with tiles off: no automated OSM traffic). */
+    const val MAP_TILES = "map_tiles"
 
     enum class Onboarding { SKIP, RESET }
 

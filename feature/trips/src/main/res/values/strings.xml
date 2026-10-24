@@ -22,6 +22,12 @@
     <string name="trip_detail_title">Trip</string>
     <string name="trip_detail_not_found">This trip no longer exists.</string>
     <string name="trip_detail_gps_points">%1$d GPS points · %2$d speed readings</string>
+    <string name="trip_detail_more">More options</string>
+    <string name="trip_detail_map_tiles">Map tiles (OpenStreetMap)</string>
+    <string name="trip_detail_report_map_issue">Report a map issue</string>
+    <string name="trip_detail_map_description">Route map, %1$d recorded positions</string>
+    <string name="trip_detail_no_location">No route for this trip</string>
+    <string name="trip_detail_no_location_hint">No location was recorded. Allow location access to see future routes on a map.</string>
     <string name="trip_detail_events">Events</string>
     <string name="trip_detail_fuel_cuts">Fuel cut</string>
     <string name="trip_detail_fuel_cuts_hint">Coasting with the engine cutting fuel. Saves fuel, not counted as an event.</string>
