@@ -121,6 +121,7 @@ type store struct {
 	members     auth.MemberStore
 	vehicles    storage.Vehicles            // nil without a database
 	idempotency storage.Idempotency         // nil without a database
+	classify    func(error) storage.Failure // nil without a database
 	ready       func(context.Context) error // nil when there is nothing to check
 	close       func()
 }
@@ -137,7 +138,15 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		return store{}, err
 	}
 	if cfg.MigrateOnStart {
-		if err := migrateUp(ctx, pool, logger); err != nil {
+		// Its own pool without the statement timeout (#178).
+		mpool, err := db.Open(ctx, db.Options{URL: cfg.DatabaseURL, MaxConns: 2, ForMigrations: true})
+		if err != nil {
+			pool.Close()
+			return store{}, err
+		}
+		err = migrateUp(ctx, mpool, logger)
+		mpool.Close()
+		if err != nil {
 			pool.Close()
 			return store{}, err
 		}
@@ -151,6 +160,7 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		members:     db.NewMembers(pool),
 		vehicles:    db.NewVehicles(pool),
 		idempotency: db.NewIdempotency(pool),
+		classify:    db.Classify,
 		ready:       pool.Ping,
 		close:       pool.Close,
 	}, nil
@@ -171,6 +181,7 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		Members:             st.members,
 		Vehicles:            st.vehicles,
 		Idempotency:         st.idempotency,
+		ClassifyError:       st.classify,
 		Ready:               st.ready,
 		Codes:               auth.NewPendingCodes(),
 		TestMode:            cfg.AuthTestMode,

@@ -44,7 +44,7 @@ func migrateCommand(args []string, getenv func(string) string, stdout io.Writer)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	pool, err := db.Open(ctx, db.Options{URL: url, MaxConns: 2})
+	pool, err := db.Open(ctx, db.Options{URL: url, MaxConns: 2, ForMigrations: true})
 	if err != nil {
 		logger.Error("migrate: cannot connect", slog.Any("err", err))
 		return 1

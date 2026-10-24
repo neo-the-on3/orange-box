@@ -57,10 +57,11 @@ var replayedHeaders = []string{"Content-Type", "ETag", "Location"}
 type replayGuard func(ctx context.Context, member uuid.UUID, body []byte) (*problem.Problem, error)
 
 type idempotency struct {
-	store  store.Idempotency
-	lease  time.Duration
-	guards map[string]replayGuard // by lower-case operationId
-	logger *slog.Logger
+	store    store.Idempotency
+	lease    time.Duration
+	guards   map[string]replayGuard // by lower-case operationId
+	logger   *slog.Logger
+	classify func(error) store.Failure
 }
 
 // acceptsIdempotencyKey reports whether op declares the Idempotency-Key header.
@@ -199,6 +200,10 @@ func (m *idempotency) replay(w http.ResponseWriter, r *http.Request, route *rout
 func (m *idempotency) fail(w http.ResponseWriter, r *http.Request, err error) {
 	m.logger.ErrorContext(r.Context(), "idempotency",
 		slog.String("request_id", reqctx.RequestID(r.Context())), slog.Any("err", err))
+	if sp := storageProblem(m.classify, err); sp != nil {
+		problem.Write(w, r, sp)
+		return
+	}
 	problem.Write(w, r, problem.Internal())
 }
 
