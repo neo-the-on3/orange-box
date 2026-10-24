@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Orange Box API
-  version: 1.0.0-draft.3
+  version: 1.0.0-draft.4
   summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
   description: |
     Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
@@ -147,9 +147,14 @@ paths:
         `POST /v1/auth/token`). While an address is locked out, this operation still returns `202` with the same
         body, but no code is generated or sent.
 
-        **Test mode (never in production)**: when the server runs with `AUTH_TEST_MODE=true`, addresses in the
-        reserved domain `@test.orangebox.invalid` are not e-mailed; their code is the configured static
-        `AUTH_TEST_CODE`. The response is the same `202`. See REQUIREMENTS.md §5 and §11.
+        **Test mode (local, ci and sandbox only; never in production)**: test mode is on only when the server was
+        started with `AUTH_TEST_MODE=true` **and** `ENV` is exactly `local`, `ci` or `sandbox` (case-sensitive); with
+        any other `ENV` value, including unset, the server refuses to start. In test mode, addresses in the reserved
+        domain `@test.orangebox.invalid` are not e-mailed; their code is the configured static `AUTH_TEST_CODE`, and
+        the response is the same `202`. **When test mode is off** (always in production), a request for an
+        `@test.orangebox.invalid` address is rejected with `422` (`code=test_address_rejected`) and nothing is sent.
+        This says nothing about any member, because the reserved domain can never belong to one. See
+        REQUIREMENTS.md §5 and §11.
 
         Addresses are trimmed and normalised to lower case before use. The plain address and the code are never
         logged.
@@ -180,7 +185,23 @@ paths:
               schema: {$ref: '#/components/schemas/OtpResponse'}
               example: {expiresIn: 600, resendAfter: 60}
         '400': {$ref: '#/components/responses/BadRequest'}
-        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '422':
+          description: |
+            Validation failed, or `code=test_address_rejected`: the address is in the reserved test domain
+            `@test.orangebox.invalid` and test mode is off (always the case in production).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+              example:
+                type: https://api.example.invalid/problems/test-address-rejected
+                title: Test address not allowed
+                status: 422
+                detail: Addresses in the reserved test domain are only accepted when test mode is on.
+                instance: /v1/auth/otp
+                code: test_address_rejected
+                requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a14
+                errors:
+                  - {pointer: /email, detail: reserved test domain}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
         default: {$ref: '#/components/responses/InternalError'}
@@ -213,27 +234,47 @@ paths:
           correct code fails.
         Repeated failures from one IP are additionally rate-limited (`429`).
 
-        **Per-address lockout (proposal)**: every failed `email_otp` verification for an address (wrong code,
-        expired code, or no pending code) counts against that address, whichever code it was for. **10 failures
+        **Per-address lockout (proposal)**: every failed `email_otp` verification of a pending code for an address
+        (wrong code, or a code that expired or was replaced) counts against that address, whichever code it was for.
+        An attempt when no code is pending still returns `invalid_grant` and counts toward the per-IP failure limit,
+        but **not** toward the address lockout: it cannot succeed, so counting it adds no protection and would let
+        anyone lock an address without a single e-mail being sent. **10 failures
         within a rolling 1 hour** lock the address for **1 hour**; **20 failures within a rolling 24 hours** lock it
         for **24 hours**. Together with the per-code (5) and send (3 per 15 min) limits this caps guessing at about
         20 codes a day per address (a 1 in 50,000 chance per day for a 6-digit code). A successful sign-in resets
         the 1-hour counter but not the 24-hour one. The lockout applies to every well-formed address, member or
         not, so it reveals nothing about registration. It blocks only new code sign-ins: existing sessions and
-        refresh tokens keep working, which limits the damage of an attacker locking out a victim on purpose.
+        refresh tokens keep working.
 
-        **Refresh concurrency**: the app must run at most one refresh at a time. As a safety net, a refresh token
-        presented again within **30 seconds** of its first use (e.g. a retried request whose response was lost)
-        is not treated as reuse: the server issues another token pair in the same family. Reuse after the grace
-        window revokes the family as described above.
+        *Known abuse (documented, accepted for v1)*: because the lockout is per address, an attacker can keep a
+        victim's address locked by requesting codes for it and submitting about 20 wrong codes a day. Each attempt
+        cycle sends the victim a real code e-mail (because no-pending-code attempts don't count), so the abuse is
+        visible. `otp_locked` and its `Retry-After` disclose that an address is currently locked; that is accepted,
+        since it reveals nothing about membership. Mitigations: existing sessions keep working; the operator is
+        alerted when an address is locked repeatedly or when one IP or ASN causes many lockouts (REQUIREMENTS.md §8);
+        the per-IP failure limit (`429`) slows a single source. Per-(address, IP) failure weighting is listed as an
+        option in REQUIREMENTS.md §13. A fresh code does **not** bypass a lock, since that would reopen brute force.
 
-        **Test mode (sandbox, local and CI only; never in production)**: if the server was started with
-        `AUTH_TEST_MODE=true`, an `email_otp` grant for an address in the reserved domain `@test.orangebox.invalid`
-        succeeds with the configured static `AUTH_TEST_CODE` (6 digits) after a `POST /v1/auth/otp` for that
-        address. No e-mail is sent. Everything else (request shape, per-code and per-address limits, member
-        creation, tokens) is unchanged, so contract tests such as Schemathesis exercise the real `email_otp`
-        grant. The server refuses to start if `AUTH_TEST_MODE=true` and `ENV=production`. Addresses outside the
-        reserved domain always use real e-mailed codes.
+        **Refresh concurrency and grace window**: the app must run at most one refresh at a time. As a safety net
+        for a retried request whose response was lost, when refresh token *P* is presented again within
+        **30 seconds** of its first use **and** the child refresh token *C1* issued from it has not been used yet,
+        the server revokes *C1* and returns a fresh pair (*C2* plus a new access JWT) in the same family. At most
+        one live child of *P* exists at any time. Access JWTs already issued with *C1* are not revoked and simply
+        expire (15 min). A re-send of *P* after 30 seconds, or after *C1* has been used, is reuse: the whole family
+        is revoked and the response is `invalid_grant`.
+
+        **Test mode (local, ci and sandbox only; never in production)**: test mode is on only when the server was
+        started with `AUTH_TEST_MODE=true` **and** `ENV` is exactly `local`, `ci` or `sandbox` (case-sensitive
+        allow-list, fail closed). With `AUTH_TEST_MODE=true` and any other `ENV` (unset, empty, `production`,
+        `prod`, `Production`, ...) the server **refuses to start**. It also refuses to start unless
+        `AUTH_TEST_CODE` is exactly 6 ASCII digits and non-trivial: not all the same digit (`000000`, `111111`, ...)
+        and not an ascending or descending run (`012345`, `123456`, ... `456789`, `987654`, ... `543210`).
+        In test mode, an `email_otp` grant for an address in the reserved domain `@test.orangebox.invalid`
+        succeeds with `AUTH_TEST_CODE` after a `POST /v1/auth/otp` for that address. No e-mail is sent. Everything
+        else (request shape, per-code and per-address limits, member creation, tokens) is unchanged, so contract
+        tests such as Schemathesis exercise the real `email_otp` grant. Addresses outside the reserved domain
+        always use real e-mailed codes. **When test mode is off** (always in production), an `email_otp` grant for
+        an `@test.orangebox.invalid` address is rejected with `422` (`code=test_address_rejected`).
       security: []
       x-legacy-mapping:
         replaces: ['/smart.json cmd=checkMember', '/smart.json cmd=regMember', 'POST /mbrLogin.do cmd=login.json']
@@ -305,7 +346,23 @@ paths:
                     code: otp_locked
                     requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a12
         '403': {$ref: '#/components/responses/Forbidden'}
-        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '422':
+          description: |
+            Validation failed, or `code=test_address_rejected`: the address is in the reserved test domain
+            `@test.orangebox.invalid` and test mode is off (always the case in production).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+              example:
+                type: https://api.example.invalid/problems/test-address-rejected
+                title: Test address not allowed
+                status: 422
+                detail: Addresses in the reserved test domain are only accepted when test mode is on.
+                instance: /v1/auth/token
+                code: test_address_rejected
+                requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a14
+                errors:
+                  - {pointer: /email, detail: reserved test domain}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         default: {$ref: '#/components/responses/InternalError'}
 
@@ -1359,7 +1416,7 @@ components:
         instance: {type: string, format: uri-reference}
         code:
           type: string
-          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `internal_error`, `etag_mismatch`, `batch_too_large`).
+          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `test_address_rejected`, `internal_error`, `etag_mismatch`, `batch_too_large`).
         requestId: {type: string}
         errors:
           type: array
@@ -1409,7 +1466,7 @@ components:
       required: [grantType, email, code]
       properties:
         grantType: {type: string, const: email_otp}
-        email: {type: string, format: email, maxLength: 254, description: 'The address the code was sent to (same normalisation as `POST /v1/auth/otp`). In test mode only (never in production), addresses ending in `@test.orangebox.invalid` accept the static `AUTH_TEST_CODE`.'}
+        email: {type: string, format: email, maxLength: 254, description: 'The address the code was sent to (same normalisation as `POST /v1/auth/otp`). In test mode only (ENV local, ci or sandbox; never in production), addresses ending in `@test.orangebox.invalid` accept the static `AUTH_TEST_CODE`; with test mode off they are rejected with `422` (`test_address_rejected`).'}
         code: {type: string, pattern: '^[0-9]{6}$', description: '6-digit one-time code from the e-mail. Sent as a string to keep leading zeros.'}
         device:
           type: object
