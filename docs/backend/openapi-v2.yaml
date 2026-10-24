@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Orange Box API
-  version: 1.0.0-draft.2
+  version: 1.0.0-draft.3
   summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
   description: |
     Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
@@ -33,14 +33,20 @@ info:
       `clientBatchId`, `clientReportId`, `clientVehicleId`) are UUIDs used for de-duplication.
     * **Pagination**: cursor based. Request `?limit=` (1-100, default 50) and `?cursor=`; responses return
       `items` and `nextCursor` (`null` on the last page). Cursors are opaque and may expire (then `400`).
+      Exception: `GET /v1/trips/{tripId}/samples` allows `limit` up to 5000 (default 1000), because a 1-hour drive
+      at 1 Hz is about 3,600 samples.
     * **Concurrency**: mutable resources return `ETag`; `PATCH`/`DELETE` on vehicles and `PATCH /v1/me` require
-      `If-Match` (`428` if missing, `412` if stale). Every resource also exposes `updatedAt`.
+      `If-Match` (`428` if missing, `412` if stale). `If-Match` is declared optional so that a generated server
+      can answer `428` itself instead of a generic `400`; handlers must enforce it. Every resource also exposes
+      `updatedAt`. Operations that document `304` accept `If-None-Match`.
     * **Idempotency**: `Idempotency-Key` header (UUID) is required on batch uploads and accepted on other POSTs.
       The server stores the key with a request fingerprint and the response for at least 24 h (proposal). A retry
       with the same key and body returns the original response; the same key with a different body returns
       `422`; a retry while the first request is still processing returns `409`.
-    * **Rate limits**: responses carry `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds).
-      `429` and `503` carry `Retry-After`. Clients back off exponentially with jitter.
+    * **Rate limits**: every response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds),
+      set by middleware (declared explicitly only on a few operations to keep the document readable). Every
+      operation documents `429`. `429` and `503` carry `Retry-After`. Clients back off exponentially with jitter.
+    * **Unexpected errors**: every operation has a `default` problem+json response (`500`, `502`, `503`, `504`).
     * **Tracing**: clients send `X-Request-Id` (UUID); the server echoes it (or generates one) on every response
       and includes it in problem details.
 
@@ -113,6 +119,7 @@ paths:
               schema: {$ref: '#/components/schemas/Health'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/auth/otp:
     post:
@@ -135,6 +142,14 @@ paths:
         the per-IP limit returns `429` with `Retry-After` and the `RateLimit-*` headers. Exceeding the per-address
         limit still returns `202` (to avoid revealing anything about the address); `resendAfter` tells the app
         when to enable its "resend code" button.
+
+        **Per-address lockout (proposal)**: failed verifications are also counted per address **across codes** (see
+        `POST /v1/auth/token`). While an address is locked out, this operation still returns `202` with the same
+        body, but no code is generated or sent.
+
+        **Test mode (never in production)**: when the server runs with `AUTH_TEST_MODE=true`, addresses in the
+        reserved domain `@test.orangebox.invalid` are not e-mailed; their code is the configured static
+        `AUTH_TEST_CODE`. The response is the same `202`. See REQUIREMENTS.md §5 and §11.
 
         Addresses are trimmed and normalised to lower case before use. The plain address and the code are never
         logged.
@@ -168,6 +183,7 @@ paths:
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/auth/token:
     post:
@@ -192,7 +208,32 @@ paths:
           revoked or reused refresh token. The response does not say which, to avoid enumeration.
         * `otp_attempts_exceeded`: the code has been invalidated after 5 wrong attempts. Request a new code with
           `POST /v1/auth/otp`.
+        * `otp_locked`: the address is temporarily locked out after too many failed verifications across codes
+          (below). The response carries `Retry-After` (seconds). No code is checked while locked, so even the
+          correct code fails.
         Repeated failures from one IP are additionally rate-limited (`429`).
+
+        **Per-address lockout (proposal)**: every failed `email_otp` verification for an address (wrong code,
+        expired code, or no pending code) counts against that address, whichever code it was for. **10 failures
+        within a rolling 1 hour** lock the address for **1 hour**; **20 failures within a rolling 24 hours** lock it
+        for **24 hours**. Together with the per-code (5) and send (3 per 15 min) limits this caps guessing at about
+        20 codes a day per address (a 1 in 50,000 chance per day for a 6-digit code). A successful sign-in resets
+        the 1-hour counter but not the 24-hour one. The lockout applies to every well-formed address, member or
+        not, so it reveals nothing about registration. It blocks only new code sign-ins: existing sessions and
+        refresh tokens keep working, which limits the damage of an attacker locking out a victim on purpose.
+
+        **Refresh concurrency**: the app must run at most one refresh at a time. As a safety net, a refresh token
+        presented again within **30 seconds** of its first use (e.g. a retried request whose response was lost)
+        is not treated as reuse: the server issues another token pair in the same family. Reuse after the grace
+        window revokes the family as described above.
+
+        **Test mode (sandbox, local and CI only; never in production)**: if the server was started with
+        `AUTH_TEST_MODE=true`, an `email_otp` grant for an address in the reserved domain `@test.orangebox.invalid`
+        succeeds with the configured static `AUTH_TEST_CODE` (6 digits) after a `POST /v1/auth/otp` for that
+        address. No e-mail is sent. Everything else (request shape, per-code and per-address limits, member
+        creation, tokens) is unchanged, so contract tests such as Schemathesis exercise the real `email_otp`
+        grant. The server refuses to start if `AUTH_TEST_MODE=true` and `ENV=production`. Addresses outside the
+        reserved domain always use real e-mailed codes.
       security: []
       x-legacy-mapping:
         replaces: ['/smart.json cmd=checkMember', '/smart.json cmd=regMember', 'POST /mbrLogin.do cmd=login.json']
@@ -214,11 +255,24 @@ paths:
           description: Tokens issued
           headers:
             Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TokenResponse'}
+              example:
+                accessToken: eyJhbGciOiJFUzI1NiIsImtpZCI6IjIwMjYtMTAifQ.eyJzdWIiOiIwMTkyIn0.c2ln
+                tokenType: Bearer
+                expiresIn: 900
+                refreshToken: rt_01HFXK3Q8J6Z
+                refreshExpiresIn: 2592000
+                memberId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a10
+                isNewMember: false
         '400':
-          description: Malformed request, or the grant was rejected (`invalid_grant`, `otp_attempts_exceeded`)
+          description: |
+            Malformed request, or the grant was rejected (`invalid_grant`, `otp_attempts_exceeded`, `otp_locked`).
+            `otp_locked` responses carry `Retry-After`.
+          headers:
+            Retry-After: {$ref: '#/components/headers/Retry-After'}
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -241,29 +295,50 @@ paths:
                     instance: /v1/auth/token
                     code: otp_attempts_exceeded
                     requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a11
+                locked:
+                  value:
+                    type: https://api.example.invalid/problems/otp-locked
+                    title: Sign-in temporarily locked
+                    status: 400
+                    detail: Too many failed codes for this address. Try again later.
+                    instance: /v1/auth/token
+                    code: otp_locked
+                    requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a12
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/auth/logout:
     post:
       tags: [auth]
       operationId: logout
       summary: Revoke the caller's refresh token (and its rotation family)
+      description: |
+        Revokes the given refresh token and its rotation family. The token must belong to the calling member
+        (the bearer token's `sub`). A token that is unknown, already revoked or belongs to another member is not
+        touched and the response is still `204`, so the endpoint cannot be used to probe tokens.
       x-legacy-mapping:
         replaces: ['POST /mbrLogin.do cmd=logout.json']
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [refreshToken]
               properties:
-                refreshToken: {type: string}
+                refreshToken: {type: string, minLength: 1, maxLength: 512}
       responses:
-        '204': {description: 'Revoked (also returned if already revoked)'}
+        '204': {description: 'Revoked (also returned if already revoked, unknown, or not the caller''s)'}
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/me:
     get:
@@ -282,6 +357,8 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Profile'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
     patch:
       tags: [me]
       operationId: updateMe
@@ -308,6 +385,8 @@ paths:
         '412': {$ref: '#/components/responses/PreconditionFailed'}
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
     delete:
       tags: [me]
       operationId: deleteMe
@@ -315,7 +394,16 @@ paths:
       description: |
         Revokes all tokens immediately and schedules erasure of the profile, vehicles, trips, telemetry, DTC
         reports, stats, ranking entries and points. Erasure must complete within 30 days (proposal); backups age out
-        on their normal rotation. Repeating the call returns `202` with the existing request.
+        on their normal rotation.
+
+        Revocation of access JWTs: the server records a per-member `tokensValidAfter` timestamp (or marks the
+        member deleted) and the auth middleware checks it on every request, so outstanding access JWTs are rejected
+        with `401` at once rather than at their 15-minute expiry. Refresh-token families are revoked in the same
+        transaction.
+
+        Because the caller's tokens are revoked, the call cannot be repeated: a retry gets `401`. An app that lost
+        the `202` and gets `401` on retry treats the deletion as accepted and clears its local session. Signing in
+        again with the same address during the erasure window creates a new, empty member.
       x-legacy-mapping:
         replaces: ['/smart.json cmd=withdrawMember']
         notes: The legacy client only sent memberNo; the legacy DTO has activeYn/withdrawDate fields. v1 requires real erasure.
@@ -326,6 +414,8 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/AccountDeletion'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/vehicles:
     get:
@@ -353,6 +443,7 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
     post:
       tags: [vehicles]
       operationId: createVehicle
@@ -381,6 +472,7 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/vehicles/{vehicleId}:
     parameters:
@@ -391,6 +483,8 @@ paths:
       summary: Get one vehicle
       x-legacy-mapping:
         replaces: ['/smart.json cmd=getMemberCarList (single entry)']
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Vehicle
@@ -402,6 +496,8 @@ paths:
         '304': {description: 'Not modified (If-None-Match matched)'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
     patch:
       tags: [vehicles]
       operationId: updateVehicle
@@ -429,6 +525,8 @@ paths:
         '412': {$ref: '#/components/responses/PreconditionFailed'}
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
     delete:
       tags: [vehicles]
       operationId: deleteVehicle
@@ -449,6 +547,8 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '412': {$ref: '#/components/responses/PreconditionFailed'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/catalogue/makes:
     get:
@@ -462,6 +562,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
         - {name: q, in: query, description: 'Case-insensitive prefix search on name', schema: {type: string, maxLength: 64}}
         - {name: market, in: query, description: 'ISO 3166-1 alpha-2 market filter', schema: {$ref: '#/components/schemas/CountryCode'}}
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Page of makes
@@ -474,6 +575,8 @@ paths:
         '304': {description: 'Not modified'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/catalogue/makes/{makeId}/models:
     get:
@@ -490,6 +593,7 @@ paths:
         - {name: bodyType, in: query, schema: {$ref: '#/components/schemas/BodyType'}}
         - {name: year, in: query, description: 'Only models available in this model year', schema: {type: integer, minimum: 1980, maximum: 2100}}
         - {name: q, in: query, schema: {type: string, maxLength: 64}}
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Page of models
@@ -502,6 +606,9 @@ paths:
         '304': {description: 'Not modified'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/catalogue/variants:
     get:
@@ -520,6 +627,7 @@ paths:
         - {name: displacementCc, in: query, schema: {type: integer, minimum: 0, maximum: 10000}}
         - {name: year, in: query, schema: {type: integer, minimum: 1980, maximum: 2100}}
         - {name: includeFacets, in: query, description: 'Return distinct fuelType/displacementCc/year values for the current filter', schema: {type: boolean, default: false}}
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Page of variants
@@ -532,6 +640,8 @@ paths:
         '304': {description: 'Not modified'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/catalogue/variants/{variantId}:
     get:
@@ -553,6 +663,8 @@ paths:
               schema: {$ref: '#/components/schemas/Variant'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/reference/countries:
     get:
@@ -563,6 +675,7 @@ paths:
         replaces: ['/smart.json cmd=getCodeList grpCd=CountryCd']
       parameters:
         - {name: lang, in: query, description: 'BCP 47 language for names (falls back to Accept-Language, then en)', schema: {type: string}}
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Countries (small, unpaginated list)
@@ -578,6 +691,8 @@ paths:
                   items: {type: array, items: {$ref: '#/components/schemas/Country'}}
         '304': {description: 'Not modified'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/reference/countries/{countryCode}/regions:
     get:
@@ -589,6 +704,7 @@ paths:
       parameters:
         - {name: countryCode, in: path, required: true, schema: {$ref: '#/components/schemas/CountryCode'}}
         - {name: lang, in: query, schema: {type: string}}
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Regions
@@ -605,6 +721,8 @@ paths:
         '304': {description: 'Not modified'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/trips/batch:
     post:
@@ -647,6 +765,7 @@ paths:
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/trips:
     get:
@@ -671,6 +790,8 @@ paths:
               schema: {$ref: '#/components/schemas/TripPage'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/trips/days:
     get:
@@ -703,6 +824,8 @@ paths:
                         tripCount: {type: integer, minimum: 1}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/trips/{tripId}:
     parameters:
@@ -721,6 +844,8 @@ paths:
               schema: {$ref: '#/components/schemas/Trip'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
     delete:
       tags: [trips]
       operationId: deleteTrip
@@ -731,6 +856,8 @@ paths:
         '204': {description: 'Deleted'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/trips/{tripId}/samples:
     get:
@@ -751,6 +878,9 @@ paths:
               schema: {$ref: '#/components/schemas/SamplePage'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/trips/{tripId}/events:
     get:
@@ -771,6 +901,9 @@ paths:
               schema: {$ref: '#/components/schemas/EventPage'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/telemetry/batches:
     post:
@@ -816,6 +949,7 @@ paths:
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/vehicles/{vehicleId}/dtc-reports:
     parameters:
@@ -830,16 +964,26 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/ContentEncoding'
+        - $ref: '#/components/parameters/XRequestId'
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/DtcReportCreate'}
       responses:
-        '201':
-          description: Created (or the existing report for a repeated clientReportId)
+        '200':
+          description: Replay. A report with this `clientReportId` (or `Idempotency-Key`) already exists; it is returned unchanged.
           headers:
             Location: {$ref: '#/components/headers/Location'}
+            X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DtcReport'}
+        '201':
+          description: Created
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+            X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DtcReport'}
@@ -847,7 +991,12 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '415': {$ref: '#/components/responses/UnsupportedMediaType'}
         '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+        default: {$ref: '#/components/responses/InternalError'}
     get:
       tags: [diagnostics]
       operationId: listDtcReports
@@ -866,6 +1015,9 @@ paths:
               schema: {$ref: '#/components/schemas/DtcReportPage'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/stats/summary:
     get:
@@ -888,6 +1040,8 @@ paths:
               schema: {$ref: '#/components/schemas/StatsSummary'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/rankings/{metric}:
     get:
@@ -914,6 +1068,8 @@ paths:
               schema: {$ref: '#/components/schemas/RankingPage'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/rankings/{metric}/me:
     get:
@@ -939,6 +1095,8 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/me/points:
     get:
@@ -955,6 +1113,8 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/PointsBalance'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
   /v1/me/points/ledger:
     get:
@@ -974,6 +1134,9 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/PointsLedgerPage'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
 
 components:
   securitySchemes:
@@ -1010,9 +1173,17 @@ components:
     IfMatch:
       name: If-Match
       in: header
-      required: true
-      description: ETag from the last GET/PATCH. Missing → 428, stale → 412.
-      schema: {type: string}
+      required: false
+      description: |
+        ETag from the last GET/PATCH. **Required by the server** even though it is declared optional: missing → 428
+        (enforced in the handler, so a generated validator does not turn it into a generic 400), stale → 412.
+      schema: {type: string, maxLength: 256}
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: ETag from an earlier response. If it matches the current representation the server returns `304`.
+      schema: {type: string, maxLength: 256}
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -1044,7 +1215,7 @@ components:
       name: period
       in: query
       required: true
-      schema: {type: string, enum: [day, week, month, year, all]}
+      schema: {$ref: '#/components/schemas/Period'}
     Metric:
       name: metric
       in: path
@@ -1062,7 +1233,10 @@ components:
     NoStore:
       schema: {type: string, const: no-store}
     CachePublic:
-      description: Catalogue/reference data is cacheable (proposal - `public, max-age=86400`).
+      description: |
+        Catalogue/reference data is cacheable by the app (proposal - `private, max-age=86400`). These operations
+        require auth, so the response is `private`, not `public`: shared caches must not serve it to
+        unauthenticated clients. Revalidate with `If-None-Match`.
       schema: {type: string}
     RateLimit-Limit:
       schema: {type: integer}
@@ -1150,6 +1324,20 @@ components:
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
+    InternalError:
+      description: Unexpected server error (`500`, `502`, `503`, `504`). Never contains stack traces or PII.
+      headers:
+        Retry-After: {$ref: '#/components/headers/Retry-After'}
+        X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+          example:
+            type: about:blank
+            title: Internal Server Error
+            status: 500
+            code: internal_error
+            requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a13
     ServiceUnavailable:
       description: Temporarily unavailable / maintenance
       headers:
@@ -1162,7 +1350,7 @@ components:
     Problem:
       type: object
       description: RFC 9457 problem details. Never contains PII, tokens or stack traces.
-      required: [type, title, status]
+      required: [type, title, status, requestId]
       properties:
         type: {type: string, format: uri-reference, default: about:blank}
         title: {type: string}
@@ -1171,7 +1359,7 @@ components:
         instance: {type: string, format: uri-reference}
         code:
           type: string
-          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `etag_mismatch`, `batch_too_large`).
+          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `internal_error`, `etag_mismatch`, `batch_too_large`).
         requestId: {type: string}
         errors:
           type: array
@@ -1217,42 +1405,45 @@ components:
         resendAfter: {type: integer, minimum: 0, description: 'Seconds before the app should offer to resend a code.'}
     EmailOtpGrant:
       type: object
+      additionalProperties: false
       required: [grantType, email, code]
       properties:
         grantType: {type: string, const: email_otp}
-        email: {type: string, format: email, maxLength: 254, description: 'The address the code was sent to (same normalisation as `POST /v1/auth/otp`).'}
+        email: {type: string, format: email, maxLength: 254, description: 'The address the code was sent to (same normalisation as `POST /v1/auth/otp`). In test mode only (never in production), addresses ending in `@test.orangebox.invalid` accept the static `AUTH_TEST_CODE`.'}
         code: {type: string, pattern: '^[0-9]{6}$', description: '6-digit one-time code from the e-mail. Sent as a string to keep leading zeros.'}
         device:
           type: object
           description: Optional, for session listing. No hardware identifiers.
+          additionalProperties: false
           properties:
-            appVersion: {type: string}
-            osVersion: {type: string}
+            appVersion: {type: string, maxLength: 32}
+            osVersion: {type: string, maxLength: 64}
     RefreshGrant:
       type: object
+      additionalProperties: false
       required: [grantType, refreshToken]
       properties:
         grantType: {type: string, const: refresh_token}
-        refreshToken: {type: string}
+        refreshToken: {type: string, minLength: 1, maxLength: 512}
     TokenResponse:
       type: object
-      required: [accessToken, tokenType, expiresIn, refreshToken, memberId, isNewMember]
+      required: [accessToken, tokenType, expiresIn, refreshToken, refreshExpiresIn, memberId, isNewMember]
       properties:
         accessToken: {type: string}
         tokenType: {type: string, const: Bearer}
-        expiresIn: {type: integer, description: 'Seconds'}
+        expiresIn: {type: integer, description: 'Access token lifetime in seconds (900).'}
         refreshToken: {type: string}
-        refreshExpiresIn: {type: integer}
+        refreshExpiresIn: {type: integer, description: 'Refresh token lifetime in seconds (2592000 = 30 days).'}
         memberId: {type: string}
         isNewMember: {type: boolean}
 
     Profile:
       type: object
-      required: [id, displayName, createdAt, updatedAt]
+      required: [id, displayName, email, createdAt, updatedAt]
       properties:
         id: {type: string, readOnly: true}
         displayName: {type: string, minLength: 1, maxLength: 40, description: 'Shown on leaderboards. Legacy memberNm.'}
-        email: {type: [string, 'null'], format: email, readOnly: true, description: 'Verified sign-in e-mail address (verified by the one-time code), normalised to lower case and unique per member. Used to sign in; never accepted as an identifier in requests.'}
+        email: {type: string, format: email, readOnly: true, description: 'Verified sign-in e-mail address (verified by the one-time code), normalised to lower case and unique per member. Used to sign in; never accepted as an identifier in requests.'}
         countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$', description: 'ISO 3166-1 alpha-2. Legacy countryCd.'}
         regionCode: {type: [string, 'null'], description: 'ISO 3166-2 subdivision. Legacy localCd.'}
         rankingOptIn: {type: boolean, default: false}
@@ -1288,6 +1479,9 @@ components:
       type: string
       description: 'Legacy CarTypeCd.'
       enum: [micro, subcompact, compact, midsize, fullsize, fullsize_luxury, suv, van, sports, other]
+    Period:
+      type: string
+      enum: [day, week, month, year, all]
     RankingMetric:
       type: string
       description: 'Legacy *RankingTop10 variants (DrivingScore, EcoSpeed, FuelCut, HarshSpeed, Level, Point, FuelSave) plus best_trip.'
@@ -1554,8 +1748,8 @@ components:
         t: {type: string, format: date-time}
         type: {$ref: '#/components/schemas/EventType'}
         active: {type: boolean, default: true, description: 'Warning started (true) or cleared (false). Legacy ThreeState Y/N.'}
-        lat: {type: [number, 'null']}
-        lon: {type: [number, 'null']}
+        lat: {type: [number, 'null'], minimum: -90, maximum: 90}
+        lon: {type: [number, 'null'], minimum: -180, maximum: 180}
         dtc: {type: [string, 'null'], pattern: '^[PCBU][0-9A-F]{4}$'}
         value: {type: [number, 'null'], description: 'Measured value that triggered the event (e.g. g-force, km/h, V)'}
     TelemetryBatch:
@@ -1681,7 +1875,7 @@ components:
           required: [metric, period, periodStart, items]
           properties:
             metric: {$ref: '#/components/schemas/RankingMetric'}
-            period: {type: string}
+            period: {$ref: '#/components/schemas/Period'}
             periodStart: {type: string, format: date}
             items: {type: array, items: {$ref: '#/components/schemas/RankingEntry'}}
     MyRanking:
@@ -1689,7 +1883,7 @@ components:
       required: [metric, period, rank, participants, value]
       properties:
         metric: {$ref: '#/components/schemas/RankingMetric'}
-        period: {type: string}
+        period: {$ref: '#/components/schemas/Period'}
         rank: {type: integer, minimum: 1}
         participants: {type: integer}
         value: {type: number}
