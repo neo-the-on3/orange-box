@@ -8,7 +8,8 @@ import java.util.Locale
  * stale sample can't split one sustained event into two:
  * - starts when the value reaches [startAt] and at least [rearmMillis] have passed since the last event ended;
  * - ends only once the value has stayed below [releaseBelow] for [releaseHoldMillis] (sample time);
- * - a missing value (no speed, short gap) holds the current state; [signalLost] ends it.
+ * - a missing value (no speed, short gap) holds the current state; [signalLost] ends it at the last
+ *   sample before the gap.
  * Times are sample timestamps, never arrival time.
  */
 internal class EventDetector(
@@ -69,9 +70,13 @@ internal class EventDetector(
     /** Last non-null value seen; logged at the end (e.g. the speed when overspeed ends). */
     private var lastValue = 0.0
 
-    /** The signal was lost (long gap): close an open event without counting a new one. */
-    fun signalLost(t: Long) {
-        if (active) end(t, reason = "signal_lost")
+    /**
+     * The signal was lost (long gap): close an open event without counting a new one. [lastSampleT] is the
+     * timestamp of the last sample before the gap, so the logged duration stops where the trip's event time
+     * (which never integrates across a gap) stops, rather than including the gap.
+     */
+    fun signalLost(lastSampleT: Long) {
+        if (active) end(lastSampleT, reason = "signal_lost")
     }
 
     fun reset() {

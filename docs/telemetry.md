@@ -111,7 +111,8 @@ value or a short gap can't split one sustained event:
 - an event starts when the value reaches its threshold, and no sooner than `eventRearmMillis` (2 s) after the previous event of that kind ended;
 - a harsh event ends only after |accel| stays below `harshReleaseFraction` (50 %) of its threshold for `eventReleaseHoldMillis` (1 s);
 - overspeed ends below `overspeedKph − overspeedHysteresisKph` (threshold − 3, so 117 km/h at the default 120); overspeed time counts while the event is active;
-- missing values and gaps of up to 5 s hold the state, and a longer gap (signal lost) ends it.
+- missing values and gaps of up to 5 s hold the state, and a longer gap (signal lost) ends it at the
+  timestamp of the **last sample before the gap** (`reason=signal_lost`), see below.
 
 Start and end are logged under `OrangeBox/Telemetry` (`harsh_accel_start`, `harsh_accel_end` with its duration, peak and the value it ended at (for `overspeed_end`, the speed), and the same for `harsh_brake` and `overspeed`).
 `overspeed_end` also repeats the release speed as `speed_kmh`, for example:
@@ -119,6 +120,19 @@ Start and end are logged under `OrangeBox/Telemetry` (`harsh_accel_start`, `hars
 ```
 OrangeBox/Telemetry overspeed_end duration_s=2.00 peak=130.00 value=116.00 speed_kmh=116.00 unit=km/h reason=released
 ```
+
+**Signal-lost duration matches the trip's event time.** Trip totals never integrate across a gap over
+5 s, so overspeed time stops at the last sample before a stall. Up to build 0.1.0.38 the `signal_lost` end
+was stamped with the first sample *after* the gap, so the logged `duration_s` included the stall. In the M4
+retest a host-load stall of about 16.5 s during Highway logged `overspeed_end duration_s=57.07
+reason=signal_lost`, while the readout showed 40.6 s. Overspeed started at 12:02:15.25 (logcat), the last
+pre-stall sample was at about 12:02:55.85 (start + 40.6 s), and polling resumed at about 12:03:12.3
+(start + 57.07 s, with Choreographer skipping 857 frames just before). 57.07 − 40.6 = 16.47 s, which is the
+stall. The readout was right. The log line now closes at the last pre-stall sample, so for an event cut
+by a stall `duration_s` equals the event time it added to the trip (`SignalLostEventTest`). The same applies
+to `harsh_accel_end` and `harsh_brake_end`. The rearm delay is measured from that time too, so if the car is
+still over the limit when polling resumes, a second event starts on that sample and is counted.
+`value` / `speed_kmh` on a `signal_lost` end is the last value before the gap.
 
 In debug builds the Simulator's "App readout (debug)" card shows the trip's cumulative eco time as
 `Eco driving (trip): 91.0 s`, to compare with the eco column of the goldens below.
