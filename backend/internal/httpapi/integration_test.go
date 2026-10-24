@@ -427,3 +427,27 @@ func TestIntegerAsFloatIs422(t *testing.T) {
 		}
 	}
 }
+
+// TestNullableIntegerAsFloatDetail is #168: the nullable integers of a
+// vehicle (odometerKm, modelYear, engineDisplacementCc) get the specific
+// whole-number detail, not the generic "has the wrong type".
+func TestNullableIntegerAsFloatDetail(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t, true)
+	token, _ := e.signIn("nullnum@test.orangebox.invalid")
+	for _, field := range []string{"odometerKm", "modelYear", "engineDisplacementCc"} {
+		for _, n := range []string{"2000.0", "2e3"} {
+			body := `{"make":"Hyundai","model":"i20","fuelType":"gasoline","` + field + `":` + n + `}`
+			r := e.postJSON("/v1/vehicles", body, "Authorization", "Bearer "+token)
+			if r.status != http.StatusUnprocessableEntity || r.problemCode(t) != "validation_failed" {
+				t.Errorf("%s=%s: %d %s", field, n, r.status, r.body)
+				continue
+			}
+			errs, _ := r.json(t)["errors"].([]any)
+			if len(errs) != 1 || errs[0].(map[string]any)["pointer"] != "/"+field ||
+				errs[0].(map[string]any)["detail"] != "must be a whole number written without a decimal point or exponent, within range" {
+				t.Errorf("%s=%s: errors = %v", field, n, errs)
+			}
+		}
+	}
+}

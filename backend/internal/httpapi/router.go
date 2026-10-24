@@ -175,9 +175,25 @@ func fieldPointer(field string) string {
 	return b.String()
 }
 
+// nullablePkg is the package of nullable.Nullable[T] (map[bool]T), which
+// oapi-codegen uses for nullable fields.
+const nullablePkg = "github.com/oapi-codegen/nullable"
+
 func typeDetail(t reflect.Type) string {
 	if t == nil {
 		return "has the wrong type"
+	}
+	// Describe the element of *T and nullable.Nullable[T] (#168).
+	for {
+		switch {
+		case t.Kind() == reflect.Pointer:
+			t = t.Elem()
+			continue
+		case t.Kind() == reflect.Map && t.PkgPath() == nullablePkg && t.Key().Kind() == reflect.Bool:
+			t = t.Elem()
+			continue
+		}
+		break
 	}
 	switch t.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
