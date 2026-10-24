@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db/dbgen"
 )
@@ -405,17 +406,50 @@ func TestTripPagingRules(t *testing.T) {
 		}
 	}
 	changes, s3 := m.walk("/v1/trips?limit=2&since=" + q(s))
-	if len(changes) != 5 || s3 == nil {
+	if s3 == nil {
 		t.Fatalf("sync walk = %v without nextSince", changes)
 	}
+	// The walk has the 5 trips written after S, each once. Delivery is at
+	// least once: while any older transaction is open on the cluster, S's
+	// watermark is held back and the walk may also repeat trips S already
+	// covered, but only those.
 	seen := map[string]int{}
 	for _, id := range changes {
 		seen[id]++
-	}
-	for _, id := range changes {
-		if seen[id] != 1 {
-			t.Fatalf("trip %s %d times in one walk (cursor is exclusive)", id, seen[id])
+		if seen[id] > 1 {
+			t.Fatalf("trip %s twice in one walk (cursor is exclusive)", id)
 		}
+	}
+	newer := 0
+	for id := range seen {
+		if !containsString(all, id) {
+			newer++
+		}
+	}
+	if newer != 5 {
+		t.Fatalf("sync walk since S = %v: %d trips written after S, want 5", changes, newer)
+	}
+}
+
+// clusterXmin is the oldest transaction id still running on the cluster,
+// which is what a sync token issued now carries as its watermark.
+func clusterXmin(t *testing.T, pool *pgxpool.Pool) uint64 {
+	t.Helper()
+	var x uint64
+	if err := pool.QueryRow(t.Context(), `SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint`).Scan(&x); err != nil {
+		t.Fatal(err)
+	}
+	return x
+}
+
+// awaitXminPast waits (up to 5 s) for the cluster's xmin to pass xid. The
+// other tests' transactions are short; a long one elsewhere on a shared
+// database can hold it back for longer, which legitimately keeps expiring
+// the tokens issued meanwhile.
+func awaitXminPast(t *testing.T, pool *pgxpool.Pool, xid uint64) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); clusterXmin(t, pool) <= xid && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -466,9 +500,35 @@ func TestTripSyncWindowExpired(t *testing.T) {
 	if got := statuses(m.upload(tripJSON(a, vehicle, "completed", "2026-06-01T08:00:00Z", "2026-06-01T09:00:00Z"))); got != "created" {
 		t.Fatalf("upload after purge: %s", got)
 	}
+	// A new full walk's token works once nothing that might not have seen
+	// the purged tombstone is still running. Its watermark is the cluster
+	// xmin when it is issued: above the purge boundary it is accepted; at or
+	// below it (an older transaction is still open somewhere on the
+	// cluster) it expires too, which is right (at least once). Assert
+	// whichever the xmin around the walk decides.
+	var boundary uint64
+	if err := pool.QueryRow(ctx, `SELECT max_writer_xid::text::bigint FROM trip_purge_boundaries WHERE member_id = $1`, m.id).Scan(&boundary); err != nil {
+		t.Fatal(err)
+	}
+	awaitXminPast(t, pool, boundary)
+	before := clusterXmin(t, pool)
 	_, fresh := m.walk("/v1/trips")
-	if r := m.call(http.MethodGet, "/v1/trips/deletions?since="+q(fresh), ""); r.status != http.StatusOK {
-		t.Fatalf("fresh token: %d %s", r.status, r.body)
+	after := clusterXmin(t, pool)
+	r := m.call(http.MethodGet, "/v1/trips/deletions?since="+q(fresh), "")
+	switch {
+	case before > boundary:
+		if r.status != http.StatusOK {
+			t.Fatalf("fresh token above the purge boundary: %d %s", r.status, r.body)
+		}
+	case after <= boundary:
+		t.Logf("an older transaction holds the cluster xmin at or below the purge boundary %d; the fresh token must expire too", boundary)
+		if r.status != http.StatusBadRequest || r.problemCode(t) != "sync_window_expired" {
+			t.Fatalf("fresh token at or below the purge boundary: %d %s", r.status, r.body)
+		}
+	default: // the xmin passed the boundary during the walk: either is right
+		if r.status != http.StatusOK && r.problemCode(t) != "sync_window_expired" {
+			t.Fatalf("fresh token: %d %s", r.status, r.body)
+		}
 	}
 }
 
