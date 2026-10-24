@@ -1,0 +1,94 @@
+name: Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'docs/backend/**'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'docs/backend/**'
+      - '.github/workflows/backend.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go vet, test, lint, vuln, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          working-directory: backend
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: go build
+        run: CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/server
+
+      - name: docker build (no push)
+        run: docker build -t orange-box-backend:ci .
+
+  spec:
+    name: OpenAPI spec lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # The v2 spec arrives with PR #81; until then this job is a no-op.
+      - name: Note missing spec
+        if: hashFiles('docs/backend/openapi-v2.yaml') == ''
+        run: echo "::notice::docs/backend/openapi-v2.yaml not found; skipping spec lint"
+
+      - uses: actions/setup-node@v7
+        if: hashFiles('docs/backend/openapi-v2.yaml') != ''
+        with:
+          node-version: lts/*
+
+      - uses: actions/setup-python@v7
+        if: hashFiles('docs/backend/openapi-v2.yaml') != ''
+        with:
+          python-version: '3.13'
+
+      - name: redocly lint
+        if: hashFiles('docs/backend/openapi-v2.yaml') != ''
+        run: npx --yes @redocly/cli@2 lint docs/backend/openapi-v2.yaml
+
+      - name: openapi-spec-validator
+        if: hashFiles('docs/backend/openapi-v2.yaml') != ''
+        run: |
+          pip install 'openapi-spec-validator==0.9.*'
+          openapi-spec-validator docs/backend/openapi-v2.yaml

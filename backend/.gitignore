@@ -1,0 +1,17 @@
+# Build output
+/bin/
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+
+# Test and coverage output
+*.out
+*.test
+coverage.*
+
+# Editors
+.idea/
+.vscode/
+*.swp
