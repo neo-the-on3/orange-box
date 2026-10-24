@@ -2,6 +2,7 @@ import com.android.build.api.dsl.CommonExtension
 import org.gradle.api.JavaVersion
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
+import org.gradle.kotlin.dsl.dependencies
 import org.jetbrains.kotlin.gradle.dsl.KotlinBaseExtension
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 
@@ -14,7 +15,10 @@ internal fun Project.configureKotlinAndroid(extension: CommonExtension) {
         compileOptions.sourceCompatibility = JavaVersion.toVersion(jvm)
         compileOptions.targetCompatibility = JavaVersion.toVersion(jvm)
         testOptions.unitTests.isIncludeAndroidResources = true
+        // java.time (trip calendar, stats periods) below API 26.
+        compileOptions.isCoreLibraryDesugaringEnabled = true
     }
+    dependencies { add("coreLibraryDesugaring", libs.lib("android-desugarJdkLibs")) }
     extensions.configure<KotlinBaseExtension> { jvmToolchain(jvm) }
 }
 

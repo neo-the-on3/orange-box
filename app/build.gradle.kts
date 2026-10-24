@@ -78,6 +78,7 @@ dependencies {
     implementation(project(":core:designsystem"))
     implementation(project(":feature:home"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:trips"))
     implementation(project(":feature:setup"))
     implementation(project(":feature:driving"))
     implementation(project(":core:driving"))
