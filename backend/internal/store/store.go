@@ -134,3 +134,17 @@ type Idempotency interface {
 	// token lost the claim.
 	Release(ctx context.Context, s IdempotencyScope, token uuid.UUID) (ok bool, err error)
 }
+
+// Failure classifies a storage error for the HTTP layer.
+type Failure int
+
+const (
+	// FailureOther is any other error (a 500).
+	FailureOther Failure = iota
+	// FailureBusy is a lock, statement or pool wait that ran out, or a
+	// deadlock: retrying shortly is likely to work (503 server_busy).
+	FailureBusy
+	// FailureUnavailable means the database can't be reached
+	// (503 service_unavailable).
+	FailureUnavailable
+)

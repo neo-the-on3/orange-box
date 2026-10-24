@@ -31,6 +31,11 @@ type Options struct {
 	URL string
 	// MaxConns caps the pool size; 0 keeps pgx's default.
 	MaxConns int
+	// ForMigrations opens a pool for `server migrate` and MIGRATE_ON_START:
+	// statement_timeout is 0 (even if DATABASE_URL sets one), so a long
+	// data migration isn't killed halfway, while lock_timeout still applies
+	// (#178).
+	ForMigrations bool
 }
 
 // Open connects a pool, applies the session defaults and pings the server.
@@ -45,6 +50,10 @@ func Open(ctx context.Context, opts Options) (*pgxpool.Pool, error) {
 		if _, ok := cfg.ConnConfig.RuntimeParams[k]; !ok {
 			cfg.ConnConfig.RuntimeParams[k] = v
 		}
+	}
+	if opts.ForMigrations {
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = "0"
+		cfg.ConnConfig.RuntimeParams["application_name"] = "orange-box-migrate"
 	}
 	if opts.MaxConns > 0 && opts.MaxConns <= math.MaxInt32 {
 		cfg.MaxConns = int32(opts.MaxConns)

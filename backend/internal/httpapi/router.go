@@ -61,6 +61,9 @@ type Deps struct {
 	// Idempotency stores Idempotency-Keys. Nil (no database) means the
 	// header is validated but not acted on.
 	Idempotency store.Idempotency
+	// ClassifyError sorts storage errors (db.Classify) so a busy or
+	// unreachable database answers 503 instead of 500 (#178).
+	ClassifyError func(error) store.Failure
 }
 
 // NewRouter returns the root handler. Middleware runs outermost first:
@@ -111,7 +114,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 		logger:     d.Logger,
 		vehicles:   d.Vehicles,
 	}
-	errs := errorHandlers{logger: d.Logger}
+	errs := errorHandlers{logger: d.Logger, classify: d.ClassifyError}
 	strict := api.NewStrictHandlerWithOptions(srv, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  errs.request,
 		ResponseErrorHandlerFunc: errs.response,
@@ -136,9 +139,10 @@ func NewRouter(d Deps) (http.Handler, error) {
 			store: d.Idempotency,
 			// Outlives the request (its context ends at RequestTimeout), so a
 			// live request is never taken over.
-			lease:  d.RequestTimeout + 2*idempotencyStoreTimeout,
-			guards: map[string]replayGuard{"createvehicle": srv.createVehicleReplayGuard},
-			logger: d.Logger,
+			lease:    d.RequestTimeout + 2*idempotencyStoreTimeout,
+			guards:   map[string]replayGuard{"createvehicle": srv.createVehicleReplayGuard},
+			logger:   d.Logger,
+			classify: d.ClassifyError,
 		}
 	}
 	var h http.Handler = mux
@@ -152,7 +156,8 @@ func NewRouter(d Deps) (http.Handler, error) {
 }
 
 type errorHandlers struct {
-	logger *slog.Logger
+	logger   *slog.Logger
+	classify func(error) store.Failure
 }
 
 // request handles parameter-binding and body-decoding errors from the
@@ -225,7 +230,8 @@ func typeDetail(t reflect.Type) string {
 }
 
 // response handles errors returned by strict handlers: a *problem.Problem is
-// sent as is, ErrNotImplemented becomes 501 and anything else is a logged 500.
+// sent as is, ErrNotImplemented becomes 501, a busy or unreachable database
+// a logged 503 (#178) and anything else is a logged 500.
 func (e errorHandlers) response(w http.ResponseWriter, r *http.Request, err error) {
 	var p *problem.Problem
 	switch {
@@ -235,6 +241,13 @@ func (e errorHandlers) response(w http.ResponseWriter, r *http.Request, err erro
 		problem.Write(w, r, problem.New(http.StatusNotImplemented, problem.CodeNotImplemented,
 			"This operation is not implemented yet."))
 	default:
+		if sp := storageProblem(e.classify, err); sp != nil {
+			e.logger.WarnContext(r.Context(), "storage busy or unavailable",
+				slog.String("request_id", reqctx.RequestID(r.Context())),
+				slog.Any("err", err))
+			problem.Write(w, r, sp)
+			return
+		}
 		e.logger.ErrorContext(r.Context(), "handler error",
 			slog.String("request_id", reqctx.RequestID(r.Context())),
 			slog.Any("err", err))

@@ -39,6 +39,32 @@ func TestOpenSessionDefaults(t *testing.T) {
 	}
 }
 
+// TestOpenForMigrations is #178: the migration pool has no statement
+// timeout, even when DATABASE_URL sets one, and keeps lock_timeout.
+func TestOpenForMigrations(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	url := dbtest.NewDatabase(t)
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+	pool, err := db.Open(ctx, db.Options{URL: url + sep + "statement_timeout=5s", MaxConns: 2, ForMigrations: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	for setting, want := range map[string]string{"statement_timeout": "0", "lock_timeout": "5s"} {
+		var v string
+		if err := pool.QueryRow(ctx, "SHOW "+setting).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		if v != want {
+			t.Errorf("migration pool %s = %q, want %q", setting, v, want)
+		}
+	}
+}
+
 func TestCheckServerVersion(t *testing.T) {
 	t.Parallel()
 	for num, wantErr := range map[int]string{

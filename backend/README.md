@@ -297,6 +297,17 @@ sends unknown query parameters as session settings). On Neon, prefer the
 a transaction-mode pooler (PgBouncer) doesn't reliably keep session
 settings.
 
+`server migrate` and `MIGRATE_ON_START` use their own small pool with
+`statement_timeout=0` (whatever `DATABASE_URL` says) and the usual
+`lock_timeout`, so a long data migration isn't killed halfway but a
+migration stuck behind a lock still fails.
+
+Database errors: a lock or statement timeout (`55P03`, `57014`), a deadlock
+or serialization failure, or a pool or query wait that outlives the request
+answers `503` (`server_busy`, `Retry-After: 1`) instead of `500`; an
+unreachable database answers `503` (`service_unavailable`,
+`Retry-After: 5`). See `db.Classify`.
+
 ## CI
 
 To save GitHub Actions minutes, the Backend workflow has no `pull_request` or
