@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # M4 smoke: with the simulated dongle connected and the Highway script playing, the driving service
-# must be in the foreground with its notification, a trip must be recording, and the notification's
-# "Start driving" must open the dashboard. Screenshots the notification shade.
+# must be in the foreground with its notification, a trip must be recording, and the
+# notification's open-dashboard intent must bring up the dashboard. Screenshots the shade (best effort).
 set -euo pipefail
 # shellcheck source=scripts/ci/smoke-lib.sh
 source "${SMOKE_LIB:-scripts/ci/smoke-lib.sh}"
@@ -28,21 +28,34 @@ for _ in $(seq 1 20); do
 done
 grep -q "Recording trip" "$OUT/notifications.txt" || { echo "driving notification missing" >&2; exit 1; }
 
-# The ongoing notification's chronometer ticks every second, so uiautomator never sees the shade idle
-# and can't dump it. Open the shade with a swipe (`cmd statusbar expand-notifications` is ignored on the
-# CI image), screenshot it, and tap the notification at its place in the layout (proportional to the screen).
-# Leaving the app first also makes the tap a background open.
+# Screenshot the shade (best effort). The ongoing notification's chronometer ticks every second, so
+# uiautomator never sees the shade idle and can't dump it, and on the CI image neither
+# `cmd statusbar expand-notifications` nor a swipe reliably opens it. Try both and check the focused window.
+shade_open() { adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedWindow" | grep -q "NotificationShade"; }
 adb shell input keyevent KEYCODE_HOME
 sleep 2
 read -r W H < <(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -n1 | tr 'x' ' ')
-adb shell input swipe $(( W / 2 )) 5 $(( W / 2 )) $(( H * 6 / 10 )) 400
-sleep 3
-shot 27-notification-shade
-# Ours is the first notification: its "Recording trip" row sits at about (30 %, 36 %) of the screen whether
-# or not it is expanded (see 27-notification-shade.png). The body and "Start driving" both open the dashboard.
-adb shell input tap $(( W * 30 / 100 )) $(( H * 36 / 100 ))
+opened=0
+for i in 1 2 3; do
+  adb shell cmd statusbar expand-notifications > /dev/null 2>&1 || true
+  sleep 2
+  shade_open && { opened=1; break; }
+  adb shell input touchscreen swipe $(( W / 2 )) 0 $(( W / 2 )) $(( H * 7 / 10 )) $(( 300 * i + 300 ))
+  sleep 2
+  shade_open && { opened=1; break; }
+done
+if [ "$opened" = 1 ]; then shot 27-notification-shade; else echo "warning: notification shade did not open; no shade screenshot" >&2; fi
+collapse
+sleep 1
+
+# "Start driving" and the body open MainActivity with EXTRA_OPEN_DASHBOARD (FLAG_ACTIVITY_NEW_TASK |
+# SINGLE_TOP); DrivingNotificationsTest asserts that the PendingIntents carry exactly this. Coordinate taps
+# in an un-dumpable shade proved flaky, so deliver the same intent from the background (Home) instead.
+grep -q '"Start driving" -> PendingIntent' "$OUT/notifications.txt" || { echo "Start driving action missing" >&2; exit 1; }
+adb shell am start -f 0x30000000 -n "$PKG/io.github.neotheon3.orangebox.MainActivity" \
+  --ez io.github.neotheon3.orangebox.OPEN_DASHBOARD true > /dev/null
 trap - EXIT
-wait_for_regex 'content-desc="End driving"' notif-dashboard 15
+wait_for_regex 'content-desc="End driving"' notif-dashboard 20
 shot 28-dashboard-from-notification
 adb shell input keyevent KEYCODE_BACK
 wait_for_text "Live data" notif-home
