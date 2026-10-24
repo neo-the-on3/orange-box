@@ -17,6 +17,8 @@ interface LaunchOverrides {
 object LaunchExtras {
     const val BACKEND_MODE = "backend_mode"
     const val ONBOARDING = "onboarding"
+    /** Debug only: `seed` inserts a few demo trips (one with a route) once. */
+    const val DEMO_TRIPS = "demo_trips"
 
     enum class Onboarding { SKIP, RESET }
 
