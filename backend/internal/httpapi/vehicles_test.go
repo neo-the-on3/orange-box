@@ -15,6 +15,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/api"
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
@@ -26,12 +27,25 @@ import (
 // without DATABASE_URL).
 func newDBTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	e, _ := newDBTestEnvPool(t)
+	return e
+}
+
+// newDBTestEnvPool is newDBTestEnv that also returns the database pool.
+func newDBTestEnvPool(t *testing.T) (*testEnv, *pgxpool.Pool) {
+	t.Helper()
 	pool := dbtest.New(t)
+	trips, err := db.NewTrips(t.Context(), pool, "test-deployment")
+	if err != nil {
+		t.Fatal(err)
+	}
 	return newTestEnvWith(t, true, func(d *Deps) {
 		d.Members = db.NewMembers(pool)
 		d.Vehicles = db.NewVehicles(pool)
+		d.Trips = trips
 		d.Idempotency = db.NewIdempotency(pool)
-	})
+		d.ClassifyError = db.Classify
+	}), pool
 }
 
 // member is a signed-in client of a test server.

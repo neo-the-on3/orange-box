@@ -48,6 +48,9 @@ const (
 	CodeIdempotencyReused   = "idempotency_key_reused"
 	CodeIdempotencyInFlight = "idempotency_in_flight"
 	CodeVehicleDeleted      = "vehicle_deleted"
+	CodeVehicleNotFound     = "vehicle_not_found"
+	CodeTripDeleted         = "trip_deleted"
+	CodeSyncWindowExpired   = "sync_window_expired"
 	CodeInternal            = "internal_error"
 	CodeUnavailable         = "service_unavailable"
 )
