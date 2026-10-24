@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
+import io.github.neotheon3.orangebox.core.telemetry.RecordedTripTotals
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySource
 import javax.inject.Inject
 import io.github.neotheon3.orangebox.core.dashboardui.DashboardStateMapper
@@ -35,13 +36,15 @@ class HomeViewModel @Inject constructor(
     backendConfigRepository: BackendConfigRepository,
     private val obd: ObdConnection,
     telemetry: TelemetrySource,
+    recorded: RecordedTripTotals = RecordedTripTotals.NONE,
 ) : ViewModel() {
-    val uiState: StateFlow<HomeUiState> = combine(backendConfigRepository.config, obd.state, telemetry.latest) { backend, obdState, live ->
-        HomeUiState(
-            backend = backend, loading = false, obd = obdState, live = live,
-            dashboard = DashboardStateMapper.map(obdState, live),
-        )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
+    val uiState: StateFlow<HomeUiState> =
+        combine(backendConfigRepository.config, obd.state, telemetry.latest, recorded.totals()) { backend, obdState, live, trip ->
+            HomeUiState(
+                backend = backend, loading = false, obd = obdState, live = live,
+                dashboard = DashboardStateMapper.map(obdState, live, recordedTrip = trip),
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
     fun onConnect() = obd.connect()
     fun onRetry() = obd.retry()

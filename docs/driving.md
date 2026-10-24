@@ -47,5 +47,5 @@ Settings → Driving dashboard → Bottom-left button:
 - **Samples:** about one per second (speed, RPM, fuel flow, coolant), plus the latest `LocationManager` fix (GPS/network, no Google services, only while recording).
 - **Events:** `harsh_accel`, `harsh_brake`, `overspeed` and `fuel_cut`, on the rising edge of the `TelemetryEngine` flags.
 - **Checkpoints:** every 5 s, the summary and pending rows are written in one Room transaction. Process death loses at most 5 s. On the next start, open trips are closed at their last sample with `process_death`.
-- **End:** 30 s without the engine running. The reason is `engine_off` while still connected, otherwise `disconnected`. A reconnect inside the grace continues the trip, and the totals are carried over the engine reset.
+- **End:** 30 s without the engine running. The reason is `engine_off` while still connected, otherwise `disconnected`. A reconnect inside the grace continues the trip, and the totals are carried over the engine reset. The ongoing notification, the dashboard TRIP/FUEL tiles, the Home mini-dashboard and `trip_end` all read these recorded totals (`RecordedTripTotals`), never the telemetry engine's per-connection counters (#144).
 - **Tables (DB v2, auto-migrated from v1):** `trips`, `trip_samples`, `trip_events`.

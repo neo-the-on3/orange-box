@@ -139,6 +139,11 @@ class TripRecorderTest {
         val trip = r.trips.rows.values.single()
         assertNull(trip.endedAtMillis)
         assertEquals(2.0, r.recorder.active.value!!.totals.distanceKm, 0.03)
+        // #144: the engine's own totals restarted at the reconnect; the recorder's (dashboard + notification) did not.
+        val engineS = r.source.latest.value!!.trip.durationS
+        val recordedS = r.recorder.active.value!!.totals.durationS
+        assertTrue("engine $engineS s only counts since the reconnect", engineS < 52.0)
+        assertTrue("recorded $recordedS s carries the whole trip", recordedS > 95.0)
     }
 
     @Test fun `link lost for longer than the grace ends the trip as disconnected`() = runTest {

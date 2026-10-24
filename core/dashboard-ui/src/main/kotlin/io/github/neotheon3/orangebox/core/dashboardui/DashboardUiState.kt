@@ -6,6 +6,7 @@ import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import io.github.neotheon3.orangebox.core.obd.pid.ObdPid
 import io.github.neotheon3.orangebox.core.telemetry.InstantTelemetry
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
+import io.github.neotheon3.orangebox.core.telemetry.TripTotals
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -76,10 +77,14 @@ object DashboardStateMapper {
         connection: ObdConnectionState,
         snapshot: TelemetrySnapshot?,
         activePids: Set<ObdPid> = emptySet(),
+        recordedTrip: TripTotals? = null,
     ): DashboardUiState {
         if (connection !is ObdConnectionState.Connected || snapshot == null) {
             return DashboardUiState(obdOn = connection is ObdConnectionState.Connected)
         }
+        // The recorded trip's totals carry over a reconnect inside the grace; the engine's restart from 0 (#144).
+        @Suppress("NAME_SHADOWING")
+        val snapshot = if (recordedTrip != null) snapshot.copy(trip = recordedTrip) else snapshot
         val i = snapshot.instant
         val trip = snapshot.trip
         return DashboardUiState(

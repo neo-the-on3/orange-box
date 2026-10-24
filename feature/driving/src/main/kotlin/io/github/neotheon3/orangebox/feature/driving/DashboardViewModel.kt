@@ -8,6 +8,7 @@ import io.github.neotheon3.orangebox.core.dashboardui.DashboardUiState
 import io.github.neotheon3.orangebox.core.driving.DriveSession
 import io.github.neotheon3.orangebox.core.obd.ObdConnection
 import io.github.neotheon3.orangebox.core.obd.pid.PidPoller
+import io.github.neotheon3.orangebox.core.telemetry.RecordedTripTotals
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySource
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -34,9 +35,10 @@ class DashboardViewModel @Inject constructor(
     prefs: AppPreferencesRepository,
     private val country: DeviceCountry,
     private val apps: QuickLaunchApps,
+    recorded: RecordedTripTotals,
 ) : ViewModel() {
-    val state: StateFlow<DashboardUiState> = combine(connection.state, telemetry.latest) { c, s ->
-        DashboardStateMapper.map(c, s, poller.activePids)
+    val state: StateFlow<DashboardUiState> = combine(connection.state, telemetry.latest, recorded.totals()) { c, s, trip ->
+        DashboardStateMapper.map(c, s, poller.activePids, recordedTrip = trip)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
 
     val controls: StateFlow<DashboardControls> = prefs.preferences.map { it.dashboard }.distinctUntilChanged()
