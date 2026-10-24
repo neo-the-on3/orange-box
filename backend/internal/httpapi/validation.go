@@ -98,7 +98,9 @@ type TokenVerifier interface {
 //  5. pre-scans the JSON for maxItems, value-count and depth limits without
 //     decoding it (422/413/400), see prescan;
 //  6. validates parameters and body against the spec (400/415/422), failing
-//     fast on large bodies.
+//     fast on large bodies;
+//  7. runs requests carrying an Idempotency-Key at most once (replay, 409,
+//     422), see idempotency.
 type openAPIMiddleware struct {
 	doc               *openapi3.T
 	router            routers.Router
@@ -106,6 +108,7 @@ type openAPIMiddleware struct {
 	uploads           *uploadLimiter
 	uploadReadTimeout time.Duration
 	bodies            bodyPools
+	idempotency       *idempotency // nil without a store
 }
 
 func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadReadTimeout time.Duration, bodies bodyPools) (*openAPIMiddleware, error) {
@@ -234,6 +237,10 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			return
 		}
 		setBody(r, body) // the validator consumed it
+		if m.idempotency != nil && r.Header.Get("Idempotency-Key") != "" && acceptsIdempotencyKey(route.Operation) {
+			m.idempotency.serve(w, r, route, pathParams, body, next)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

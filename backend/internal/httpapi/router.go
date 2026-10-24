@@ -17,6 +17,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/auth"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
+	"github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
 // Deps are the router's collaborators.
@@ -54,6 +55,12 @@ type Deps struct {
 	// Ready, if set, is checked by GET /v1/health (e.g. a database ping);
 	// an error turns the answer into 503 service_unavailable.
 	Ready func(context.Context) error
+	// Vehicles stores vehicles. Nil (no database, local/ci/sandbox only)
+	// makes the vehicle operations answer 501.
+	Vehicles store.Vehicles
+	// Idempotency stores Idempotency-Keys. Nil (no database) means the
+	// header is validated but not acted on.
+	Idempotency store.Idempotency
 }
 
 // NewRouter returns the root handler. Middleware runs outermost first:
@@ -102,6 +109,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 		now:        d.Now,
 		ready:      d.Ready,
 		logger:     d.Logger,
+		vehicles:   d.Vehicles,
 	}
 	errs := errorHandlers{logger: d.Logger}
 	strict := api.NewStrictHandlerWithOptions(srv, nil, api.StrictHTTPServerOptions{
@@ -122,6 +130,16 @@ func NewRouter(d Deps) (http.Handler, error) {
 		})
 	if err != nil {
 		return nil, err
+	}
+	if d.Idempotency != nil {
+		oa.idempotency = &idempotency{
+			store: d.Idempotency,
+			// Outlives the request (its context ends at RequestTimeout), so a
+			// live request is never taken over.
+			lease:  d.RequestTimeout + 2*idempotencyStoreTimeout,
+			guards: map[string]replayGuard{"createvehicle": srv.createVehicleReplayGuard},
+			logger: d.Logger,
+		}
 	}
 	var h http.Handler = mux
 	h = oa.wrap(h)

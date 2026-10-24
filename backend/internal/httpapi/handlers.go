@@ -14,6 +14,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/auth"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
+	"github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
 // Lifetimes reported to the app. Refresh tokens arrive with #106.
@@ -37,6 +38,7 @@ type Server struct {
 	now        func() time.Time
 	ready      func(context.Context) error
 	logger     *slog.Logger
+	vehicles   store.Vehicles // nil without a database
 }
 
 // readyTimeout bounds the readiness check in GET /v1/health.
