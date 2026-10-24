@@ -279,7 +279,11 @@ a write that hadn't committed when the token was taken is never missed.
 transaction whose first statement, on a walk's first page, is
 `SyncSnapshot`: the token's watermark and the page come from the same
 snapshot (#176). Taking the watermark after the read, or in another
-transaction, can lose a write that commits in between.
+transaction, can lose a write that commits in between. A token is
+checked against the member's purge boundary in that same transaction
+(#177), so a purge committing between the check and the read is invisible
+to both: the page still has the tombstones the token needs, and the next
+page or walk answers `sync_window_expired`.
 Transaction ids are cluster-wide, so busy neighbours only cause repeats.
 The deployment identity comes from `pg_control_system()`
 (`SystemIdentifier`) where the role may read it.
