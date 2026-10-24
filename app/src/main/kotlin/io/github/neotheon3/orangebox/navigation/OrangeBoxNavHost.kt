@@ -35,6 +35,7 @@ import io.github.neotheon3.orangebox.feature.setup.OnboardingDestination
 import io.github.neotheon3.orangebox.feature.setup.PermissionsDestination
 import io.github.neotheon3.orangebox.feature.setup.VehicleSetupDestination
 import io.github.neotheon3.orangebox.feature.setup.setupScreens
+import io.github.neotheon3.orangebox.feature.trips.StatsDestination
 import io.github.neotheon3.orangebox.feature.trips.TripDetailDestination
 import io.github.neotheon3.orangebox.feature.trips.TripsDestination
 import io.github.neotheon3.orangebox.feature.trips.tripsScreen
@@ -74,6 +75,7 @@ fun OrangeBoxNavHost(
             tripsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenTrip = { id -> navController.navigate(TripDetailDestination(id)) { launchSingleTop = true } },
+                onOpenStats = { navController.navigate(StatsDestination) { launchSingleTop = true } },
             )
             dashboardScreen(
                 onEndDriving = { navController.returnHome() },

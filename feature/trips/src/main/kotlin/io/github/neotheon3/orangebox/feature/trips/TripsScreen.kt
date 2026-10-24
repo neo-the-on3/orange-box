@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,7 +58,7 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 @Composable
-fun TripsRoute(onBack: () -> Unit, onOpenTrip: (Long) -> Unit, viewModel: TripsViewModel = hiltViewModel()) {
+fun TripsRoute(onBack: () -> Unit, onOpenTrip: (Long) -> Unit, onOpenStats: () -> Unit = {}, viewModel: TripsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     TripsScreen(
         state = state,
@@ -67,6 +68,7 @@ fun TripsRoute(onBack: () -> Unit, onOpenTrip: (Long) -> Unit, viewModel: TripsV
             onNextMonth = viewModel::nextMonth,
             onDayClicked = viewModel::onDayClicked,
             onOpenTrip = onOpenTrip,
+            onOpenStats = onOpenStats,
         ),
     )
 }
@@ -77,6 +79,7 @@ data class TripsActions(
     val onNextMonth: () -> Unit = {},
     val onDayClicked: (LocalDate) -> Unit = {},
     val onOpenTrip: (Long) -> Unit = {},
+    val onOpenStats: () -> Unit = {},
 )
 
 /** Trip history: a month calendar marking days with trips, and the trips of the month or the selected day. */
@@ -91,6 +94,9 @@ fun TripsScreen(state: TripsUiState, actions: TripsActions, locale: Locale = Loc
                     IconButton(onClick = actions.onBack, modifier = Modifier.testTag("trips_back")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.trips_back))
                     }
+                },
+                actions = {
+                    TextButton(onClick = actions.onOpenStats, modifier = Modifier.testTag("trips_stats")) { Text(stringResource(R.string.trips_stats)) }
                 },
             )
         },

@@ -71,4 +71,49 @@ class TripRepositoryTest {
         assertNull(repo.eventsOf(listOf(b.id))[b.id])
         db.close()
     }
+
+    @Test fun `period totals sum finished trips that started in the range (#46)`() = runBlocking {
+        val db = open()
+        val repo = RoomTripRepository(db.tripDao())
+        suspend fun add(start: Long, km: Double, open: Boolean = false, accel: Int = 0, brake: Int = 0) {
+            val t = repo.start(TripEntity(vehicleId = null, startedAtMillis = start, lastSampleAtMillis = start))
+            repo.checkpoint(
+                t.copy(
+                    endedAtMillis = if (open) null else start + 600_000, distanceKm = km, durationS = 600.0, fuelLitres = km / 15,
+                    ecoS = 300.0, idleS = 30.0, harshAccelCount = accel, harshBrakeCount = brake, overspeedCount = 1, maxSpeedKph = 50 + km,
+                ),
+                emptyList(), emptyList(),
+            )
+        }
+        add(1_000, 10.0, accel = 1)
+        add(5_000, 20.0, brake = 2)
+        add(9_999, 30.0) // starts at the exclusive end: next period
+        add(2_000, 40.0, open = true) // still recording: left out
+        val totals = repo.totals(1_000, 9_999)
+        assertEquals(2, totals.trips)
+        assertEquals(30.0, totals.distanceKm, 1e-9)
+        assertEquals(1_200.0, totals.durationS, 1e-9)
+        assertEquals(2.0, totals.fuelLitres, 1e-9)
+        assertEquals(600.0, totals.ecoS, 1e-9)
+        assertEquals(3, totals.harshEvents)
+        assertEquals(2, totals.overspeed)
+        assertEquals(70.0, totals.maxSpeedKph, 1e-9)
+        // An empty range is all zeros, not null.
+        assertEquals(TripPeriodTotals(), repo.totals(20_000, 30_000))
+        // The interface default (used by fakes) agrees with the query.
+        val viaDefault = (object : TripRepository {
+            override val trips = repo.trips
+            override suspend fun start(trip: TripEntity) = error("")
+            override suspend fun checkpoint(trip: TripEntity, samples: List<TripSampleEntity>, events: List<TripEventEntity>) = error("")
+            override suspend fun closeOrphans() = 0
+            override suspend fun trip(id: Long) = null
+            override suspend fun samples(tripId: Long) = emptyList<TripSampleEntity>()
+            override suspend fun events(tripId: Long) = emptyList<TripEventEntity>()
+        }).totals(1_000, 9_999)
+        assertEquals(totals.trips, viaDefault.trips)
+        assertEquals(totals.distanceKm, viaDefault.distanceKm, 1e-9)
+        assertEquals(totals.fuelLitres, viaDefault.fuelLitres, 1e-9)
+        assertEquals(totals.harshEvents, viaDefault.harshEvents)
+        db.close()
+    }
 }

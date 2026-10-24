@@ -63,4 +63,20 @@
     <string name="chart_unit_kph">km/h</string>
     <string name="chart_unit_kml">km/L</string>
     <string name="chart_line_description">%1$s chart, peak %2$s %3$s</string>
+    <string name="trips_stats">Stats</string>
+    <string name="stats_title">Driving stats</string>
+    <string name="stats_weekly">Weekly</string>
+    <string name="stats_monthly">Monthly</string>
+    <string name="stats_this_week">This week</string>
+    <string name="stats_this_month">This month</string>
+    <string name="stats_no_trips">No finished trips yet in this period.</string>
+    <string name="stats_driving_time">Driving time</string>
+    <string name="stats_overspeed_events">Overspeed events</string>
+    <string name="stats_history">Earlier</string>
+    <string name="stats_distance_chart">Distance</string>
+    <string name="stats_chart_description">Distance per period, last %1$d periods</string>
+    <plurals name="stats_harsh">
+        <item quantity="one">%d harsh</item>
+        <item quantity="other">%d harsh</item>
+    </plurals>
 </resources>

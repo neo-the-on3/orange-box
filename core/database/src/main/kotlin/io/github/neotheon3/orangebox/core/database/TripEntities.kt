@@ -74,3 +74,27 @@ data class TripEventEntity(
     val longitude: Double? = null,
     val durationS: Double? = null,
 )
+
+/**
+ * Totals of the finished trips that started in a time range ([TripDao.totals]): the stats screen's weekly
+ * and monthly figures (#46). Plain query result, not a table.
+ */
+data class TripPeriodTotals(
+    val trips: Int = 0,
+    val distanceKm: Double = 0.0,
+    val durationS: Double = 0.0,
+    val fuelLitres: Double = 0.0,
+    val ecoS: Double = 0.0,
+    val idleS: Double = 0.0,
+    val harshAccel: Int = 0,
+    val harshBrake: Int = 0,
+    val overspeed: Int = 0,
+    val maxSpeedKph: Double = 0.0,
+) {
+    val harshEvents: Int get() = harshAccel + harshBrake
+
+    operator fun plus(t: TripEntity) = TripPeriodTotals(
+        trips + 1, distanceKm + t.distanceKm, durationS + t.durationS, fuelLitres + t.fuelLitres, ecoS + t.ecoS, idleS + t.idleS,
+        harshAccel + t.harshAccelCount, harshBrake + t.harshBrakeCount, overspeed + t.overspeedCount, maxOf(maxSpeedKph, t.maxSpeedKph),
+    )
+}
