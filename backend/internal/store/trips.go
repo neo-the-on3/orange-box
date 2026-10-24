@@ -14,9 +14,6 @@ import (
 // it might still need has been purged. The client does a full resync.
 var ErrSyncWindowExpired = errors.New("store: sync window expired")
 
-// ErrInvalidTimeZone means the database doesn't know a time zone name.
-var ErrInvalidTimeZone = errors.New("store: unknown time zone")
-
 // SyncPoint is what a sync token carries (openapi-v2.yaml, Conventions →
 // Incremental sync).
 type SyncPoint struct {
@@ -187,13 +184,6 @@ type UpsertResult struct {
 	ID      uuid.UUID
 }
 
-// DrivingDay is a local calendar day with trips.
-type DrivingDay struct {
-	// Date is midnight UTC of the day.
-	Date  time.Time
-	Count int
-}
-
 // Trips stores the members' trips. Every method is scoped to member, and
 // only live rows (deleted_at IS NULL) are read or changed, except that
 // UpsertTrips and the deletion walk look at tombstones.
@@ -217,7 +207,8 @@ type Trips interface {
 	// ListTripDeletions returns a page of tombstones, or
 	// ErrSyncWindowExpired.
 	ListTripDeletions(ctx context.Context, member uuid.UUID, q TripDeletionsQuery) (TripDeletionPage, error)
-	// DrivingDays counts trips per local day (in loc) for trips starting
-	// in [from, before).
-	DrivingDays(ctx context.Context, member uuid.UUID, from, before time.Time, tz string, vehicle *uuid.UUID) ([]DrivingDay, error)
+	// DrivingDays counts live trips starting in each range [bounds[i],
+	// bounds[i+1]) (len(bounds)-1 counts). bounds must be strictly
+	// increasing, at least two.
+	DrivingDays(ctx context.Context, member uuid.UUID, bounds []time.Time, vehicle *uuid.UUID) ([]int, error)
 }

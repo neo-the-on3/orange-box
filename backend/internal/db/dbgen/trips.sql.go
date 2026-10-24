@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getTrip = `-- name: GetTrip :one
@@ -151,41 +150,36 @@ func (q *Queries) GetTripPurgeBoundary(ctx context.Context, memberID uuid.UUID) 
 }
 
 const listDrivingDays = `-- name: ListDrivingDays :many
-SELECT (started_at AT TIME ZONE $1::text)::date AS day, count(*) AS trip_count
+SELECT width_bucket(started_at, $1::timestamptz[])::int AS bucket, count(*) AS trip_count
 FROM trips
 WHERE member_id = $2
   AND deleted_at IS NULL
-  AND started_at >= $3::timestamptz
-  AND started_at < $4::timestamptz
-  AND ($5::uuid IS NULL OR vehicle_id = $5::uuid)
-GROUP BY day
-ORDER BY day
+  AND started_at >= ($1::timestamptz[])[1]
+  AND started_at < ($1::timestamptz[])[cardinality($1::timestamptz[])]
+  AND ($3::uuid IS NULL OR vehicle_id = $3::uuid)
+GROUP BY bucket
+ORDER BY bucket
 `
 
 type ListDrivingDaysParams struct {
-	Tz            string
-	MemberID      uuid.UUID
-	StartedFrom   time.Time
-	StartedBefore time.Time
-	VehicleID     *uuid.UUID
+	Bounds    []time.Time
+	MemberID  uuid.UUID
+	VehicleID *uuid.UUID
 }
 
 type ListDrivingDaysRow struct {
-	Day       pgtype.Date
+	Bucket    int32
 	TripCount int64
 }
 
-// GET /v1/trips/days: trips per local calendar day in time zone tz (an IANA
-// name the handler has validated), for trips starting in
-// [started_from, started_before). vehicle_id NULL means every vehicle.
+// GET /v1/trips/days: live trips per range, for trips starting in
+// [bounds[i], bounds[i+1]) (bucket i, 1-based). bounds must be strictly
+// increasing; the handler passes the local midnights of the requested days,
+// computed in Go, so the time zone database is Go's (which knows every
+// backward-compatible alias, e.g. Asia/Calcutta), not the server's.
+// vehicle_id NULL means every vehicle. Buckets without trips are left out.
 func (q *Queries) ListDrivingDays(ctx context.Context, arg ListDrivingDaysParams) ([]ListDrivingDaysRow, error) {
-	rows, err := q.db.Query(ctx, listDrivingDays,
-		arg.Tz,
-		arg.MemberID,
-		arg.StartedFrom,
-		arg.StartedBefore,
-		arg.VehicleID,
-	)
+	rows, err := q.db.Query(ctx, listDrivingDays, arg.Bounds, arg.MemberID, arg.VehicleID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +187,7 @@ func (q *Queries) ListDrivingDays(ctx context.Context, arg ListDrivingDaysParams
 	items := []ListDrivingDaysRow{}
 	for rows.Next() {
 		var i ListDrivingDaysRow
-		if err := rows.Scan(&i.Day, &i.TripCount); err != nil {
+		if err := rows.Scan(&i.Bucket, &i.TripCount); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

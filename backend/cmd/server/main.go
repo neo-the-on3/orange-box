@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"syscall"
 	"time"
-	_ "time/tzdata" // /v1/trips/days takes an IANA tz; don't depend on the image's zoneinfo
 
 	"github.com/neo-the-on3/orange-box/backend/internal/auth"
 	"github.com/neo-the-on3/orange-box/backend/internal/config"

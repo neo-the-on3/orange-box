@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db/dbgen"
@@ -478,23 +477,24 @@ func (s *Trips) ListTripHistory(ctx context.Context, member uuid.UUID, hq store.
 }
 
 // DrivingDays implements store.Trips.
-func (s *Trips) DrivingDays(ctx context.Context, member uuid.UUID, from, before time.Time, tz string, vehicle *uuid.UUID) ([]store.DrivingDay, error) {
-	rows, err := s.q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{
-		Tz: tz, MemberID: member, StartedFrom: from, StartedBefore: before, VehicleID: vehicle,
-	})
-	var pg *pgconn.PgError
-	if errors.As(err, &pg) && pg.Code == "22023" { // invalid_parameter_value: time zone not recognized
-		return nil, store.ErrInvalidTimeZone
+func (s *Trips) DrivingDays(ctx context.Context, member uuid.UUID, bounds []time.Time, vehicle *uuid.UUID) ([]int, error) {
+	if len(bounds) < 2 {
+		return nil, errors.New("driving days: need at least two bounds")
 	}
+	for i := 1; i < len(bounds); i++ {
+		if !bounds[i].After(bounds[i-1]) {
+			return nil, fmt.Errorf("driving days: bounds not increasing at %d", i)
+		}
+	}
+	rows, err := s.q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{Bounds: bounds, MemberID: member, VehicleID: vehicle})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]store.DrivingDay, 0, len(rows))
+	counts := make([]int, len(bounds)-1)
 	for _, r := range rows {
-		if !r.Day.Valid {
-			continue
+		if i := int(r.Bucket) - 1; i >= 0 && i < len(counts) {
+			counts[i] = int(r.TripCount)
 		}
-		out = append(out, store.DrivingDay{Date: r.Day.Time.UTC(), Count: int(r.TripCount)})
 	}
-	return out, nil
+	return counts, nil
 }

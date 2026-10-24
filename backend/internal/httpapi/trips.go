@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	_ "time/tzdata" // GET /v1/trips/days: every IANA name and alias, whatever the image has
 
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -571,8 +572,8 @@ func (s *Server) ListDrivingDays(ctx context.Context, req api.ListDrivingDaysReq
 	if p.Tz != nil {
 		tz = *p.Tz
 	}
-	loc, err := time.LoadLocation(tz)
-	if err != nil || tz == "" || tz == "Local" {
+	loc, ok := timeZone(tz)
+	if !ok {
 		return nil, badRequest("tz must be an IANA time zone name, e.g. Asia/Kolkata.")
 	}
 	from, to := p.From.Time, p.To.Time
@@ -592,19 +593,54 @@ func (s *Server) ListDrivingDays(ctx context.Context, req api.ListDrivingDaysReq
 		}
 		vehicle = &id
 	}
-	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
-	before := time.Date(to.Year(), to.Month(), to.Day()+1, 0, 0, 0, 0, loc)
-	days, err := s.trips.DrivingDays(ctx, member, start, before, tz, vehicle)
-	if errors.Is(err, store.ErrInvalidTimeZone) {
-		return nil, badRequest("tz must be an IANA time zone name, e.g. Asia/Kolkata.")
+	// Day boundaries are computed here, with Go's time zone database
+	// (embedded in the binary), and Postgres only counts trips between
+	// them: Postgres's own database may lack backward-compatible names
+	// such as Asia/Calcutta, which Android reports.
+	n := int(to.Sub(from).Hours()/24) + 1
+	bounds := make([]time.Time, n+1)
+	for i := range bounds {
+		bounds[i] = localMidnight(from.AddDate(0, 0, i), loc)
 	}
+	counts, err := s.trips.DrivingDays(ctx, member, bounds, vehicle)
 	if err != nil {
 		return nil, err
 	}
-	resp.Items = makeLike(resp.Items, len(days))
-	for i, d := range days {
-		resp.Items[i].Date = openapi_types.Date{Time: d.Date}
-		resp.Items[i].TripCount = d.Count
+	for i, c := range counts {
+		if c == 0 {
+			continue
+		}
+		d := from.AddDate(0, 0, i)
+		resp.Items = append(resp.Items, makeLike(resp.Items, 1)[0])
+		item := &resp.Items[len(resp.Items)-1]
+		item.Date = openapi_types.Date{Time: time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)}
+		item.TripCount = c
 	}
 	return resp, nil
+}
+
+// timeZone loads an IANA zone name, aliases included. Names that aren't
+// real zones ("", Local, Factory, posixrules) are rejected.
+func timeZone(name string) (*time.Location, bool) {
+	switch name {
+	case "", "Local", "Factory", "posixrules":
+		return nil, false
+	}
+	loc, err := time.LoadLocation(name)
+	return loc, err == nil
+}
+
+// localMidnight is the first instant of day's calendar date in loc. Where
+// a DST change skips midnight (e.g. America/Santiago), the day starts at
+// the first local time that exists.
+func localMidnight(day time.Time, loc *time.Location) time.Time {
+	t := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+	if y, m, d := t.Date(); y != day.Year() || m != day.Month() || d != day.Day() {
+		// time.Date normalised a skipped midnight into the previous day;
+		// step forward to the day itself.
+		for t.Day() != day.Day() {
+			t = t.Add(15 * time.Minute)
+		}
+	}
+	return t
 }
