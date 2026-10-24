@@ -52,22 +52,26 @@ still renders on a neutral grid, so trip detail never depends on the network.
 
 ### Tile usage policy (OSMF) – how we comply
 
-From <https://operations.osmfoundation.org/policies/tiles/> (read 2026-10-24):
+From <https://operations.osmfoundation.org/policies/tiles/> (read 2026-10-24, re-checked 2026-10-25):
 
 | Requirement | Orange Box |
 |---|---|
-| Use exactly `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | Default URL template; **configurable** in one place (`MapTiles`) so it can change without a code rewrite |
-| Visible attribution on the map ("© OpenStreetMap contributors"), not hidden | Always-visible label, bottom-right of the map, linking to <https://www.openstreetmap.org/copyright> |
-| Distinct, stable User-Agent naming the app (no library default, no browser spoofing) | `OrangeBox/<versionName> (+https://github.com/neo-the-on3/orange-box)` |
+| Use exactly `https://tile.openstreetmap.org/{z}/{x}/{y}.png` (HTTPS) | `MapTiles.URL_TEMPLATE`, HTTPS only |
+| Recommended: avoid hard-coding the URL, so it can switch without an update | **Not met yet**: the template is one build-time constant (`MapTiles`), so switching needs a release. A remote or user-editable source is a later change; the Settings switch can turn tiles off without one |
+| Visible attribution on the map ("© OpenStreetMap contributors"), not hidden behind UI or toggles | Always-visible label, bottom-right of the map whenever tiles are shown, linking to <https://www.openstreetmap.org/copyright> |
+| Distinct, stable User-Agent naming the app (no library default such as `okhttp/x.y`, no browser spoofing) | `OrangeBox/<versionName> (+https://github.com/neo-the-on3/orange-box)`, set on every request by an interceptor |
+| Recommended: a published contact | The project URL in the User-Agent (issues on GitHub) |
+| Recommended: HTTP/2 or HTTP/3 | OkHttp negotiates HTTP/2 over TLS by default |
+| Referer / Referrer-Policy | Web only; not applicable to a native app |
 | Cache per HTTP caching headers (or ≥ 7 days); conditional requests | OkHttp disk cache (honours `Cache-Control`/`ETag`, sends `If-None-Match`); responses without freshness info get a 7-day max-age |
 | No `no-cache` headers by default | None sent |
-| **No bulk download, prefetch or offline packs** | Only tiles in the current viewport are requested; no "download area" feature, ever, on this server |
-| Recommended: "Report a map issue" link | Attribution sheet links to <https://www.openstreetmap.org/fixthemap> |
+| **No bulk download, prefetch or offline packs; no headless bots that pan/zoom to force rendering** | Only tiles in the current viewport are requested; no "download area" feature, ever, on this server. Automated runs never fetch tiles: Robolectric uses a fake tile provider, and the CI emulator smoke starts with `--es map_tiles off` |
+| Recommended: "Report a map issue" link | Trip detail ⋮ menu → "Report a map issue" opens <https://www.openstreetmap.org/fixthemap> |
 
 Other rules we follow:
-- **Privacy**: tile requests reveal the viewed area to OSMF. A Settings switch "Map tiles
-  (OpenStreetMap)" turns them off entirely; the route still shows. No location or trip data is ever
-  sent, only tile coordinates.
+- **Privacy**: tile requests reveal the viewed area to OSMF. A switch "Map tiles (OpenStreetMap)"
+  (trip detail ⋮ menu, stored in app preferences) turns them off entirely; the route still shows. No
+  location or trip data is ever sent, only tile coordinates.
 - Limit concurrency to a few workers and cap zoom at 18.
 - If OSMF blocks or rate-limits us (HTTP 403/429), tiles fail quietly and the grid stays.
 - **INTERNET permission** is added for tiles only (the app was offline-only until now). Backend
@@ -76,7 +80,7 @@ Other rules we follow:
 ## Consequences
 
 - No API key, no Google services, no native libraries; APK grows by under 1 MB (MapCompose + OkHttp).
-- Map, route and markers render in Robolectric; CI screenshots run with tiles off for determinism.
+- Map, route and markers render in Robolectric (fake tiles, no network); the CI emulator smoke runs with tiles off.
 - Raster tiles only; no vector styling or dark map style. A dark theme dims the tiles.
 - Heavy use of `tile.openstreetmap.org` is not allowed. If Orange Box ever has many users or
   needs offline maps, switch the URL template to a provider that allows it, or move to **MapLibre +
