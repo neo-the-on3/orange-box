@@ -70,4 +70,22 @@ class DashboardControlsTest {
         compose.waitForIdle()
         assertFalse("off unless Show dashboard automatically is on", activity.showWhenLocked)
     }
+
+    @Test fun `dashboard forces light system bar icons while shown and restores them after`() {
+        val controller = androidx.core.view.WindowCompat.getInsetsController(compose.activity.window, compose.activity.window.decorView)
+        compose.runOnUiThread {
+            // What enableEdgeToEdge() picks in light mode: dark icons.
+            controller.isAppearanceLightStatusBars = true
+            controller.isAppearanceLightNavigationBars = true
+        }
+        var shown by mutableStateOf(true)
+        compose.setContent { if (shown) DashboardScreen(SampleStates.fuelCut(), onEndDriving = {}) }
+        compose.waitForIdle()
+        assertFalse("white status-bar icons on the black strip", controller.isAppearanceLightStatusBars)
+        assertFalse("white nav-bar icons", controller.isAppearanceLightNavigationBars)
+        shown = false
+        compose.waitForIdle()
+        assertTrue("restored after the dashboard leaves", controller.isAppearanceLightStatusBars)
+        assertTrue(controller.isAppearanceLightNavigationBars)
+    }
 }
