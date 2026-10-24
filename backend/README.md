@@ -246,7 +246,7 @@ Schema overview (`internal/db/migrations`):
 | `telemetry_batches` | One row per uploaded batch: `clientBatchId` (unique per member), counts for duplicate replies, sample time range, object-storage key (raw batches go to R2 with #110). |
 | `trip_events` | Driving events, de-duplicated on insert by `clientEventId` and by the fallback key (`client_trip_id`, `t`, `type`, `active`, `dtc`; `NULLS NOT DISTINCT`). |
 | `dtc_reports` | DTC read/clear records, unique `(member_id, client_report_id)`. |
-| `idempotency_keys` | `Idempotency-Key` per (member, method, route template): fingerprint, in-progress lease, stored response, expiry. |
+| `idempotency_keys` | `Idempotency-Key` per (member, method, route template): fingerprint, in-progress lease and claim token (only the current claim can complete or release it), stored response, expiry (an expired key counts as absent). |
 
 Not here yet: OTP codes, lockout counters and refresh-token families (with
 full sign-in, #106), the vehicle catalogue and reference data (data source

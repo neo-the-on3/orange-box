@@ -43,6 +43,7 @@ type IdempotencyKey struct {
 	CreatedAt       time.Time
 	CompletedAt     *time.Time
 	ExpiresAt       time.Time
+	ClaimToken      *uuid.UUID
 }
 
 type Member struct {
