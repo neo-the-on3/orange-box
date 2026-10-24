@@ -476,6 +476,19 @@ func (s *Trips) ListTripHistory(ctx context.Context, member uuid.UUID, hq store.
 	return store.TripPage{Trips: toTrips(rows), Snapshot: snap}, nil
 }
 
+// DeletedClientTrips implements store.Trips.
+func (s *Trips) DeletedClientTrips(ctx context.Context, member uuid.UUID, clientIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	ids, err := s.q.ListDeletedClientTrips(ctx, dbgen.ListDeletedClientTripsParams{MemberID: member, ClientTripIds: clientIDs})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
+}
+
 // DrivingDays implements store.Trips.
 func (s *Trips) DrivingDays(ctx context.Context, member uuid.UUID, bounds []time.Time, vehicle *uuid.UUID) ([]int, error) {
 	if len(bounds) < 2 {

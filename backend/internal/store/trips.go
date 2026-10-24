@@ -207,6 +207,8 @@ type Trips interface {
 	// ListTripDeletions returns a page of tombstones, or
 	// ErrSyncWindowExpired.
 	ListTripDeletions(ctx context.Context, member uuid.UUID, q TripDeletionsQuery) (TripDeletionPage, error)
+	// DeletedClientTrips returns which of clientIDs have a tombstone.
+	DeletedClientTrips(ctx context.Context, member uuid.UUID, clientIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 	// DrivingDays counts live trips starting in each range [bounds[i],
 	// bounds[i+1]) (len(bounds)-1 counts). bounds must be strictly
 	// increasing, at least two.

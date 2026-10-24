@@ -149,6 +149,41 @@ func (q *Queries) GetTripPurgeBoundary(ctx context.Context, memberID uuid.UUID) 
 	return i, err
 }
 
+const listDeletedClientTrips = `-- name: ListDeletedClientTrips :many
+SELECT client_trip_id FROM trips
+WHERE member_id = $1
+  AND client_trip_id = ANY ($2::uuid[])
+  AND deleted_at IS NOT NULL
+`
+
+type ListDeletedClientTripsParams struct {
+	MemberID      uuid.UUID
+	ClientTripIds []uuid.UUID
+}
+
+// Which of client_trip_ids have a tombstone (the trip was deleted): a
+// stored Idempotency-Key replay of a trip batch reports them as
+// trip_deleted, not as the stored created/updated.
+func (q *Queries) ListDeletedClientTrips(ctx context.Context, arg ListDeletedClientTripsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listDeletedClientTrips, arg.MemberID, arg.ClientTripIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var client_trip_id uuid.UUID
+		if err := rows.Scan(&client_trip_id); err != nil {
+			return nil, err
+		}
+		items = append(items, client_trip_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDrivingDays = `-- name: ListDrivingDays :many
 SELECT width_bucket(started_at, $1::timestamptz[])::int AS bucket, count(*) AS trip_count
 FROM trips

@@ -255,3 +255,12 @@ SELECT id FROM vehicles
 WHERE member_id = @member_id AND id = ANY (@ids::uuid[]) AND deleted_at IS NULL
 ORDER BY id
 FOR SHARE;
+
+-- name: ListDeletedClientTrips :many
+-- Which of client_trip_ids have a tombstone (the trip was deleted): a
+-- stored Idempotency-Key replay of a trip batch reports them as
+-- trip_deleted, not as the stored created/updated.
+SELECT client_trip_id FROM trips
+WHERE member_id = @member_id
+  AND client_trip_id = ANY (@client_trip_ids::uuid[])
+  AND deleted_at IS NOT NULL;

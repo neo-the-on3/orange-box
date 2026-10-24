@@ -136,6 +136,12 @@ func TestTripStoreMemberScope(t *testing.T) {
 	if d, err := trips.ListTripDeletions(ctx, stranger, store.TripDeletionsQuery{Since: origin(t, q), Limit: 10}); err != nil || len(d.Deletions) != 0 {
 		t.Fatalf("stranger deletions: %+v, %v", d, err)
 	}
+	if d, err := trips.DeletedClientTrips(ctx, stranger, []uuid.UUID{clientID}); err != nil || len(d) != 0 {
+		t.Fatalf("stranger DeletedClientTrips: %v, %v", d, err)
+	}
+	if d, err := trips.DeletedClientTrips(ctx, member, []uuid.UUID{clientID, newID()}); err != nil || len(d) != 1 || !d[clientID] {
+		t.Fatalf("DeletedClientTrips: %v, %v", d, err)
+	}
 	if days, err := trips.DrivingDays(ctx, stranger, []time.Time{t0.Add(-48 * time.Hour), t0.Add(48 * time.Hour)}, nil); err != nil || days[0] != 0 {
 		t.Fatalf("stranger days: %+v, %v", days, err)
 	}

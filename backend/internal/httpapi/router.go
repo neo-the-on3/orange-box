@@ -157,6 +157,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 			// live request is never taken over.
 			lease:    d.RequestTimeout + 2*idempotencyStoreTimeout,
 			guards:   map[string]replayGuard{"createvehicle": srv.createVehicleReplayGuard},
+			rewrites: map[string]replayRewrite{"uploadtrips": srv.uploadTripsReplay},
 			logger:   d.Logger,
 			classify: d.ClassifyError,
 		}
