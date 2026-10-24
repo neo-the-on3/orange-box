@@ -208,8 +208,8 @@ type ListDrivingDaysRow struct {
 }
 
 // GET /v1/trips/days: live trips per range, for trips starting in
-// [bounds[i], bounds[i+1]) (bucket i, 1-based). bounds must be strictly
-// increasing; the handler passes the local midnights of the requested days,
+// [bounds[i], bounds[i+1]) (bucket i, 1-based). bounds must be
+// non-decreasing; equal bounds are an empty range (a skipped day); the handler passes the local midnights of the requested days,
 // computed in Go, so the time zone database is Go's (which knows every
 // backward-compatible alias, e.g. Asia/Calcutta), not the server's.
 // vehicle_id NULL means every vehicle. Buckets without trips are left out.

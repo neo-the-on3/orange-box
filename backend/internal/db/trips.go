@@ -495,9 +495,12 @@ func (s *Trips) DrivingDays(ctx context.Context, member uuid.UUID, bounds []time
 		return nil, errors.New("driving days: need at least two bounds")
 	}
 	for i := 1; i < len(bounds); i++ {
-		if !bounds[i].After(bounds[i-1]) {
-			return nil, fmt.Errorf("driving days: bounds not increasing at %d", i)
+		if bounds[i].Before(bounds[i-1]) {
+			return nil, fmt.Errorf("driving days: bounds decreasing at %d", i)
 		}
+	}
+	if !bounds[len(bounds)-1].After(bounds[0]) {
+		return make([]int, len(bounds)-1), nil // every range empty (e.g. a skipped day)
 	}
 	rows, err := s.q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{Bounds: bounds, MemberID: member, VehicleID: vehicle})
 	if err != nil {

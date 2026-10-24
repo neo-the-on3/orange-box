@@ -210,7 +210,7 @@ type Trips interface {
 	// DeletedClientTrips returns which of clientIDs have a tombstone.
 	DeletedClientTrips(ctx context.Context, member uuid.UUID, clientIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 	// DrivingDays counts live trips starting in each range [bounds[i],
-	// bounds[i+1]) (len(bounds)-1 counts). bounds must be strictly
-	// increasing, at least two.
+	// bounds[i+1]) (len(bounds)-1 counts). bounds must be non-decreasing,
+	// at least two; equal bounds are an empty range (a skipped day).
 	DrivingDays(ctx context.Context, member uuid.UUID, bounds []time.Time, vehicle *uuid.UUID) ([]int, error)
 }
