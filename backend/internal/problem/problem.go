@@ -44,6 +44,7 @@ const (
 	CodeServerBusy          = "server_busy"
 	CodeRequestTimeout      = "request_timeout"
 	CodeInternal            = "internal_error"
+	CodeUnavailable         = "service_unavailable"
 )
 
 // FieldError points at one invalid field of the request body.

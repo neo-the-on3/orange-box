@@ -3,6 +3,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
@@ -50,6 +51,9 @@ type Deps struct {
 	UploadReadTimeout time.Duration
 	// Now is the clock (time.Now if nil).
 	Now func() time.Time
+	// Ready, if set, is checked by GET /v1/health (e.g. a database ping);
+	// an error turns the answer into 503 service_unavailable.
+	Ready func(context.Context) error
 }
 
 // NewRouter returns the root handler. Middleware runs outermost first:
@@ -96,6 +100,8 @@ func NewRouter(d Deps) (http.Handler, error) {
 		testMode:   d.TestMode,
 		testCode:   d.TestCode,
 		now:        d.Now,
+		ready:      d.Ready,
+		logger:     d.Logger,
 	}
 	errs := errorHandlers{logger: d.Logger}
 	strict := api.NewStrictHandlerWithOptions(srv, nil, api.StrictHTTPServerOptions{

@@ -195,3 +195,35 @@ func TestMigrateCommand(t *testing.T) {
 		t.Errorf("no DATABASE_URL: exit %d, want 1", code)
 	}
 }
+
+// TestHealthReportsDatabaseOutage stops answering for the database (by
+// terminating the server's connections and dropping the database) and
+// expects GET /v1/health to turn into 503.
+func TestHealthReportsDatabaseOutage(t *testing.T) {
+	t.Parallel()
+	url := dbtest.NewDatabase(t)
+	base := startServer(t, dbConfig(t, url, map[string]string{"MIGRATE_ON_START": "true"}), io.Discard)
+	get := func() int {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/v1/health", nil)
+		res, err := noKeepAlive.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+	if code := get(); code != http.StatusOK {
+		t.Fatalf("health with database up: %d", code)
+	}
+	admin := dbtest.Open(t, dbtest.BaseURL(t))
+	name := url[strings.LastIndex(url, "/")+1:]
+	if i := strings.Index(name, "?"); i >= 0 {
+		name = name[:i]
+	}
+	if _, err := admin.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)"); err != nil {
+		t.Fatal(err)
+	}
+	if code := get(); code != http.StatusServiceUnavailable {
+		t.Fatalf("health with database gone: %d, want 503", code)
+	}
+}
