@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -169,39 +170,129 @@ func TestPendingCodes(t *testing.T) {
 	p := NewPendingCodes()
 	p.now = func() time.Time { return now }
 	const email, code = "a@test.orangebox.invalid", "482916"
+	verify := func(c string) VerifyResult {
+		res, _ := p.Verify(email, c)
+		return res
+	}
 
-	if got := p.Verify(email, code); got != VerifyInvalid {
+	if got := verify(code); got != VerifyInvalid {
 		t.Errorf("no pending code: %v", got)
 	}
-	p.Put(email, code)
-	if got := p.Verify(email, code); got != VerifyOK {
+	if got := p.Put(email, code); got != OtpResendAfter {
+		t.Errorf("first Put resendAfter = %v", got)
+	}
+	if got := verify(code); got != VerifyOK {
 		t.Errorf("correct code: %v", got)
 	}
-	if got := p.Verify(email, code); got != VerifyInvalid {
+	if got := verify(code); got != VerifyInvalid {
 		t.Errorf("code reused: %v", got)
 	}
 
-	p.Put(email, code)
-	for i := 1; i < OtpMaxAttempts; i++ {
-		if got := p.Verify(email, "000001"); got != VerifyInvalid {
-			t.Errorf("wrong attempt %d: %v", i, got)
-		}
-	}
-	if got := p.Verify(email, "000001"); got != VerifyAttemptsExceeded {
-		t.Errorf("5th wrong attempt: %v", got)
-	}
-	if got := p.Verify(email, code); got != VerifyAttemptsExceeded {
-		t.Errorf("correct code after exhaustion: %v", got)
-	}
-	p.Put(email, code) // a new code resets
-	if got := p.Verify(email, code); got != VerifyOK {
-		t.Errorf("new code: %v", got)
-	}
-
+	// Expired code.
 	p.Put(email, code)
 	now = now.Add(OtpTTL)
-	if got := p.Verify(email, code); got != VerifyInvalid {
+	if got := verify(code); got != VerifyInvalid {
 		t.Errorf("expired code: %v", got)
+	}
+}
+
+func TestPendingCodesResendAfter(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_000_000, 0)
+	p := NewPendingCodes()
+	p.now = func() time.Time { return now }
+	const email = "r@test.orangebox.invalid"
+	p.Put(email, "482916")
+	now = now.Add(20 * time.Second)
+	if got := p.Put(email, "739204"); got != 40*time.Second {
+		t.Errorf("early resend: resendAfter = %v, want 40s", got)
+	}
+	if res, _ := p.Verify(email, "482916"); res != VerifyOK {
+		t.Errorf("early resend replaced the pending code: %v", res)
+	}
+	now = now.Add(time.Minute)
+	p.Put(email, "482916")
+	now = now.Add(OtpResendAfter)
+	if got := p.Put(email, "739204"); got != OtpResendAfter {
+		t.Errorf("resend after the wait: %v", got)
+	}
+	if res, _ := p.Verify(email, "739204"); res != VerifyOK {
+		t.Errorf("new code after the wait: %v", res)
+	}
+}
+
+func TestPendingCodesAttemptsSurviveResend(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_000_000, 0)
+	p := NewPendingCodes()
+	p.now = func() time.Time { return now }
+	const email, code = "x@test.orangebox.invalid", "482916"
+
+	p.Put(email, code)
+	for i := 1; i <= 3; i++ {
+		if res, _ := p.Verify(email, "000001"); res != VerifyInvalid {
+			t.Fatalf("wrong attempt %d: %v", i, res)
+		}
+	}
+	// A fresh code request does not reset the count.
+	now = now.Add(OtpResendAfter)
+	p.Put(email, code)
+	if res, _ := p.Verify(email, "000001"); res != VerifyInvalid {
+		t.Fatalf("4th wrong attempt: %v", res)
+	}
+	if res, _ := p.Verify(email, "000001"); res != VerifyAttemptsExceeded {
+		t.Fatalf("5th wrong attempt: %v", res)
+	}
+	now = now.Add(OtpResendAfter)
+	p.Put(email, code)
+	if res, _ := p.Verify(email, code); res != VerifyAttemptsExceeded {
+		t.Errorf("correct code inside the failure window: %v", res)
+	}
+	// After the window, a new code works again.
+	now = now.Add(OtpFailureWindow)
+	p.Put(email, code)
+	if res, _ := p.Verify(email, code); res != VerifyOK {
+		t.Errorf("after the window: %v", res)
+	}
+}
+
+func TestPendingCodesGlobalCap(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_000_000, 0)
+	p := NewPendingCodes()
+	p.now = func() time.Time { return now }
+	// Spreading guesses over many addresses hits the process-wide cap.
+	for i := range GlobalFailureCap {
+		e := "spray" + strconv.Itoa(i) + "@test.orangebox.invalid"
+		p.Put(e, "482916")
+		if res, _ := p.Verify(e, "000001"); res != VerifyInvalid {
+			t.Fatalf("guess %d: %v", i, res)
+		}
+	}
+	p.Put("victim@test.orangebox.invalid", "482916")
+	res, retry := p.Verify("victim@test.orangebox.invalid", "482916")
+	if res != VerifyLocked || retry <= 0 || retry > GlobalFailureWindow {
+		t.Fatalf("after cap: %v %v", res, retry)
+	}
+	now = now.Add(GlobalFailureWindow)
+	if res, _ := p.Verify("victim@test.orangebox.invalid", "482916"); res != VerifyInvalid {
+		// the victim's code expired meanwhile (10 min), so invalid, not locked
+		t.Errorf("after the window: %v", res)
+	}
+}
+
+func TestPendingCodesSweep(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_000_000, 0)
+	p := NewPendingCodes()
+	p.now = func() time.Time { return now }
+	for i := range 50 {
+		p.Put("s"+strconv.Itoa(i)+"@test.orangebox.invalid", "482916")
+	}
+	now = now.Add(OtpTTL + sweepInterval)
+	p.Put("fresh@test.orangebox.invalid", "482916")
+	if len(p.addrs) != 1 {
+		t.Errorf("after sweep: %d entries, want 1", len(p.addrs))
 	}
 }
 

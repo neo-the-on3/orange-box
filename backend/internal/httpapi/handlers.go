@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -59,8 +60,8 @@ func (s *Server) RequestOtp(ctx context.Context, req api.RequestOtpRequestObject
 		if !s.testMode {
 			return nil, testAddressRejected()
 		}
-		s.codes.Put(email, s.testCode) // no e-mail is sent for the reserved domain
-		id, noStore, resend := reqctx.RequestID(ctx), "no-store", int(auth.OtpResendAfter.Seconds())
+		wait := s.codes.Put(email, s.testCode) // no e-mail is sent for the reserved domain
+		id, noStore, resend := reqctx.RequestID(ctx), "no-store", int(math.Ceil(wait.Seconds()))
 		return api.RequestOtp202JSONResponse{
 			Body:    api.OtpResponse{ExpiresIn: int(auth.OtpTTL.Seconds()), ResendAfter: &resend},
 			Headers: api.RequestOtp202ResponseHeaders{CacheControl: &noStore, XRequestId: &id},
@@ -96,11 +97,16 @@ func (s *Server) emailOtpGrant(ctx context.Context, g api.EmailOtpGrant) (api.Cr
 	}
 	// Outside the test domain no code can be pending until #106, which is
 	// exactly the spec's "no pending code" case: invalid_grant.
-	switch s.codes.Verify(email, g.Code) {
+	result, retry := s.codes.Verify(email, g.Code)
+	switch result {
 	case auth.VerifyOK:
 	case auth.VerifyAttemptsExceeded:
 		return nil, problem.New(http.StatusBadRequest, problem.CodeOtpAttemptsExceeded, "Request a new code.").
 			WithTitle("Too many attempts")
+	case auth.VerifyLocked:
+		return nil, problem.New(http.StatusBadRequest, problem.CodeOtpLocked,
+			"Too many failed codes. Try again later.").
+			WithTitle("Sign-in temporarily locked").WithRetryAfter(int(math.Ceil(retry.Seconds())))
 	default:
 		return nil, problem.New(http.StatusBadRequest, problem.CodeInvalidGrant,
 			"The code or refresh token is invalid or expired.").WithTitle("Invalid grant")

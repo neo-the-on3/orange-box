@@ -55,8 +55,12 @@ generate-check: generate ## Fail if the committed generated code is out of date
 docker: ## Build the container image
 	docker build -t $(IMAGE) .
 
+.PHONY: docker-if-available
+docker-if-available: # Build the image when a Docker daemon is reachable
+	@if docker info >/dev/null 2>&1; then $(MAKE) docker; else echo "docker: no daemon reachable, skipping the image build (CI still builds it)"; fi
+
 .PHONY: check
-check: generate-check vet test lint vuln build docker ## Run every local check CI runs
+check: generate-check vet test lint vuln build docker-if-available ## Run every local check CI runs (docker only if available)
 
 .PHONY: clean
 clean: ## Remove build output

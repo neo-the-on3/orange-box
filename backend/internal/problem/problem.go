@@ -35,10 +35,11 @@ const (
 	CodeUnsupportedMedia    = "unsupported_media_type"
 	CodeInvalidGrant        = "invalid_grant"
 	CodeOtpAttemptsExceeded = "otp_attempts_exceeded"
+	CodeOtpLocked           = "otp_locked"
 	CodeTestAddressRejected = "test_address_rejected"
 	CodeEmailUnavailable    = "email_sign_in_unavailable"
 	CodeNotImplemented      = "not_implemented"
-	CodeTimeout             = "timeout"
+	CodeUploadsBusy         = "uploads_busy"
 	CodeInternal            = "internal_error"
 )
 

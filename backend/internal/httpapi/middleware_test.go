@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -178,8 +180,15 @@ func TestReadBodyReplacesBodyAndGetBody(t *testing.T) {
 	if _, p := readBody(req, false); p == nil || p.Status != http.StatusRequestEntityTooLarge {
 		t.Errorf("declared length: %v", p)
 	}
-	// A gzip body over 1 MiB compressed is refused.
-	req = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, MaxCompressedBody+1)))
+	// A gzip body over 1 MiB compressed is refused (random data doesn't
+	// compress, so the gzip stream stays over the limit).
+	random := make([]byte, MaxCompressedBody+1)
+	_, _ = rand.Read(random)
+	var zbuf bytes.Buffer
+	zw := gzip.NewWriter(&zbuf)
+	_, _ = zw.Write(random)
+	_ = zw.Close()
+	req = httptest.NewRequest(http.MethodPost, "/", &zbuf)
 	req.ContentLength = -1
 	req.Header.Set("Content-Encoding", "gzip")
 	if _, p := readBody(req, true); p == nil || p.Status != http.StatusRequestEntityTooLarge {
@@ -207,7 +216,8 @@ func TestEmailFormat(t *testing.T) {
 		"<driver@example.com>":         false,
 		"driver":                       false,
 		"":                             false,
-		" driver@example.com":          false,
+		" driver@example.com\t":        true, // trimmed, as the spec says
+		"   ":                          false,
 	} {
 		if err := validateEmailFormat(in); (err == nil) != ok {
 			t.Errorf("validateEmailFormat(%q) = %v", in, err)
