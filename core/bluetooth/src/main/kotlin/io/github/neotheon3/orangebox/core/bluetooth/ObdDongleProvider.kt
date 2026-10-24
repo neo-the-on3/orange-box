@@ -5,12 +5,14 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.neotheon3.orangebox.core.common.ConnectionLog
 import io.github.neotheon3.orangebox.core.datastore.DongleSelectionRepository
 import io.github.neotheon3.orangebox.core.model.SelectedDongle
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.ObdError
 import io.github.neotheon3.orangebox.core.obd.ObdTransport
 import io.github.neotheon3.orangebox.core.obd.ObdTransportProvider
+import io.github.neotheon3.orangebox.core.obd.loggedIfEnabled
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -86,11 +88,14 @@ class DefaultObdDongleProvider @Inject constructor(
 
     override suspend fun create(): ObdTransport {
         val dongle = selection.selected.first() ?: throw ObdError.NotPaired("No OBD dongle selected")
+            .also { ConnectionLog.record("CONNECT", "no dongle selected") }
         return if (dongle.address.equals(DongleLinkEvent.SIMULATED_ADDRESS, ignoreCase = true)) {
             if (!simulated.available) throw ObdError.NotPaired("Simulator not available in this build")
-            simulated.createTransport()
+            ConnectionLog.record("CONNECT", "simulated dongle")
+            simulated.createTransport().loggedIfEnabled("sim")
         } else {
-            BluetoothSppTransport(context, dongle.address)
+            ConnectionLog.record("CONNECT", "bluetooth spp name=${dongle.name} address=${dongle.address}")
+            BluetoothSppTransport(context, dongle.address).loggedIfEnabled("bt")
         }
     }
 

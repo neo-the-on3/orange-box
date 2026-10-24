@@ -1,6 +1,7 @@
 package io.github.neotheon3.orangebox
 
 import android.util.Log
+import io.github.neotheon3.orangebox.core.common.ConnectionLog
 import io.github.neotheon3.orangebox.core.common.OrangeLog
 
 /**
@@ -23,7 +24,18 @@ class AndroidLogSink(private val minLevel: OrangeLog.Level) : OrangeLog.Sink {
     companion object {
         fun install(debug: Boolean) {
             OrangeLog.allowSensitive = debug
-            OrangeLog.sink = AndroidLogSink(if (debug) OrangeLog.Level.DEBUG else OrangeLog.Level.WARN)
+            val logcat = AndroidLogSink(if (debug) OrangeLog.Level.DEBUG else OrangeLog.Level.WARN)
+            // Debug builds also keep the connection-related lines in ConnectionLog (Export connection log).
+            ConnectionLog.enabled = debug
+            OrangeLog.sink = if (!debug) logcat else OrangeLog.Sink { level, tag, message, error ->
+                logcat.log(level, tag, message, error)
+                if (tag in CONNECTION_TAGS) ConnectionLog.record("LOG", "${level.name[0]} $tag $message" + (error?.let { " error=${it::class.simpleName}(${it.message})" } ?: ""))
+            }
         }
+
+        private val CONNECTION_TAGS = setOf(
+            OrangeLog.tag(OrangeLog.Areas.OBD), OrangeLog.tag(OrangeLog.Areas.BLUETOOTH),
+            OrangeLog.tag(OrangeLog.Areas.TELEMETRY), OrangeLog.tag(OrangeLog.Areas.TRIP), OrangeLog.tag(OrangeLog.Areas.APP),
+        )
     }
 }
