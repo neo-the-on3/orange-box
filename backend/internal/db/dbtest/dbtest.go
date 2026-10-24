@@ -1,6 +1,7 @@
 // Package dbtest gives integration tests a throwaway Postgres database.
 //
-// Tests that use it are skipped when DATABASE_URL is unset (as in CI today).
+// Tests that use it are skipped when DATABASE_URL is unset, unless
+// REQUIRE_DATABASE_TESTS=true (set in CI), which makes them fail instead.
 // With it set, each call creates a fresh database on that server (the role
 // needs CREATEDB) and drops it when the test ends, so tests never touch the
 // database DATABASE_URL names and can run in parallel.
@@ -27,6 +28,9 @@ func BaseURL(t testing.TB) string {
 	t.Helper()
 	base := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if base == "" {
+		if os.Getenv("REQUIRE_DATABASE_TESTS") == "true" {
+			t.Fatal("REQUIRE_DATABASE_TESTS=true but DATABASE_URL is not set")
+		}
 		t.Skip("DATABASE_URL not set: skipping Postgres integration test")
 	}
 	return base

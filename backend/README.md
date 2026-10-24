@@ -210,7 +210,8 @@ covers `internal/db/dbgen`).
 ## Database
 
 Postgres 15 or newer (the schema uses `NULLS NOT DISTINCT`); Neon in
-production. Migrations are embedded in the binary and applied with
+production. The server and `server migrate` check `server_version_num` on
+connect and refuse an older server with a clear error. Migrations are embedded in the binary and applied with
 `server migrate up` (or `MIGRATE_ON_START=true`); sqlc generates typed
 queries into `internal/db/dbgen`.
 
@@ -224,7 +225,15 @@ make test            # Postgres integration tests run because DATABASE_URL is se
 Integration tests create a throwaway database per test on that server
 (`ob_test_*`, dropped afterwards), so the role needs `CREATEDB`; they never
 touch the database in `DATABASE_URL`. Without `DATABASE_URL` they are
-skipped, as in CI today.
+skipped, unless `REQUIRE_DATABASE_TESTS=true`, which makes them fail. The
+Backend workflow runs them against a pinned `postgres:17` service with
+that set.
+
+With `DATABASE_URL` set, `GET /v1/health` also pings the database (2 s
+budget) and answers `503` (`service_unavailable`, `Retry-After: 5`) while
+it is unreachable, so use it as a readiness check; a liveness probe that
+restarts the container on `503` would restart it during a database
+outage.
 
 Schema overview (`internal/db/migrations`):
 
