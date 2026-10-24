@@ -1,6 +1,7 @@
 package io.github.neotheon3.orangebox.core.database
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 /** Trip storage for the recorder (and, later, the Trips screen). */
@@ -23,6 +24,11 @@ interface TripRepository {
     /** Samples of a batch of trips (a few at a time), in time order per trip. */
     suspend fun samplesOf(tripIds: List<Long>): Map<Long, List<TripSampleEntity>> = tripIds.associateWith { samples(it) }
 
+    /** Totals of the finished trips that started in [fromMillis, toMillis) (#46). */
+    suspend fun totals(fromMillis: Long, toMillis: Long): TripPeriodTotals = trips.first()
+        .filter { it.endedAtMillis != null && it.startedAtMillis >= fromMillis && it.startedAtMillis < toMillis }
+        .fold(TripPeriodTotals()) { acc, t -> acc + t }
+
     /** Events of a batch of trips (a few at a time), in time order per trip. */
     suspend fun eventsOf(tripIds: List<Long>): Map<Long, List<TripEventEntity>> = tripIds.associateWith { events(it) }
 }
@@ -37,5 +43,6 @@ class RoomTripRepository @Inject constructor(private val dao: TripDao) : TripRep
     override suspend fun samples(tripId: Long) = dao.samples(tripId)
     override suspend fun events(tripId: Long) = dao.events(tripId)
     override suspend fun samplesOf(tripIds: List<Long>) = dao.samplesOf(tripIds).groupBy { it.tripId }
+    override suspend fun totals(fromMillis: Long, toMillis: Long) = dao.totals(fromMillis, toMillis)
     override suspend fun eventsOf(tripIds: List<Long>) = dao.eventsOf(tripIds).groupBy { it.tripId }
 }

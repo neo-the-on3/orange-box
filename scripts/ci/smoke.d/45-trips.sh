@@ -54,6 +54,13 @@ wait_for_text "No route for this trip" trip-detail-noloc 15
 shot 47-trip-detail-no-location
 adb shell input keyevent KEYCODE_BACK
 wait_for_text "Previous month" trips-back 10
+
+# Weekly stats from the seeded trips.
+tap_attr text "Stats" trips-open-stats
+wait_for_text "This week" stats-week 15
+shot 48-stats
+adb shell input keyevent KEYCODE_BACK
+wait_for_text "Previous month" trips-back-stats 10
 adb shell input keyevent KEYCODE_BACK
 wait_for_regex 'content-desc="Settings"' trips-back-home 10
 echo "trips smoke OK"

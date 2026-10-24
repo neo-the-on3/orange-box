@@ -31,6 +31,16 @@ interface TripDao {
     @Query("SELECT * FROM trip_samples WHERE tripId IN (:tripIds) ORDER BY tripId, timestampMillis") suspend fun samplesOf(tripIds: List<Long>): List<TripSampleEntity>
     @Query("SELECT * FROM trip_events WHERE tripId IN (:tripIds) ORDER BY tripId, timestampMillis") suspend fun eventsOf(tripIds: List<Long>): List<TripEventEntity>
 
+    /** Totals of finished trips that started in [fromMillis, toMillis) (#46). A trip still recording is left out. */
+    @Query(
+        """SELECT COUNT(*) AS trips, COALESCE(SUM(distanceKm), 0) AS distanceKm, COALESCE(SUM(durationS), 0) AS durationS,
+        COALESCE(SUM(fuelLitres), 0) AS fuelLitres, COALESCE(SUM(ecoS), 0) AS ecoS, COALESCE(SUM(idleS), 0) AS idleS,
+        COALESCE(SUM(harshAccelCount), 0) AS harshAccel, COALESCE(SUM(harshBrakeCount), 0) AS harshBrake,
+        COALESCE(SUM(overspeedCount), 0) AS overspeed, COALESCE(MAX(maxSpeedKph), 0) AS maxSpeedKph
+        FROM trips WHERE endedAtMillis IS NOT NULL AND startedAtMillis >= :fromMillis AND startedAtMillis < :toMillis""",
+    )
+    suspend fun totals(fromMillis: Long, toMillis: Long): TripPeriodTotals
+
     /** Closes trips a dead process left open at their last checkpoint. Returns how many. */
     @Query("UPDATE trips SET endedAtMillis = lastSampleAtMillis, endReason = 'process_death' WHERE endedAtMillis IS NULL")
     suspend fun closeOrphans(): Int
