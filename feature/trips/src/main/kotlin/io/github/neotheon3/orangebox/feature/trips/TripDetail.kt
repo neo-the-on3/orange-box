@@ -16,7 +16,8 @@ enum class TripEventType(val wire: String) {
     }
 }
 
-data class TripEventItem(val type: TripEventType, val time: LocalDateTime, val value: Double?, val position: GeoPoint?)
+/** [value] is the event's peak ([TripEventEntity.value]); [durationS] is null for events recorded before #164. */
+data class TripEventItem(val type: TripEventType, val time: LocalDateTime, val value: Double?, val position: GeoPoint?, val durationS: Double? = null)
 
 /** Summary metrics of one trip. Averages are null when they would be meaningless (no time or no fuel). */
 data class TripMetrics(
@@ -79,19 +80,21 @@ object TripDetails {
 
     fun detail(trip: TripEntity, samples: List<TripSampleEntity>, events: List<TripEventEntity>, zone: ZoneId): TripDetail {
         val sorted = samples.sortedBy { it.timestampMillis }
+        val items = events.sortedBy { it.timestampMillis }.mapNotNull { e ->
+            val type = TripEventType.of(e.type) ?: return@mapNotNull null
+            TripEventItem(
+                type = type,
+                time = LocalDateTime.ofInstant(Instant.ofEpochMilli(e.timestampMillis), zone),
+                value = e.value,
+                position = if (e.latitude != null && e.longitude != null) GeoPoint(e.latitude!!, e.longitude!!) else null,
+                durationS = e.durationS,
+            )
+        }
         return TripDetail(
             header = TripsCalendar.item(trip, zone),
             metrics = metrics(trip),
             route = route(sorted),
-            events = events.sortedBy { it.timestampMillis }.mapNotNull { e ->
-                val type = TripEventType.of(e.type) ?: return@mapNotNull null
-                TripEventItem(
-                    type = type,
-                    time = LocalDateTime.ofInstant(Instant.ofEpochMilli(e.timestampMillis), zone),
-                    value = e.value,
-                    position = if (e.latitude != null && e.longitude != null) GeoPoint(e.latitude!!, e.longitude!!) else null,
-                )
-            },
+            events = items,
             speedSeries = sorted.mapNotNull { s -> s.speedKph?.let { (s.timestampMillis - trip.startedAtMillis) / 1000.0 to it } },
         )
     }

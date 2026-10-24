@@ -49,7 +49,7 @@ fun interface ActiveVehicleId {
  * Records trips to [TripRepository] while [start]ed (by the driving service):
  * - a trip starts on engine on (RPM > 0 while connected) and zeroes the telemetry trip totals;
  * - about one sample per second (with the latest location fix while recording), plus harsh accel/brake,
- *   overspeed and fuel-cut events;
+ *   overspeed and fuel-cut events, each written once it ends with its peak value and duration (#164);
  * - the summary is checkpointed every [CHECKPOINT_MILLIS] together with the pending rows, so process
  *   death loses at most that much; the first trip of a process closes trips a dead process left open;
  * - it ends after [ENGINE_OFF_GRACE_MILLIS] without the engine running, or on [stop]: as engine_off only once
@@ -98,6 +98,10 @@ class TripRecorder(
     private var flags = Flags()
     private val samples = mutableListOf<TripSampleEntity>()
     private val events = mutableListOf<TripEventEntity>()
+    /** Events in progress by type: written when they close (or the trip ends) with their peak and duration (#164). */
+    private val open = linkedMapOf<String, OpenEvent>()
+
+    private class OpenEvent(val row: TripEventEntity, var peak: Double?, var lastAt: Long)
 
     private data class Flags(val harshAccel: Boolean = false, val harshBrake: Boolean = false, val overspeed: Boolean = false, val fuelCut: Boolean = false)
 
@@ -147,18 +151,37 @@ class TripRecorder(
             lastSampleAt = s.timestampMillis
         }
         val now = Flags(s.instant.harshAccel, s.instant.harshBrake, s.instant.overspeed, s.instant.fuelCut)
-        fun edge(was: Boolean, isOn: Boolean, type: String, value: Double?) {
-            if (isOn && !was) events += TripEventEntity(tripId = current.id, timestampMillis = s.timestampMillis, type = type, value = value, latitude = f?.latitude, longitude = f?.longitude)
+        // value: the peak while the event runs: max acceleration, the strongest (most negative) braking,
+        // max speed for overspeed; fuel cut keeps the speed it started at.
+        fun edge(was: Boolean, isOn: Boolean, type: String, value: Double?, peakOf: (Double, Double) -> Double) {
+            when {
+                isOn && !was -> open[type] = OpenEvent(
+                    TripEventEntity(tripId = current.id, timestampMillis = s.timestampMillis, type = type, value = value, latitude = f?.latitude, longitude = f?.longitude),
+                    value, s.timestampMillis,
+                )
+                isOn -> open[type]?.let { o ->
+                    if (value != null) o.peak = o.peak?.let { peakOf(it, value) } ?: value
+                    o.lastAt = s.timestampMillis
+                }
+                was -> close(type, s.timestampMillis)
+            }
         }
-        edge(flags.harshAccel, now.harshAccel, EVENT_HARSH_ACCEL, s.instant.accelMps2)
-        edge(flags.harshBrake, now.harshBrake, EVENT_HARSH_BRAKE, s.instant.accelMps2)
-        edge(flags.overspeed, now.overspeed, EVENT_OVERSPEED, s.instant.speedKph)
-        edge(flags.fuelCut, now.fuelCut, EVENT_FUEL_CUT, s.instant.speedKph)
+        val keep: (Double, Double) -> Double = { a, _ -> a }
+        edge(flags.harshAccel, now.harshAccel, EVENT_HARSH_ACCEL, s.instant.accelMps2, ::maxOf)
+        edge(flags.harshBrake, now.harshBrake, EVENT_HARSH_BRAKE, s.instant.accelMps2, ::minOf)
+        edge(flags.overspeed, now.overspeed, EVENT_OVERSPEED, s.instant.speedKph, ::maxOf)
+        edge(flags.fuelCut, now.fuelCut, EVENT_FUEL_CUT, s.instant.speedKph, keep)
         flags = now
         val updated = current.withTotals(totals).copy(lastSampleAtMillis = s.timestampMillis)
         trip = updated
         _active.value = ActiveTrip(updated.id, updated.startedAtMillis, totals)
         if (clock.now() - lastCheckpointWall >= CHECKPOINT_MILLIS) checkpoint(updated)
+    }
+
+    /** Moves an open event to the pending rows, ending at [endAt] (sample time). */
+    private fun close(type: String, endAt: Long) {
+        val o = open.remove(type) ?: return
+        events += o.row.copy(value = o.peak, durationS = (endAt - o.row.timestampMillis).coerceAtLeast(0) / 1000.0)
     }
 
     private suspend fun begin(s: TelemetrySnapshot) {
@@ -177,7 +200,7 @@ class TripRecorder(
         engineOffRead = false; stallLogged = false
         lastSampleAt = Long.MIN_VALUE
         lastCheckpointWall = clock.now()
-        samples.clear(); events.clear()
+        samples.clear(); events.clear(); open.clear()
         fix = null
         locationJob = scope.launch { location.fixes().collect { fix = it } }
         _active.value = ActiveTrip(started.id, started.startedAtMillis, TripTotals())
@@ -211,6 +234,8 @@ class TripRecorder(
     private suspend fun finish(reason: String) {
         val t = trip ?: return
         val closed = t.copy(endedAtMillis = maxOf(t.startedAtMillis, t.lastSampleAtMillis), endReason = reason)
+        // Events still running end with the trip, at their last sample.
+        open.keys.toList().forEach { type -> close(type, open.getValue(type).lastAt) }
         checkpoint(closed)
         locationJob?.cancel(); locationJob = null
         trip = null

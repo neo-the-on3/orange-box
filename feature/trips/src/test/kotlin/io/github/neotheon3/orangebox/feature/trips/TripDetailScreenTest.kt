@@ -49,8 +49,8 @@ internal object DetailFixture {
 
     fun events(located: Boolean = true) = listOf(
         TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 200_000, type = "harsh_accel", value = 3.4, latitude = if (located) 12.9853 else null, longitude = if (located) 77.5990 else null),
-        TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 640_000, type = "harsh_brake", value = -4.2, latitude = if (located) 12.9700 else null, longitude = if (located) 77.5810 else null),
-        TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 900_000, type = "overspeed", value = 121.0),
+        TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 640_000, type = "harsh_brake", value = -5.5, latitude = if (located) 12.9700 else null, longitude = if (located) 77.5810 else null, durationS = 2.4),
+        TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 900_000, type = "overspeed", value = 121.0, durationS = 18.0),
     )
 
     fun detail(located: Boolean = true) = TripDetails.detail(trip, samples(located), events(located), TEST_ZONE)
@@ -83,8 +83,10 @@ class TripDetailScreenTest {
         render("trip-detail-metrics")
         compose.onNodeWithTag("trip_detail_list").performScrollToNode(hasTestTag("trip_event_2"))
         compose.onNodeWithText("Harsh braking").assertIsDisplayed()
-        compose.onNodeWithText("09:20:40 · 4.2 m/s²").assertIsDisplayed()
-        compose.onNodeWithText("09:25:00 · 121.0 km/h").assertIsDisplayed()
+        // The peak and duration (#164); a row recorded before #164 has no duration.
+        compose.onNodeWithText("09:20:40 · peak 5.5 m/s² · 2.4 s").assertIsDisplayed()
+        compose.onNodeWithText("09:25:00 · peak 121.0 km/h · 18.0 s").assertIsDisplayed()
+        compose.onNodeWithText("09:13:20 · peak 3.4 m/s²").assertExists()
     }
 
     @Test fun `deleted trip`() {

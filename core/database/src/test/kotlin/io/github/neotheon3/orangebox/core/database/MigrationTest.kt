@@ -36,6 +36,19 @@ class MigrationTest {
         }
     }
 
+    @Test fun `2 to 3 keeps events and adds a null duration (#164)`() {
+        helper.createDatabase(DB, 2).use { db ->
+            db.execSQL("INSERT INTO trips (vehicleId, startedAtMillis, lastSampleAtMillis, durationS, distanceKm, fuelLitres, co2Grams, idleS, fuelCutS, ecoS, overspeedS, harshAccelCount, harshBrakeCount, overspeedCount, maxSpeedKph) VALUES (NULL, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0)")
+            db.execSQL("INSERT INTO trip_events (tripId, timestampMillis, type, value) VALUES (1, 20, 'harsh_brake', -4.3)")
+        }
+        helper.runMigrationsAndValidate(DB, 3, true).use { db ->
+            db.query("SELECT value, durationS FROM trip_events").use { c ->
+                c.moveToFirst(); assertEquals(-4.3, c.getDouble(0), 1e-9); assertEquals(true, c.isNull(1))
+            }
+            db.execSQL("INSERT INTO trip_events (tripId, timestampMillis, type, value, durationS) VALUES (1, 30, 'harsh_brake', -5.5, 2.4)")
+        }
+    }
+
     @Test fun `all migrations reach the current version`() {
         helper.createDatabase(DB, 1).close()
         helper.runMigrationsAndValidate(DB, OrangeBoxDatabase.VERSION, true, *Migrations.ALL).close()

@@ -9,15 +9,15 @@ import androidx.room.migration.Migration
     entities = [VehicleEntity::class, TripEntity::class, TripSampleEntity::class, TripEventEntity::class],
     version = OrangeBoxDatabase.VERSION,
     exportSchema = true,
-    // 1 -> 2 only adds the trip tables (M4), so Room generates it.
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    // 1 -> 2 only adds the trip tables (M4); 2 -> 3 adds trip_events.durationS (#164). Room generates both.
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class OrangeBoxDatabase : RoomDatabase() {
     abstract fun vehicleDao(): VehicleDao
     abstract fun tripDao(): TripDao
 
     companion object {
-        const val VERSION = 2
+        const val VERSION = 3
         const val NAME = "orangebox.db"
     }
 }

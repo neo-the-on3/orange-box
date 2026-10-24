@@ -110,10 +110,33 @@ class TripRecorderTest {
         // 0→72 and 72→130 in one second are harsh, as is 130→0.
         assertEquals(
             listOf(TripRecorder.EVENT_HARSH_ACCEL, TripRecorder.EVENT_HARSH_ACCEL, TripRecorder.EVENT_OVERSPEED, TripRecorder.EVENT_HARSH_BRAKE),
-            r.trips.events.map { it.type },
+            r.trips.events.sortedBy { it.timestampMillis }.map { it.type },
         )
         assertEquals(1, trip.harshBrakeCount)
         assertNull(r.recorder.active.value)
+    }
+
+    @Test fun `events store their peak and duration, not the onset sample (#164)`() = runTest {
+        val r = rig()
+        r.drive(5, speed = 30.0, rpm = 1500.0)
+        // Braking builds up: -4.2, -5.5, -4.8 m/s² (15.12, 19.8, 17.28 km/h per second), then steady.
+        r.drive(1, speed = 30.0 - 15.12, rpm = 1200.0)
+        r.drive(1, speed = 30.0 - 15.12 - 19.8, rpm = 1000.0)
+        r.drive(1, speed = 0.0, rpm = 800.0)
+        r.drive(10, speed = 0.0, rpm = 800.0)
+        // Overspeed that peaks at 140 km/h, then ends when the trip stops while it is still running.
+        r.drive(1, speed = 10.0, rpm = 1500.0)
+        listOf(40.0, 70.0, 100.0, 125.0, 140.0, 130.0).forEach { r.drive(1, speed = it, rpm = 3000.0) }
+        r.recorder.stop(TripRecorder.END_USER)
+
+        val brake = r.trips.events.single { it.type == TripRecorder.EVENT_HARSH_BRAKE }
+        assertEquals(-5.5, brake.value!!, 0.01)
+        assertTrue("brake duration ${brake.durationS}", brake.durationS!! >= 1.0)
+        val over = r.trips.events.single { it.type == TripRecorder.EVENT_OVERSPEED }
+        assertEquals(140.0, over.value!!, 1e-9)
+        // Started at 125, still on at the stop: closed at its last sample, 2 s later.
+        assertEquals(2.0, over.durationS!!, 1e-9)
+        r.trips.events.filter { it.type == TripRecorder.EVENT_HARSH_ACCEL }.forEach { assertTrue("accel peak ${it.value}", it.value!! >= 3.0) }
     }
 
     @Test fun `summary is checkpointed every 5 s while driving`() = runTest {

@@ -53,7 +53,12 @@ data class TripSampleEntity(
     val accuracyM: Float? = null,
 )
 
-/** Driving events: harsh_accel, harsh_brake, overspeed, fuel_cut. */
+/**
+ * Driving events: harsh_accel, harsh_brake, overspeed, fuel_cut, stamped at their start. [value] is the
+ * peak while the event ran: acceleration in m/s² (negative for braking), max speed in km/h for overspeed,
+ * the speed at the start for fuel cut. [durationS] is null for rows recorded before schema 3 (and their
+ * [value] is the start sample, #164).
+ */
 @Entity(
     tableName = "trip_events",
     foreignKeys = [ForeignKey(entity = TripEntity::class, parentColumns = ["id"], childColumns = ["tripId"], onDelete = ForeignKey.CASCADE)],
@@ -67,4 +72,5 @@ data class TripEventEntity(
     val value: Double? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    val durationS: Double? = null,
 )
