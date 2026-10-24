@@ -42,7 +42,16 @@ data class TripDetail(
     val metrics: TripMetrics,
     /** Located samples in time order; fewer than 2 means there is no route to draw. */
     val route: List<GeoPoint>,
+    /**
+     * Driving events: harsh acceleration, harsh braking and overspeed. The trip list's "N events" counts
+     * exactly these (#165).
+     */
     val events: List<TripEventItem>,
+    /**
+     * Fuel-cut (engine-braking) periods. They save fuel rather than mark bad driving, so they get their own
+     * section and are never counted as events (#165).
+     */
+    val fuelCuts: List<TripEventItem>,
     /** (seconds since the trip start, km/h) at about 1 Hz, for the charts. */
     val speedSeries: List<Pair<Double, Double>>,
 ) {
@@ -94,7 +103,8 @@ object TripDetails {
             header = TripsCalendar.item(trip, zone),
             metrics = metrics(trip),
             route = route(sorted),
-            events = items,
+            events = items.filter { it.type != TripEventType.FUEL_CUT },
+            fuelCuts = items.filter { it.type == TripEventType.FUEL_CUT },
             speedSeries = sorted.mapNotNull { s -> s.speedKph?.let { (s.timestampMillis - trip.startedAtMillis) / 1000.0 to it } },
         )
     }
