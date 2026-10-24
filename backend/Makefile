@@ -15,8 +15,9 @@ build: ## Build the server binary into bin/
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/server
 
 .PHONY: run
-run: ## Run the server locally (PORT defaults to 8080)
-	go run ./cmd/server
+run: ## Run locally in test mode; needs AUTH_TEST_CODE in your environment (see README)
+	@if [ -z "$$AUTH_TEST_CODE" ]; then echo "run: export AUTH_TEST_CODE (6 non-trivial digits; never commit it)"; exit 1; fi
+	ENV=local AUTH_TEST_MODE=true go run ./cmd/server
 
 .PHONY: test
 test: ## Run unit tests with the race detector
@@ -39,19 +40,23 @@ spec-lint: ## Lint the OpenAPI spec (needs Node and Python)
 	@if [ ! -f "$(SPEC)" ]; then \
 		echo "spec-lint: $(SPEC) not found (lands with PR #81); skipping"; \
 	else \
-		npx --yes @redocly/cli@2 lint $(SPEC) && openapi-spec-validator $(SPEC); \
+		npx --yes @redocly/cli@2.71.0 lint $(SPEC) && openapi-spec-validator $(SPEC); \
 	fi
 
 .PHONY: generate
-generate: ## Generate server code from the spec (placeholder until PR #81 lands)
-	@echo "generate: oapi-codegen (strict server) and sqlc are not wired up yet"
+generate: ## Regenerate internal/api from the spec (oapi-codegen strict server + stubs)
+	go generate ./internal/api/...
+
+.PHONY: generate-check
+generate-check: generate ## Fail if the committed generated code is out of date
+	@git diff --exit-code -- internal/api || (echo "generated code is stale: run make generate and commit" && exit 1)
 
 .PHONY: docker
 docker: ## Build the container image
 	docker build -t $(IMAGE) .
 
 .PHONY: check
-check: vet test lint vuln build ## Run every local check CI runs
+check: generate-check vet test lint vuln build docker ## Run every local check CI runs
 
 .PHONY: clean
 clean: ## Remove build output

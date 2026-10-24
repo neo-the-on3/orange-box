@@ -1,0 +1,10 @@
+overlay: 1.0.0
+info:
+  title: Go code generation hints for the Orange Box API
+  version: 1.0.0
+actions:
+  - target: $.components.schemas.UtcInstant
+    update:
+      x-go-type: timeutil.UtcInstant
+      x-go-type-import:
+        path: github.com/neo-the-on3/orange-box/backend/internal/timeutil
