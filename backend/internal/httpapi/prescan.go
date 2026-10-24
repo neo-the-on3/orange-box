@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"unsafe"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
@@ -14,12 +16,16 @@ import (
 
 // Structural limits checked by prescan before the body is decoded.
 const (
-	// MaxJSONValues caps the number of JSON values (objects, arrays and
-	// scalars) in one body. A full telemetry batch (5000 samples of ~20
-	// fields, plus 500 events) is about 110k values; the cap leaves headroom
-	// for extra PIDs while bounding the decode and validation cost of a body
-	// made of tiny values (e.g. 8 MiB of `{},` is 2.8M objects).
+	// MaxJSONValues caps the JSON values (objects, arrays, scalars and object
+	// member names) in one upload body. A full telemetry batch (5000 samples
+	// of ~20 fields, i.e. ~40 names and values each, plus 500 events) is
+	// about 220k; the cap leaves headroom for extra PIDs while bounding the
+	// decode and validation cost of a body made of tiny values (8 MiB of
+	// `{},` is 2.8M objects; 8 MiB of `"k1":0,` is 1.2M names and values).
 	MaxJSONValues = 500_000
+	// MaxBodyValues is the same cap for every other (non-upload) body. The
+	// largest of them (a vehicle or profile) has well under 100.
+	MaxBodyValues = 4096
 	// MaxJSONDepth caps nesting. The spec's deepest body nests about 6 levels.
 	MaxJSONDepth = 64
 )
@@ -40,6 +46,16 @@ func (e *maxItemsError) Error() string {
 	return fmt.Sprintf("%s: more than %d items", e.pointer, e.max)
 }
 
+// keyError reports an object member name that would be decoded differently
+// from how it was validated: a duplicate, or a case variant of a declared
+// property.
+type keyError struct {
+	pointer string
+	detail  string
+}
+
+func (e *keyError) Error() string { return e.pointer + ": " + e.detail }
+
 // prescan walks a JSON body once, without decoding it, and rejects it early
 // when it breaks a structural limit that would otherwise only be noticed
 // after a full decode and schema validation:
@@ -47,37 +63,52 @@ func (e *maxItemsError) Error() string {
 //     reading at most maxItems+1 elements of it);
 //   - more than MaxJSONValues values in total (413), which also bounds arrays
 //     the schema leaves unbounded (e.g. a trip's dtc.stored);
-//   - nesting deeper than MaxJSONDepth (400).
+//   - nesting deeper than MaxJSONDepth (400);
+//   - a duplicate member name in any object, or a name that differs from a
+//     property declared by the object's schema only by case (422 with a
+//     pointer). kin-openapi treats "TRIPS" as an unknown property, while
+//     encoding/json would decode it into Trips (case-insensitive, last
+//     duplicate wins), so the handler could see unvalidated data.
+//
+// maxValues counts objects, arrays, scalars and member names. prescan
+// returns how many it saw (up to the first error).
 //
 // kin-openapi decodes the whole body into map[string]any and, for arrays,
 // validates every item before (and regardless of) maxItems, so without this
 // a ~1 KB gzip of `{"trips":[{},{},…]}` costs gigabytes. prescan allocates
-// nothing for well-formed input except when building an error. Malformed
+// little: a name set for objects with more than 16 members, and errors. Malformed
 // JSON is passed through for the validator to report as 400.
-func prescan(body []byte, schema *openapi3.Schema) *problem.Problem {
-	s := &scanner{b: body}
+func prescan(body []byte, schema *openapi3.Schema, maxValues int) (int, *problem.Problem) {
+	s := &scanner{b: body, maxValues: maxValues}
 	var roots []*openapi3.Schema
 	if schema != nil {
 		roots = expandAllOf(roots, schema, 0)
 	}
 	s.ws()
 	err := s.value(roots, 0)
-	var mi *maxItemsError
+	var (
+		mi *maxItemsError
+		ke *keyError
+	)
+	invalid := func(f problem.FieldError) *problem.Problem {
+		return problem.New(http.StatusUnprocessableEntity, problem.CodeValidationFailed, "1 field is invalid").
+			WithTitle("Validation failed").WithErrors(f)
+	}
 	switch {
 	case err == nil, errors.Is(err, errSyntax):
-		return nil
+		return s.values, nil
 	case errors.As(err, &mi):
-		return problem.New(http.StatusUnprocessableEntity, problem.CodeValidationFailed, "1 field is invalid").
-			WithTitle("Validation failed").
-			WithErrors(problem.FieldError{Pointer: mi.pointer, Detail: fmt.Sprintf("must have at most %d items", mi.max)})
+		return s.values, invalid(problem.FieldError{Pointer: mi.pointer, Detail: fmt.Sprintf("must have at most %d items", mi.max)})
+	case errors.As(err, &ke):
+		return s.values, invalid(problem.FieldError{Pointer: ke.pointer, Detail: ke.detail})
 	case errors.Is(err, errTooManyValues):
-		return problem.New(http.StatusRequestEntityTooLarge, problem.CodePayloadTooLarge,
-			fmt.Sprintf("The request body has more than %d JSON values.", MaxJSONValues))
+		return s.values, problem.New(http.StatusRequestEntityTooLarge, problem.CodePayloadTooLarge,
+			fmt.Sprintf("The request body has more than %d JSON values and member names.", maxValues))
 	case errors.Is(err, errTooDeep):
-		return problem.New(http.StatusBadRequest, problem.CodeBadRequest,
+		return s.values, problem.New(http.StatusBadRequest, problem.CodeBadRequest,
 			fmt.Sprintf("The request body is nested more than %d levels deep.", MaxJSONDepth))
 	default:
-		return nil
+		return s.values, nil
 	}
 }
 
@@ -90,10 +121,11 @@ type pathElem struct {
 }
 
 type scanner struct {
-	b      []byte
-	i      int
-	values int
-	path   []pathElem
+	b         []byte
+	i         int
+	values    int
+	maxValues int
+	path      []pathElem
 }
 
 func (s *scanner) ws() {
@@ -110,7 +142,7 @@ func (s *scanner) ws() {
 // value scans one JSON value at s.i; schemas are the (allOf-expanded)
 // schemas that apply to it, possibly none.
 func (s *scanner) value(schemas []*openapi3.Schema, depth int) error {
-	if s.values++; s.values > MaxJSONValues {
+	if s.values++; s.values > s.maxValues {
 		return errTooManyValues
 	}
 	if s.i >= len(s.b) {
@@ -142,6 +174,12 @@ func (s *scanner) object(schemas []*openapi3.Schema, depth int) error {
 		s.i++
 		return nil
 	}
+	// Names seen so far: linear search for small objects, a map beyond.
+	var (
+		small  [16]string
+		nSmall int
+		seen   map[string]struct{}
+	)
 	for {
 		s.ws()
 		if s.i >= len(s.b) || s.b[s.i] != '"' {
@@ -151,17 +189,51 @@ func (s *scanner) object(schemas []*openapi3.Schema, depth int) error {
 		if err != nil {
 			return err
 		}
+		if s.values++; s.values > s.maxValues {
+			return errTooManyValues
+		}
 		s.ws()
 		if s.i >= len(s.b) || s.b[s.i] != ':' {
 			return errSyntax
 		}
 		s.i++
 		s.ws()
+		s.path = append(s.path, pathElem{key: key, isKey: true})
+
+		name := keyName(key)
+		dup := false
+		if seen != nil {
+			_, dup = seen[name]
+			seen[name] = struct{}{}
+		} else {
+			for _, k := range small[:nSmall] {
+				if k == name {
+					dup = true
+					break
+				}
+			}
+			if nSmall < len(small) {
+				small[nSmall] = name
+				nSmall++
+			} else {
+				seen = make(map[string]struct{}, 2*len(small))
+				for _, k := range small {
+					seen[k] = struct{}{}
+				}
+				seen[name] = struct{}{}
+			}
+		}
+		if dup {
+			return &keyError{pointer: s.pointer(), detail: "is a duplicate member name"}
+		}
 		var child []*openapi3.Schema
 		if len(schemas) > 0 {
-			child = propertySchemas(schemas, key)
+			if canonical, ok := caseVariant(schemas, name); ok {
+				return &keyError{pointer: s.pointer(),
+					detail: fmt.Sprintf("must be spelled %q: member names are case-sensitive", canonical)}
+			}
+			child = propertySchemas(schemas, name)
 		}
-		s.path = append(s.path, pathElem{key: key, isKey: true})
 		if err := s.value(child, depth); err != nil {
 			return err
 		}
@@ -290,34 +362,92 @@ func unescapeKey(raw []byte) string {
 	return string(raw)
 }
 
+// keyName returns the member name for a raw JSON string. Names without
+// escapes alias the body (which isn't modified while it is scanned), so
+// they cost no allocation.
+func keyName(raw []byte) string {
+	for _, c := range raw {
+		if c == '\\' {
+			return unescapeKey(raw)
+		}
+	}
+	if len(raw) == 0 {
+		return ""
+	}
+	// The string aliases the body, which nothing writes to while the scan
+	// runs, and never outlives the scan (errors copy what they report).
+	return unsafe.String(&raw[0], len(raw)) //nolint:gosec // G103 audited: read-only alias, see above
+}
+
 // propertySchemas returns the schemas that apply to property key of an
 // object matching schemas: declared properties first, else
 // additionalProperties schemas.
-func propertySchemas(schemas []*openapi3.Schema, rawKey []byte) []*openapi3.Schema {
-	escaped := false
-	for _, c := range rawKey {
-		if c == '\\' {
-			escaped = true
-			break
-		}
-	}
-	var key string
-	if escaped {
-		key = unescapeKey(rawKey)
-	}
+func propertySchemas(schemas []*openapi3.Schema, key string) []*openapi3.Schema {
 	var out []*openapi3.Schema
 	for _, sc := range schemas {
-		var ref *openapi3.SchemaRef
-		var ok bool
-		if escaped {
-			ref, ok = sc.Properties[key]
-		} else {
-			ref, ok = sc.Properties[string(rawKey)] // no allocation for a map index
-		}
-		if ok && ref != nil && ref.Value != nil {
+		if ref, ok := sc.Properties[key]; ok && ref != nil && ref.Value != nil {
 			out = expandAllOf(out, ref.Value, 0)
 		} else if ap := sc.AdditionalProperties.Schema; ap != nil && ap.Value != nil {
 			out = expandAllOf(out, ap.Value, 0)
+		}
+	}
+	return out
+}
+
+// caseVariant reports whether name is not a property declared by schemas
+// (including their oneOf/anyOf branches, which decoders may also match) but
+// equals one when compared case-insensitively, and returns that property.
+// The comparison uses Unicode case folding, as encoding/json v1 does.
+func caseVariant(schemas []*openapi3.Schema, name string) (string, bool) {
+	if declared(schemas, name, 0) {
+		return "", false
+	}
+	return foldMatch(schemas, name, 0)
+}
+
+func declared(schemas []*openapi3.Schema, name string, depth int) bool {
+	for _, sc := range schemas {
+		if _, ok := sc.Properties[name]; ok {
+			return true
+		}
+		if depth < 8 && (declared(branchSchemas(sc.OneOf), name, depth+1) || declared(branchSchemas(sc.AnyOf), name, depth+1) ||
+			declared(branchSchemas(sc.AllOf), name, depth+1)) {
+			return true
+		}
+	}
+	return false
+}
+
+func foldMatch(schemas []*openapi3.Schema, name string, depth int) (string, bool) {
+	for _, sc := range schemas {
+		for prop := range sc.Properties {
+			if strings.EqualFold(prop, name) {
+				return prop, true
+			}
+		}
+		if depth < 8 {
+			for _, refs := range []openapi3.SchemaRefs{sc.OneOf, sc.AnyOf, sc.AllOf} {
+				if len(refs) == 0 {
+					continue
+				}
+				if prop, ok := foldMatch(branchSchemas(refs), name, depth+1); ok {
+					return prop, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// branchSchemas resolves a list of schema refs, skipping unresolved ones.
+func branchSchemas(refs openapi3.SchemaRefs) []*openapi3.Schema {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]*openapi3.Schema, 0, len(refs))
+	for _, ref := range refs {
+		if ref != nil && ref.Value != nil {
+			out = append(out, ref.Value)
 		}
 	}
 	return out

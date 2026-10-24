@@ -81,6 +81,7 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `LOG_LEVEL`        | `info`       | `debug`, `info`, `warn` or `error`. |
 | `UPLOAD_CONCURRENCY` | `2`        | Upload bodies processed at once (1–256). Sized for a 512 MB host; see below. |
 | `UPLOAD_QUEUE_WAIT`  | `2s`       | How long an upload waits for a slot before `503 uploads_busy`. |
+| `BODY_CONCURRENCY`   | `16`       | Non-upload request bodies (auth, profile, vehicles) read, decoded and validated at once (1–1024); a further one waits up to `UPLOAD_QUEUE_WAIT`, then gets `503 server_busy` with `Retry-After: 1`. |
 | `UPLOAD_READ_TIMEOUT` | `10s`     | How long an upload body may take to arrive once it has a slot; then `408 request_timeout`. Send large batches gzipped (1 MiB max). |
 | `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
 | `DATABASE_URL`     | none         | Postgres DSN (planned, #105). |
@@ -117,16 +118,30 @@ strict handlers.
   upload in flight; a second one gets `429` (`upload_in_progress`) with
   `Retry-After: 1`. An upload body must arrive within `UPLOAD_READ_TIMEOUT`
   of getting its slot, else `408` (`request_timeout`).
-- Before decoding, the JSON body is pre-scanned once without allocating:
-  an array longer than its schema's `maxItems` is `422` with a pointer
-  (e.g. `/trips`) after reading at most `maxItems + 1` of its elements;
-  more than 500,000 JSON values in total is `413` (`batch_too_large`); more
-  than 64 levels of nesting is `400`. Validation fails fast on bodies over
-  8 KiB (the `422` lists the first invalid field); smaller bodies list up to
-  20. Together these bound the cost of a request: the worst legitimate
-  8 MiB upload measured ~125 MB peak RSS and under 1 s.
-- Memory sizing: with the defaults (2 upload slots, `GOMEMLIMIT=400MiB`)
-  the server fits a 512 MB host.
+- Every other request with a body takes one of `BODY_CONCURRENCY` body
+  slots, and the body must arrive within 5 s.
+- Before decoding, the JSON body is pre-scanned once, with almost no
+  allocation:
+  - an array longer than its schema's `maxItems` is `422` with a pointer
+    (e.g. `/trips`) after reading at most `maxItems + 1` of its elements;
+  - a duplicate member name, or a name that differs from a declared
+    property only by case (`TRIPS`, `DurationS`), is `422` with a pointer,
+    in every object at every depth (including `oneOf` branches);
+  - more than 500,000 JSON values and member names in an upload body, or
+    4,096 in any other body, is `413` (`batch_too_large`);
+  - more than 64 levels of nesting is `400`.
+- Validation fails fast on bodies over 8 KiB or 1,024 values (the `422`
+  lists the first invalid field); smaller bodies list up to 20.
+- The generated handlers decode bodies with `encoding/json/v2` (exact-case
+  member names, duplicates rejected; see `internal/api/decode.go` and the
+  one-line template override in `internal/api/templates/`), so a handler
+  sees exactly what was validated. `encoding/json` v1 matched names
+  case-insensitively.
+- Memory sizing: with the defaults (2 upload slots, 16 body slots,
+  `GOMEMLIMIT=400MiB`) the server fits a 512 MB host. Measured in a
+  `--memory=512m` container: 2 members uploading worst-case bodies
+  (250k unknown names) back to back plus 120 anonymous 8–16 KiB bodies for
+  20 s peaked at 288 MiB.
 
 - `X-Request-Id`: a client UUID is echoed, otherwise a UUIDv7 is generated.
   Every problem carries it as `requestId`.
@@ -134,7 +149,7 @@ strict handlers.
   (1 MiB compressed / 8 MiB inflated, `413` beyond); anything else is `415`
   (`unsupported_encoding`). Gzip is inflated as a stream and abandoned as
   soon as the inflated output passes 8 MiB. Other bodies are limited to
-  64 KiB.
+  16 KiB.
 - Validation errors are `422` (`validation_failed`) with JSON pointers,
   including integers sent as `415.0`, `1e3` or out of range; bad
   parameters, malformed JSON or a missing body are `400`; a wrong

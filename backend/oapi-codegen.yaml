@@ -8,6 +8,10 @@ generate:
   models: true
   embedded-spec: true
 output-options:
+  # Decode request bodies with encoding/json/v2 (exact-case, no duplicate
+  # names), so the strict handlers see exactly what kin-openapi validated.
+  user-templates:
+    strict/strict-http.tmpl: internal/api/templates/strict-http.tmpl
   overlay:
     path: oapi-overlay.yaml
     strict: true

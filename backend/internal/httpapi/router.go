@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -32,6 +33,10 @@ type Deps struct {
 	UploadConcurrency int
 	// UploadQueueWait is how long an upload waits for a slot before 503 (default 2s).
 	UploadQueueWait time.Duration
+	// BodyConcurrency caps non-upload request bodies read, decoded and
+	// validated at once (default 16); a further one waits UploadQueueWait,
+	// then gets 503 server_busy.
+	BodyConcurrency int
 	// UploadReadTimeout bounds how long an upload body may take to arrive
 	// once it has a slot (default 10s).
 	UploadReadTimeout time.Duration
@@ -58,6 +63,9 @@ func NewRouter(d Deps) (http.Handler, error) {
 	}
 	if d.UploadQueueWait <= 0 {
 		d.UploadQueueWait = 2 * time.Second
+	}
+	if d.BodyConcurrency <= 0 {
+		d.BodyConcurrency = 16
 	}
 	if d.UploadReadTimeout <= 0 {
 		d.UploadReadTimeout = 10 * time.Second
@@ -86,7 +94,8 @@ func NewRouter(d Deps) (http.Handler, error) {
 		ErrorHandlerFunc: errs.request,
 	})
 
-	oa, err := newOpenAPIMiddleware(d.Tokens, newUploadLimiter(d.UploadConcurrency, d.UploadQueueWait), d.UploadReadTimeout)
+	oa, err := newOpenAPIMiddleware(d.Tokens, newUploadLimiter(d.UploadConcurrency, d.UploadQueueWait), d.UploadReadTimeout,
+		newBodyLimiter(d.BodyConcurrency, d.UploadQueueWait))
 	if err != nil {
 		return nil, err
 	}
@@ -111,11 +120,21 @@ type errorHandlers struct {
 // at the field. The error text is never sent, because it can contain the
 // submitted value.
 func (e errorHandlers) request(w http.ResponseWriter, r *http.Request, err error) {
-	var ute *json.UnmarshalTypeError
-	if errors.As(err, &ute) && ute.Field != "" {
+	field := func(ptr string, t reflect.Type) {
 		problem.Write(w, r, problem.New(http.StatusUnprocessableEntity, problem.CodeValidationFailed, "1 field is invalid").
 			WithTitle("Validation failed").
-			WithErrors(problem.FieldError{Pointer: fieldPointer(ute.Field), Detail: typeDetail(ute.Type)}))
+			WithErrors(problem.FieldError{Pointer: ptr, Detail: typeDetail(t)}))
+	}
+	// encoding/json (v1) errors come from types with their own UnmarshalJSON
+	// (oneOf unions); request bodies themselves are decoded with v2.
+	var ute *json.UnmarshalTypeError
+	if errors.As(err, &ute) && ute.Field != "" {
+		field(fieldPointer(ute.Field), ute.Type)
+		return
+	}
+	var se *jsonv2.SemanticError
+	if errors.As(err, &se) && se.JSONPointer != "" && se.GoType != nil {
+		field(string(se.JSONPointer), se.GoType)
 		return
 	}
 	problem.Write(w, r, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The request is malformed."))

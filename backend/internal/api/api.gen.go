@@ -8826,7 +8826,7 @@ func (sh *strictHandler) Logout(w http.ResponseWriter, r *http.Request, params L
 	request.Params = params
 
 	var body LogoutJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -8859,7 +8859,7 @@ func (sh *strictHandler) RequestOtp(w http.ResponseWriter, r *http.Request, para
 	request.Params = params
 
 	var body RequestOtpJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -8892,7 +8892,7 @@ func (sh *strictHandler) CreateToken(w http.ResponseWriter, r *http.Request, par
 	request.Params = params
 
 	var body CreateTokenJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -9102,7 +9102,7 @@ func (sh *strictHandler) UpdateMe(w http.ResponseWriter, r *http.Request, params
 	request.Params = params
 
 	var body UpdateMeApplicationMergePatchPlusJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -9318,7 +9318,7 @@ func (sh *strictHandler) UploadTelemetryBatch(w http.ResponseWriter, r *http.Req
 	request.Params = params
 
 	var body UploadTelemetryBatchJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -9377,7 +9377,7 @@ func (sh *strictHandler) UploadTrips(w http.ResponseWriter, r *http.Request, par
 	request.Params = params
 
 	var body UploadTripsJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -9594,7 +9594,7 @@ func (sh *strictHandler) CreateVehicle(w http.ResponseWriter, r *http.Request, p
 	request.Params = params
 
 	var body CreateVehicleJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -9682,7 +9682,7 @@ func (sh *strictHandler) UpdateVehicle(w http.ResponseWriter, r *http.Request, v
 	request.Params = params
 
 	var body UpdateVehicleApplicationMergePatchPlusJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}
@@ -9743,7 +9743,7 @@ func (sh *strictHandler) CreateDtcReport(w http.ResponseWriter, r *http.Request,
 	request.Params = params
 
 	var body CreateDtcReportJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r.Body, &body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
 	}

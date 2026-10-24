@@ -83,3 +83,44 @@ func (l *uploadLimiter) acquire(ctx context.Context, memberID string) (release f
 		"Too many uploads are being processed; retry shortly.").
 		WithTitle("Server busy").WithRetryAfter(retryAfterUploadBusy)
 }
+
+// bodyLimiter caps how many non-upload request bodies (auth, profile,
+// vehicle, ...) are read, decoded and validated at once, whoever sends them.
+// Each is at most MaxBody bytes and MaxBodyValues values, so N slots bound
+// that memory to a few MiB; a burst of anonymous bodies queues briefly and
+// then gets 503 instead of growing the heap. Rate limiting per client is
+// #114.
+type bodyLimiter struct {
+	slots chan struct{}
+	wait  time.Duration
+}
+
+func newBodyLimiter(n int, wait time.Duration) *bodyLimiter {
+	if n < 1 {
+		n = 1
+	}
+	return &bodyLimiter{slots: make(chan struct{}, n), wait: wait}
+}
+
+// retryAfterServerBusy is the Retry-After (seconds) when no body slot frees up.
+const retryAfterServerBusy = 1
+
+func (l *bodyLimiter) acquire(ctx context.Context) (release func(), p *problem.Problem) {
+	release = func() { <-l.slots }
+	select {
+	case l.slots <- struct{}{}:
+		return release, nil
+	default:
+	}
+	t := time.NewTimer(l.wait)
+	defer t.Stop()
+	select {
+	case l.slots <- struct{}{}:
+		return release, nil
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	return nil, problem.New(http.StatusServiceUnavailable, problem.CodeServerBusy,
+		"Too many requests are being processed; retry shortly.").
+		WithTitle("Server busy").WithRetryAfter(retryAfterServerBusy)
+}
