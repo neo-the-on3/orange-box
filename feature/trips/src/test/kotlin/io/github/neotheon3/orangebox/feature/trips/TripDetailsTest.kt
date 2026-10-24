@@ -62,4 +62,17 @@ class TripDetailsTest {
         assertEquals(GeoPoint(12.97, 77.59), d.events[1].position)
         assertEquals(start.plusSeconds(60), d.events[1].time)
     }
+
+    @Test fun `the list's event count matches the Events rows, fuel cut is listed apart (#165)`() {
+        // Trip 38 from the beta check: 2 harsh accel, 2 harsh brake, 2 fuel cut.
+        val trip = trip(38, start, harshAccel = 2, harshBrake = 2)
+        val events = listOf("harsh_accel", "fuel_cut", "harsh_brake", "harsh_accel", "fuel_cut", "harsh_brake").mapIndexed { i, type ->
+            TripEventEntity(tripId = 38, timestampMillis = trip.startedAtMillis + i * 60_000L, type = type, value = 4.0, durationS = 2.0)
+        }
+        val d = TripDetails.detail(trip, emptyList(), events, TEST_ZONE)
+        val item = TripsCalendar.item(trip, TEST_ZONE)
+        assertEquals(4, d.events.size)
+        assertEquals(item.harshEvents + item.overspeedEvents, d.events.size)
+        assertEquals(listOf(TripEventType.FUEL_CUT, TripEventType.FUEL_CUT), d.fuelCuts.map { it.type })
+    }
 }

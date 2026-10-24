@@ -23,6 +23,8 @@
     <string name="trip_detail_not_found">This trip no longer exists.</string>
     <string name="trip_detail_gps_points">%1$d GPS points · %2$d speed readings</string>
     <string name="trip_detail_events">Events</string>
+    <string name="trip_detail_fuel_cuts">Fuel cut</string>
+    <string name="trip_detail_fuel_cuts_hint">Coasting with the engine cutting fuel. Saves fuel, not counted as an event.</string>
     <string name="trip_detail_no_events">No harsh driving or overspeed events.</string>
     <string name="metric_distance">Distance</string>
     <string name="metric_duration">Duration</string>

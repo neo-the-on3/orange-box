@@ -51,6 +51,7 @@ internal object DetailFixture {
         TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 200_000, type = "harsh_accel", value = 3.4, latitude = if (located) 12.9853 else null, longitude = if (located) 77.5990 else null),
         TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 640_000, type = "harsh_brake", value = -5.5, latitude = if (located) 12.9700 else null, longitude = if (located) 77.5810 else null, durationS = 2.4),
         TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 900_000, type = "overspeed", value = 121.0, durationS = 18.0),
+        TripEventEntity(tripId = 4, timestampMillis = trip.startedAtMillis + 1_200_000, type = "fuel_cut", value = 60.0, durationS = 12.0),
     )
 
     fun detail(located: Boolean = true) = TripDetails.detail(trip, samples(located), events(located), TEST_ZONE)
@@ -87,6 +88,10 @@ class TripDetailScreenTest {
         compose.onNodeWithText("09:20:40 · peak 5.5 m/s² · 2.4 s").assertIsDisplayed()
         compose.onNodeWithText("09:25:00 · peak 121.0 km/h · 18.0 s").assertIsDisplayed()
         compose.onNodeWithText("09:13:20 · peak 3.4 m/s²").assertExists()
+        // Fuel cut in its own section, not an event (#165).
+        compose.onNodeWithTag("trip_detail_list").performScrollToNode(hasTestTag("trip_fuel_cut_0"))
+        compose.onNodeWithText("09:30:00 · 12.0 s").assertIsDisplayed()
+        compose.onAllNodesWithTag("trip_event_3").assertCountEquals(0)
     }
 
     @Test fun `deleted trip`() {

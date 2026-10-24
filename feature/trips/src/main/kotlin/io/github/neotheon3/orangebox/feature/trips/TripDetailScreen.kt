@@ -115,6 +115,20 @@ fun TripDetailScreen(
                     }
                 }
                 items(detail.events.withIndex().toList(), key = { "event_${it.index}" }) { (i, e) -> EventRow(i, e, locale) }
+                // Fuel cut saves fuel: its own section, not counted as an event (#165).
+                if (detail.fuelCuts.isNotEmpty()) {
+                    item(key = "fuel_cut_header") {
+                        Column(Modifier.padding(top = 4.dp)) {
+                            Text(stringResource(R.string.trip_detail_fuel_cuts), style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                stringResource(R.string.trip_detail_fuel_cuts_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    items(detail.fuelCuts.withIndex().toList(), key = { "fuel_cut_${it.index}" }) { (i, e) -> EventRow(i, e, locale, tag = "trip_fuel_cut_$i") }
+                }
             }
         }
     }
@@ -154,7 +168,7 @@ private fun MetricsGrid(m: TripMetrics, locale: Locale) {
 }
 
 @Composable
-private fun EventRow(index: Int, e: TripEventItem, locale: Locale) {
+private fun EventRow(index: Int, e: TripEventItem, locale: Locale, tag: String = "trip_event_$index") {
     val time = e.time.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM).withLocale(locale))
     // The peak while the event ran (#164), then how long it lasted.
     val value = e.value?.let {
@@ -174,7 +188,7 @@ private fun EventRow(index: Int, e: TripEventItem, locale: Locale) {
         },
         headlineContent = { Text(eventLabel(e.type)) },
         supportingContent = { Text(listOfNotNull(time, value, duration).joinToString(" · ")) },
-        modifier = Modifier.testTag("trip_event_$index"),
+        modifier = Modifier.testTag(tag),
     )
 }
 
