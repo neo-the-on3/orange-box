@@ -69,7 +69,7 @@ docker run --rm -p 8080:8080 orange-box-backend:dev
 ```
 
 Multi-stage build: a static `CGO_ENABLED=0` binary on a distroless static base
-(`cgr.dev/chainguard/static`), running as non-root UID 65532.
+(`gcr.io/distroless/static-debian12:nonroot`), running as non-root UID 65532.
 
 ## Plan
 
@@ -91,5 +91,6 @@ Multi-stage build: a static `CGO_ENABLED=0` binary on a distroless static base
 - **Hosting:** to be decided between Koyeb's free instance and an Oracle
   Always Free ARM VM (Docker Compose + Caddy). Free tiers cannot meet the
   availability targets in the requirements.
-- **No Google services** anywhere in the stack: hosting, auth, secrets,
-  e-mail or container base images.
+- **No Google services** anywhere in the stack: Sign-In, Firebase, Google
+  Cloud hosting, secrets or e-mail. Open-source artifacts such as the
+  distroless base image are fine.
