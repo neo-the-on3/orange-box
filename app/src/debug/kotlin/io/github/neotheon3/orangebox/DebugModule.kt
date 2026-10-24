@@ -6,6 +6,7 @@ import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import io.github.neotheon3.orangebox.core.database.TripRepository
 import io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository
 import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
 import io.github.neotheon3.orangebox.core.model.BackendMode
@@ -13,14 +14,19 @@ import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Debug-only: honours `--es backend_mode off|fake|remote` on the launch intent. */
+/** Debug-only: honours `--es backend_mode off|fake|remote`, `--es onboarding skip|reset` and `--es demo_trips seed`. */
 @Singleton
 class DebugLaunchOverrides @Inject constructor(
     private val backendConfigRepository: BackendConfigRepository,
     private val appPreferences: AppPreferencesRepository,
+    private val trips: TripRepository,
 ) : LaunchOverrides {
     override fun apply(intent: Intent?): BackendMode? {
         applyOnboarding(intent?.getStringExtra(LaunchExtras.ONBOARDING))
+        if (intent?.getStringExtra(LaunchExtras.DEMO_TRIPS) == "seed") {
+            val added = runBlocking { DemoTrips.seed(trips, System.currentTimeMillis()) }
+            Log.i(TAG, "demo_trips seeded: $added")
+        }
         val raw = intent?.getStringExtra(LaunchExtras.BACKEND_MODE) ?: return null
         val mode = LaunchExtras.resolveBackendMode(raw)
         if (mode == null) {
