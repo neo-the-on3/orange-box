@@ -115,3 +115,32 @@ fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/** Round bezel button showing an app's own icon (quick launcher), 56 dp; [fallback] when there is no icon. */
+@Composable
+fun BottomBarAppButton(
+    icon: androidx.compose.ui.graphics.ImageBitmap?,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    fallback: ImageVector = DashboardIcons.DetailGrid,
+) {
+    Box(
+        modifier
+            .size(BottomBarButtonSize)
+            .clip(CircleShape)
+            .background(bezel)
+            .clickable(role = Role.Button, onClickLabel = contentDescription, onClick = onClick)
+            .semantics { this.contentDescription = contentDescription }
+            .padding(5.dp)
+            .background(Color(0xFF151515), CircleShape)
+            .border(1.dp, DashboardColors.CardRim, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (icon != null) {
+            androidx.compose.foundation.Image(icon, contentDescription = null, modifier = Modifier.size(30.dp).clip(CircleShape))
+        } else {
+            Icon(fallback, contentDescription = null, tint = DashboardColors.Text, modifier = Modifier.size(26.dp))
+        }
+    }
+}

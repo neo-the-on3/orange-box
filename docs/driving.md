@@ -7,6 +7,7 @@
   - Start `TripRecorder`; it idles until the engine runs.
   - Start `DrivingService`.
   - If the app is not on screen, or the platform refuses a background service start (`ForegroundServiceStartNotAllowedException`, API 31+), post the **Start driving** notification. Nothing is ever opened from the background.
+  - With **Show dashboard automatically** on (Settings → Driving dashboard, off by default): if the app is on screen, bring the dashboard to the front; from the background, the Start driving notification carries a full-screen intent (see below).
 - **App comes on screen while connected**: retry the service start and cancel the Start driving notification.
 - **Drive ended** (dashboard power button, after its 5 s undo window):
   - close the trip (`user`);
@@ -25,7 +26,20 @@
 ## Start driving notification
 - Channel `drive_start`, high importance, auto-cancels after 10 min.
 - The tap and the action both open the dashboard (`MainActivity` with `EXTRA_OPEN_DASHBOARD`).
-- The full-screen intent is only attached when `NotificationManager.canUseFullScreenIntent()` allows it (API 34+). Below API 34, the manifest `USE_FULL_SCREEN_INTENT` permission is enough.
+- The full-screen intent is only attached when **Show dashboard automatically** is on and `NotificationManager.canUseFullScreenIntent()` allows it (API 34+). Below API 34, the manifest `USE_FULL_SCREEN_INTENT` permission is enough.
+- With the setting on but the permission refused (API 34+), the notification is posted normally with an **Allow full screen** action that opens `Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` for Orange Box. Settings shows the same link ("Full-screen notifications are off") and re-checks it on resume.
+
+## Show dashboard automatically
+- Opt-in, off by default. Its description warns that the dashboard is visible without unlocking.
+- While the setting is on, the dashboard screen calls `setShowWhenLocked(true)` and `setTurnScreenOn(true)` (window flags below API 27) and clears them when it closes. An auto-show start (foreground start or full-screen intent, `EXTRA_SHOW_WHEN_LOCKED`) sets them in `MainActivity` before the dashboard is composed, so a locked phone wakes straight into it; during onboarding the request is ignored and the flags are cleared.
+- The keyguard is never dismissed (`requestDismissKeyguard` is not used): leaving the dashboard for any other screen or app needs an unlock.
+- An activity is only started from the foreground. From the background the platform's full-screen intent does it, and only when allowed.
+- **Google Play:** since API 34, Play restricts `USE_FULL_SCREEN_INTENT` to calling and alarm apps; other apps don't get it by default on install and must ask the user. A Play build would need a declaration (or rely on the settings link). Sideloaded/F-Droid builds behave the same: the user grants it in system settings.
+
+## Dashboard bottom-left button
+Settings → Driving dashboard → Bottom-left button:
+- **Hazard** (default): emergency prompt that opens the dialer with the number pre-filled; it never calls. The number is editable; by default it comes from the SIM country, then the network country, then the locale (`DeviceCountry`, `EmergencyNumbers`): 112 for the EU, India and unknown countries; 911 US/CA/MX; 999 UK; 000 AU; 111 NZ; 110 JP; 190 BR; 10111 ZA, and so on.
+- **Quick launcher**: the user picks an installed app; the button shows its icon and launches it. Apps are found through a `<queries>` MAIN/LAUNCHER intent (no `QUERY_ALL_PACKAGES`). If the app is uninstalled, the button falls back to Hazard.
 - Nothing is posted without notification permission.
 
 ## Trip recording (`TripRecorder`)

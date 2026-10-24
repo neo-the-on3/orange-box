@@ -51,6 +51,9 @@ fun SettingsRoute(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val apps by viewModel.launchableApps.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    RefreshOnResume(viewModel::refreshFullScreen)
     SettingsScreen(
         state = state,
         onBack = onBack,
@@ -61,6 +64,18 @@ fun SettingsRoute(
         onOpenDongle = onOpenDongle,
         onOpenPermissions = onOpenPermissions,
         onAutoStartChanged = viewModel::onAutoStartChanged,
+        launchableApps = apps,
+        dashboardActions = DashboardSettingsActions(
+            onButtonChanged = viewModel::onDashboardButtonChanged,
+            onEmergencyNumberChanged = viewModel::onEmergencyNumberChanged,
+            onPickApp = viewModel::loadApps,
+            onAppChosen = viewModel::onQuickLaunchAppChosen,
+            onOverspeedChanged = viewModel::onOverspeedChanged,
+            onAutoShowChanged = viewModel::onAutoShowDashboardChanged,
+            onOpenFullScreenSettings = {
+                runCatching { context.startActivity(io.github.neotheon3.orangebox.core.driving.FullScreenIntents.settingsIntent(context)) }
+            },
+        ),
     )
 }
 
@@ -76,6 +91,8 @@ fun SettingsScreen(
     onOpenDongle: () -> Unit = {},
     onOpenPermissions: () -> Unit = {},
     onAutoStartChanged: (Boolean) -> Unit = {},
+    launchableApps: List<io.github.neotheon3.orangebox.core.driving.LaunchableApp>? = null,
+    dashboardActions: DashboardSettingsActions = DashboardSettingsActions(),
 ) {
     Scaffold(
         topBar = {
@@ -171,6 +188,8 @@ fun SettingsScreen(
                     .toggleable(value = state.autoStart, onValueChange = onAutoStartChanged, role = Role.Switch)
                     .testTag("settings_auto_start"),
             )
+            HorizontalDivider()
+            DashboardSettingsSection(state.dashboard, launchableApps, dashboardActions)
             HorizontalDivider()
             Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
             Text(

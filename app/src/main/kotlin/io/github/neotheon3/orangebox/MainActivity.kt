@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
                         showOnboarding = !it.onboardingComplete,
                         driveSession = driveSession,
                         openDashboardRequests = dashboardRequests,
+                        onDashboardRequestIgnored = { setLockScreenFlags(false) },
                     )
                 }
             }
@@ -57,7 +58,24 @@ class MainActivity : ComponentActivity() {
 
     internal fun handleOpenDashboard(intent: Intent?) {
         if (intent?.getBooleanExtra(io.github.neotheon3.orangebox.driving.DrivingNotifications.EXTRA_OPEN_DASHBOARD, false) == true) {
+            // "Show dashboard automatically": show over the keyguard and wake the screen right away (a
+            // full-screen intent on a locked phone). The dashboard clears this when it closes; the keyguard
+            // is never dismissed.
+            if (intent.getBooleanExtra(io.github.neotheon3.orangebox.driving.DrivingNotifications.EXTRA_SHOW_WHEN_LOCKED, false)) {
+                setLockScreenFlags(true)
+            }
             openDashboard.value++
+        }
+    }
+
+    internal fun setLockScreenFlags(on: Boolean) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(on)
+            setTurnScreenOn(on)
+        } else {
+            @Suppress("DEPRECATION")
+            val flags = android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            if (on) window.addFlags(flags) else window.clearFlags(flags)
         }
     }
 }

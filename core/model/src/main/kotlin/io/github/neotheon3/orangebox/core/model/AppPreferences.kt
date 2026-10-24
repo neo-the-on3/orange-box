@@ -11,4 +11,5 @@ data class AppPreferences(
     val askedPermissions: Set<String> = emptySet(),
     /** Onboarding step reached but not finished (enum name), so a restart resumes there. Null when not started or done. */
     val onboardingStep: String? = null,
+    val dashboard: DashboardPreferences = DashboardPreferences(),
 )

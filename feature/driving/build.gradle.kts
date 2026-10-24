@@ -12,4 +12,8 @@ dependencies {
     implementation(project(":core:obd"))
     implementation(project(":core:telemetry"))
     implementation(project(":core:common"))
+    implementation(project(":core:datastore"))
+    implementation(project(":core:model"))
+
+    testImplementation(project(":core:testing"))
 }

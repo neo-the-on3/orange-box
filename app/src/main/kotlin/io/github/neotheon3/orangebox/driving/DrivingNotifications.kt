@@ -15,6 +15,7 @@ import io.github.neotheon3.orangebox.MainActivity
 import io.github.neotheon3.orangebox.R
 import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.driving.ActiveTrip
+import io.github.neotheon3.orangebox.core.driving.FullScreenIntents
 import java.util.Locale
 
 /**
@@ -30,6 +31,8 @@ object DrivingNotifications {
     const val ID_ONGOING = 1001
     const val ID_DRIVE_START = 1002
     const val EXTRA_OPEN_DASHBOARD = "io.github.neotheon3.orangebox.OPEN_DASHBOARD"
+    /** With [EXTRA_OPEN_DASHBOARD]: "Show dashboard automatically" is on, so it may show over the lock screen. */
+    const val EXTRA_SHOW_WHEN_LOCKED = "io.github.neotheon3.orangebox.SHOW_WHEN_LOCKED"
 
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -44,14 +47,21 @@ object DrivingNotifications {
         )
     }
 
-    fun dashboardIntent(context: Context, requestCode: Int): PendingIntent = PendingIntent.getActivity(
-        context, requestCode,
+    /** MainActivity opened on the dashboard (singleTop: an open app is brought to the front). */
+    fun dashboardActivityIntent(context: Context, showWhenLocked: Boolean = false): Intent =
         Intent(context, MainActivity::class.java)
-            .setAction(EXTRA_OPEN_DASHBOARD)
+            .setAction(if (showWhenLocked) "$EXTRA_OPEN_DASHBOARD.LOCKED" else EXTRA_OPEN_DASHBOARD)
             .putExtra(EXTRA_OPEN_DASHBOARD, true)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            .putExtra(EXTRA_SHOW_WHEN_LOCKED, showWhenLocked)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+
+    fun dashboardIntent(context: Context, requestCode: Int, showWhenLocked: Boolean = false): PendingIntent = PendingIntent.getActivity(
+        context, requestCode, dashboardActivityIntent(context, showWhenLocked),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
+
+    /** System page where the user allows full-screen notifications for Orange Box (API 34+). */
+    fun fullScreenSettingsIntent(context: Context): Intent = FullScreenIntents.settingsIntent(context)
 
     /** The foreground-service notification. [trip] null means connected but not recording yet. */
     fun ongoing(context: Context, trip: ActiveTrip?) = NotificationCompat.Builder(context, CHANNEL_DRIVING)
@@ -74,8 +84,13 @@ object DrivingNotifications {
         .addAction(0, context.getString(R.string.notif_start_driving), dashboardIntent(context, 2))
         .build()
 
-    /** Heads-up "Start driving"; full-screen only where the platform lets us. */
-    fun postDriveStart(context: Context, fullScreen: Boolean = canUseFullScreenIntent(context)) {
+    /**
+     * Heads-up "Start driving". With [autoShow] ("Show dashboard automatically") it also carries the
+     * full-screen intent, but only where the platform allows it ([fullScreenAllowed]); otherwise it stays a
+     * normal notification with an action to the system page that grants full-screen notifications.
+     */
+    fun postDriveStart(context: Context, autoShow: Boolean = false, fullScreenAllowed: Boolean = canUseFullScreenIntent(context)) {
+        val fullScreen = autoShow && fullScreenAllowed
         if (!canPost(context)) {
             OrangeLog.i(OrangeLog.Areas.APP, "drive_start_notification_skipped", "reason" to "no_permission")
             return
@@ -88,12 +103,19 @@ object DrivingNotifications {
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setAutoCancel(true)
             .setTimeoutAfter(DRIVE_START_TIMEOUT_MILLIS)
-            .setContentIntent(dashboardIntent(context, 3))
-            .addAction(0, context.getString(R.string.notif_start_driving), dashboardIntent(context, 4))
-        if (fullScreen) builder.setFullScreenIntent(dashboardIntent(context, 5), true)
+            .setContentIntent(dashboardIntent(context, 3, showWhenLocked = autoShow))
+            .addAction(0, context.getString(R.string.notif_start_driving), dashboardIntent(context, 4, showWhenLocked = autoShow))
+        if (fullScreen) {
+            builder.setFullScreenIntent(dashboardIntent(context, 5, showWhenLocked = true), true)
+        } else if (autoShow) {
+            builder.addAction(
+                0, context.getString(R.string.notif_allow_full_screen),
+                PendingIntent.getActivity(context, 6, fullScreenSettingsIntent(context), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE),
+            )
+        }
         try {
             NotificationManagerCompat.from(context).notify(ID_DRIVE_START, builder.build())
-            OrangeLog.i(OrangeLog.Areas.APP, "drive_start_notification", "full_screen" to fullScreen)
+            OrangeLog.i(OrangeLog.Areas.APP, "drive_start_notification", "full_screen" to fullScreen, "auto_show" to autoShow)
         } catch (e: SecurityException) {
             OrangeLog.w(OrangeLog.Areas.APP, "drive_start_notification_skipped", "reason" to "security_exception")
         }
@@ -107,12 +129,7 @@ object DrivingNotifications {
             NotificationManagerCompat.from(context).areNotificationsEnabled()
 
     /** API 34+ asks the platform (the user can revoke it); below that the manifest permission is enough. */
-    fun canUseFullScreenIntent(context: Context): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() == true
-        } else {
-            true
-        }
+    fun canUseFullScreenIntent(context: Context): Boolean = FullScreenIntents.canUse(context)
 
     private fun elapsed(seconds: Double): String {
         val s = seconds.toLong().coerceAtLeast(0)

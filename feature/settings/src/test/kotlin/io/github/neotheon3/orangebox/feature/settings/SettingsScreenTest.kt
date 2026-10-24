@@ -77,4 +77,19 @@ class SettingsScreenTest {
         assertEquals(listOf("vehicle", "dongle", "permissions"), opened)
         assertEquals(true, autoStart)
     }
+
+    @Test fun `settings screen includes the driving dashboard section`() {
+        var autoShow: Boolean? = null
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                    dashboardActions = DashboardSettingsActions(onAutoShowChanged = { autoShow = it }),
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_button_hazard").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("settings_auto_show").performScrollTo().assertIsOff().performClick()
+        assertEquals(true, autoShow)
+    }
 }

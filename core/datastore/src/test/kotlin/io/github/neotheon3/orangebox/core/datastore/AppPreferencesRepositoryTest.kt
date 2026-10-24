@@ -34,4 +34,22 @@ class AppPreferencesRepositoryTest {
         repo.setOnboardingStep(null)
         assertEquals(null, repo.preferences.first().onboardingStep)
     }
+
+    @Test fun `dashboard settings persist, clamp and validate`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = DataStoreAppPreferencesRepository(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("d.preferences_pb").also { it.delete() } },
+        )
+        assertEquals(io.github.neotheon3.orangebox.core.model.DashboardPreferences(), repo.preferences.first().dashboard)
+        val chosen = io.github.neotheon3.orangebox.core.model.DashboardPreferences(
+            button = io.github.neotheon3.orangebox.core.model.DashboardButton.QUICK_LAUNCHER,
+            emergencyNumber = " 911 ", quickLaunchPackage = "org.example.maps", overspeedKph = 100, autoShowDashboard = true,
+        )
+        repo.setDashboard(chosen)
+        assertEquals(chosen.copy(emergencyNumber = "911"), repo.preferences.first().dashboard)
+        repo.setDashboard(chosen.copy(emergencyNumber = "call me", overspeedKph = 500, quickLaunchPackage = null))
+        val d = repo.preferences.first().dashboard
+        assertEquals(null, d.emergencyNumber)
+        assertEquals(200, d.overspeedKph)
+        assertEquals(null, d.quickLaunchPackage)
+    }
 }

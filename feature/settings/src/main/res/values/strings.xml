@@ -27,4 +27,30 @@
     <string name="settings_about_version">Version %1$s (code %2$d)</string>
     <string name="settings_about_build">Commit %1$s · CI run %2$s</string>
     <string name="settings_about_local">local build</string>
+
+    <string name="settings_dashboard_section">Driving dashboard</string>
+    <string name="settings_dashboard_button">Bottom-left button</string>
+    <string name="settings_button_hazard">Hazard</string>
+    <string name="settings_button_hazard_summary">Opens an emergency prompt with the number ready in your dialer. It never calls by itself.</string>
+    <string name="settings_button_launcher">Quick launcher</string>
+    <string name="settings_button_launcher_summary">Opens an app you choose, such as maps or music, and shows its icon.</string>
+    <string name="settings_emergency_number">Emergency number</string>
+    <string name="settings_emergency_number_help">Default for your country (%1$s): %2$s</string>
+    <string name="settings_emergency_number_invalid">Use 2–15 digits; + * # are allowed</string>
+    <string name="settings_emergency_use_default">Use default (%1$s)</string>
+    <string name="settings_country_unknown">unknown</string>
+    <string name="settings_launcher_app">App</string>
+    <string name="settings_launcher_choose">Choose an app</string>
+    <string name="settings_launcher_missing">App not installed; the button works as Hazard</string>
+    <string name="settings_launcher_pick_title">Quick launcher app</string>
+    <string name="settings_launcher_none">No apps found</string>
+    <string name="settings_cancel">Cancel</string>
+    <string name="settings_overspeed">Overspeed warning</string>
+    <string name="settings_overspeed_summary">Starts above %1$d km/h, ends below %2$d km/h</string>
+    <string name="settings_overspeed_value">%1$d km/h</string>
+    <string name="settings_auto_show">Show dashboard automatically</string>
+    <string name="settings_auto_show_summary">Opens the dashboard when your car connects, and wakes the screen. Warning: it then shows over the lock screen, so your live driving data is visible without unlocking. Unlocking is still needed to leave it.</string>
+    <string name="settings_full_screen_needed">Full-screen notifications are off</string>
+    <string name="settings_full_screen_needed_summary">Without them the dashboard can\'t open by itself while Orange Box is in the background; you get a notification instead.</string>
+    <string name="settings_full_screen_allow">Allow</string>
 </resources>

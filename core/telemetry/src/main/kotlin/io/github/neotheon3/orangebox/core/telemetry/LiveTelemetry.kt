@@ -30,6 +30,8 @@ class LiveTelemetry(
     poller: PidPoller,
     private val engine: TelemetryEngine = TelemetryEngine(),
     vehicle: Flow<VehicleProfile?> = flowOf(null),
+    /** Overspeed threshold from Settings, km/h. */
+    overspeedKph: Flow<Double> = flowOf(TelemetryConfig().overspeedKph),
 ) : TelemetrySource {
     private val _latest = MutableStateFlow<TelemetrySnapshot?>(null)
     override val latest: StateFlow<TelemetrySnapshot?> = _latest.asStateFlow()
@@ -42,6 +44,7 @@ class LiveTelemetry(
             connection.state.collect { if (it !is ObdConnectionState.Connected) { _latest.value = null; engine.reset() } }
         }
         scope.launch { vehicle.collect { engine.vehicle = it } }
+        scope.launch { overspeedKph.collect { engine.overspeedKph = it } }
         scope.launch {
             poller.samples.collect {
                 if (resetPending.getAndSet(false)) engine.resetTrip()
