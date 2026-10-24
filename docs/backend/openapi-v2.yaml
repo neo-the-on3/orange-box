@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Orange Box API
-  version: 1.0.0-draft.4
+  version: 1.0.0-draft.5
   summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
   description: |
     Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
@@ -138,8 +138,9 @@ paths:
         per-address limit or a bounce list). There is no separate registration step: the first successful
         `POST /v1/auth/token` with `grantType=email_otp` creates the member.
 
-        Rate limits (proposal): about **3 sends per e-mail address per 15 minutes**, plus a per-IP limit. Exceeding
-        the per-IP limit returns `429` with `Retry-After` and the `RateLimit-*` headers. Exceeding the per-address
+        Rate limits (proposal): about **3 sends per e-mail address per 15 minutes**, plus **10 send requests per IP
+        per 15 minutes** (rolling; IPv6 counted per /64). Exceeding the per-IP limit returns `429` with
+        `Retry-After` and the `RateLimit-*` headers. Exceeding the per-address
         limit still returns `202` (to avoid revealing anything about the address); `resendAfter` tells the app
         when to enable its "resend code" button.
 
@@ -232,7 +233,15 @@ paths:
         * `otp_locked`: the address is temporarily locked out after too many failed verifications across codes
           (below). The response carries `Retry-After` (seconds). No code is checked while locked, so even the
           correct code fails.
-        Repeated failures from one IP are additionally rate-limited (`429`).
+
+        **Per-IP failure limit (proposal)**: at most **30 failed `email_otp` verifications per IP per rolling hour**
+        (IPv6 counted per /64), counting every `invalid_grant`, `otp_attempts_exceeded` and `test_address_rejected`
+        outcome, including attempts with no pending code. The next request from that IP gets `429` with
+        `Retry-After` (seconds until the oldest counted failure leaves the window, at most 3600) and the
+        `RateLimit-*` headers, without checking the code; it does not count as a failure for the address. The
+        number matches the per-IP send limit: 10 sends per 15 minutes is up to 40 codes an hour, and 30 failures
+        leaves room for real users behind a shared (carrier-grade NAT) address while stopping one source from
+        cycling through addresses. Sandbox and CI may raise it for the CI runner.
 
         **Per-address lockout (proposal)**: every failed `email_otp` verification of a pending code for an address
         (wrong code, or a code that expired or was replaced) counts against that address, whichever code it was for.
@@ -262,6 +271,8 @@ paths:
         one live child of *P* exists at any time. Access JWTs already issued with *C1* are not revoked and simply
         expire (15 min). A re-send of *P* after 30 seconds, or after *C1* has been used, is reuse: the whole family
         is revoked and the response is `invalid_grant`.
+        The grace-revoked child *C1* is never valid again: if *C1* is presented later (by the original client or
+        anyone else), that counts as reuse and **revokes the whole family**, exactly like reusing *P*.
 
         **Test mode (local, ci and sandbox only; never in production)**: test mode is on only when the server was
         started with `AUTH_TEST_MODE=true` **and** `ENV` is exactly `local`, `ci` or `sandbox` (case-sensitive
