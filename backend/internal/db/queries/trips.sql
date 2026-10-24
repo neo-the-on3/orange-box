@@ -112,7 +112,8 @@ LIMIT @max_rows;
 -- name: ListTripChanges :many
 -- Sync walk (GET /v1/trips?since=): live trips written at or after the
 -- token's watermark, in change order. The cursor is the last row's
--- (writer_xid, id); pass (0, the nil UUID) for the first page.
+-- (writer_xid, id); pass (0, the nil UUID) for the first page. Read the
+-- first page in the transaction that took SyncSnapshot, after it.
 SELECT * FROM trips
 WHERE member_id = @member_id
   AND deleted_at IS NULL
@@ -133,10 +134,18 @@ WHERE member_id = @member_id
 ORDER BY writer_xid, id
 LIMIT @max_rows;
 
--- name: CurrentSyncWatermark :one
--- The watermark a sync token carries: the oldest transaction still running
--- now. Take it when a walk's first page is served, on the primary.
-SELECT pg_snapshot_xmin(pg_current_snapshot())::xid8 AS watermark;
+-- name: SyncSnapshot :one
+-- The watermark a sync token carries (the oldest transaction still running
+-- in this snapshot) and its issue time, on the primary.
+--
+-- Order matters (#176): run it as the FIRST statement of the REPEATABLE
+-- READ transaction that reads the walk's first page (db.Trips does). The
+-- transaction's one snapshot is then both the token's watermark and what
+-- the page sees, so a write that commits after the page was read has a
+-- writer_xid at or above the watermark and comes back in the next walk.
+-- Taken after the read, or in another transaction, it can sit above a
+-- write the page did not see, and that write is lost.
+SELECT pg_snapshot_xmin(pg_current_snapshot())::xid8 AS watermark, now()::timestamptz AS issued_at;
 
 -- name: SystemIdentifier :one
 -- The cluster identity a sync token carries. Needs execute permission on

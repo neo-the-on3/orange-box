@@ -272,9 +272,14 @@ undecided), stats and the points ledger (rules undecided). Each is a new
 migration that doesn't change the tables above.
 
 Sync tokens: a walk's watermark is `pg_snapshot_xmin(pg_current_snapshot())`
-(`CurrentSyncWatermark`), and `ListTripChanges` / `ListTripDeletions`
+(`SyncSnapshot`), and `ListTripChanges` / `ListTripDeletions`
 return rows with `writer_xid` at or above it in `(writer_xid, id)` order, so
 a write that hadn't committed when the token was taken is never missed.
+`db.Trips` reads every sync page in one read-only `REPEATABLE READ`
+transaction whose first statement, on a walk's first page, is
+`SyncSnapshot`: the token's watermark and the page come from the same
+snapshot (#176). Taking the watermark after the read, or in another
+transaction, can lose a write that commits in between.
 Transaction ids are cluster-wide, so busy neighbours only cause repeats.
 The deployment identity comes from `pg_control_system()`
 (`SystemIdentifier`) where the role may read it.

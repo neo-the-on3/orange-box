@@ -294,10 +294,11 @@ func TestSyncWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w1, err := q.CurrentSyncWatermark(ctx)
+	s1, err := q.SyncSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	w1 := s1.Watermark
 	// No assertion that walk(w1) is empty: xids are cluster-wide, so any
 	// transaction open elsewhere (other tests) holds the watermark back and
 	// A may come back again. That is the documented at-least-once delivery.
@@ -312,10 +313,11 @@ func TestSyncWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w2, err := q.CurrentSyncWatermark(ctx)
+	s2, err := q.SyncSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	w2 := s2.Watermark
 	if ids := walk(w2); containsID(ids, b.ID) {
 		t.Fatalf("uncommitted trip visible: %v", ids)
 	}
@@ -339,7 +341,8 @@ func TestSyncWatermark(t *testing.T) {
 	}
 
 	// Deletions walk sees the tombstone; the trips walk no longer returns it.
-	w3, _ := q.CurrentSyncWatermark(ctx)
+	s3, _ := q.SyncSnapshot(ctx)
+	w3 := s3.Watermark
 	if _, err := q.TombstoneTrip(ctx, dbgen.TombstoneTripParams{MemberID: member, ID: b.ID}); err != nil {
 		t.Fatal(err)
 	}
