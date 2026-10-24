@@ -108,6 +108,19 @@ class DashboardStateMapperTest {
         assertEquals(PanelGlow.NONE, DashboardStateMapper.map(connected, snap(instant(eco = 1, ecoRule = false))).leftGlow)
     }
 
+    @Test fun `trip and fuel tiles use the recorded trip totals carried over a reconnect (#144)`() {
+        // Engine restarted its totals at the reconnect (2:53 so far); the recorded trip is 10:53 long.
+        val engineTotals = TripTotals(durationS = 173.0, distanceKm = 0.0, fuelLitres = 0.01, ecoS = 0.0)
+        val recorded = TripTotals(durationS = 653.0, distanceKm = 4.26, fuelLitres = 0.32, ecoS = 120.0)
+        val snapshot = TelemetrySnapshot(0, instant(), engineTotals, mapOf(ObdPid.RPM to 1698.0))
+        val s = DashboardStateMapper.map(connected, snapshot, recordedTrip = recorded)
+        assertEquals("0:10:53", s.tripTime)
+        assertEquals("4.3", s.tripKm)
+        assertEquals("0.3", s.fuelUsedL)
+        assertTrue(s.detailPages.flatten().any { it.value == "0:02:00" }) // eco time from the recorded trip
+        assertEquals("no trip recording: engine totals", "0:02:53", DashboardStateMapper.map(connected, snapshot).tripTime)
+    }
+
     @Test fun `right glow - overspeed beats harsh beats none`() {
         assertEquals(PanelGlow.OVERSPEED, DashboardStateMapper.map(connected, snap(instant(overspeed = true, harshBrake = true))).rightGlow)
         assertEquals(PanelGlow.HARSH, DashboardStateMapper.map(connected, snap(instant(harshAccel = true))).rightGlow)
