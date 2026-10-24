@@ -233,3 +233,14 @@ WHERE member_id = @member_id
   AND (sqlc.narg(vehicle_id)::uuid IS NULL OR vehicle_id = sqlc.narg(vehicle_id)::uuid)
 GROUP BY day
 ORDER BY day;
+
+-- name: LockLiveVehiclesForShare :many
+-- Taken by a trip batch before it writes: returns which of ids are the
+-- member's live vehicles and share-locks them, in id order, so a vehicle
+-- delete (which locks the row FOR UPDATE, then tombstones its trips) waits
+-- for the batch, or the batch waits for the delete and then finds the
+-- vehicle gone. Trips can't be written for a vehicle being deleted.
+SELECT id FROM vehicles
+WHERE member_id = @member_id AND id = ANY (@ids::uuid[]) AND deleted_at IS NULL
+ORDER BY id
+FOR SHARE;

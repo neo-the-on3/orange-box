@@ -1,10 +1,12 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"time"
 
@@ -267,4 +269,227 @@ func utcPtr(t *time.Time) *time.Time {
 	}
 	u := t.UTC()
 	return &u
+}
+
+var _ store.Trips = (*Trips)(nil)
+
+// UpsertTrips implements store.Trips. The batch runs in one transaction:
+// it first share-locks the live vehicles it names (in id order), so it
+// can't race a vehicle delete, then upserts the trips in clientTripId
+// order, so two batches touching the same trips can't deadlock. A
+// snapshot racing a trip delete is settled by the unique key on
+// (member_id, client_trip_id): the upsert re-checks the latest row
+// version and never overwrites a tombstone.
+func (s *Trips) UpsertTrips(ctx context.Context, member uuid.UUID, items []store.TripUpload) ([]store.UpsertResult, error) {
+	results := make([]store.UpsertResult, len(items))
+	order := make([]int, len(items))
+	vehicleSet := map[uuid.UUID]bool{}
+	for i, it := range items {
+		order[i] = i
+		vehicleSet[it.VehicleID] = true
+	}
+	slices.SortStableFunc(order, func(a, b int) int {
+		return bytes.Compare(items[a].ClientTripID[:], items[b].ClientTripID[:])
+	})
+	vehicles := make([]uuid.UUID, 0, len(vehicleSet))
+	for id := range vehicleSet {
+		vehicles = append(vehicles, id)
+	}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		live, err := q.LockLiveVehiclesForShare(ctx, dbgen.LockLiveVehiclesForShareParams{MemberID: member, Ids: vehicles})
+		if err != nil {
+			return fmt.Errorf("lock vehicles: %w", err)
+		}
+		liveSet := make(map[uuid.UUID]bool, len(live))
+		for _, id := range live {
+			liveSet[id] = true
+		}
+		for _, i := range order {
+			res, err := upsertOne(ctx, q, member, items[i], liveSet[items[i].VehicleID])
+			if err != nil {
+				return err
+			}
+			results[i] = res
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func upsertOne(ctx context.Context, q *dbgen.Queries, member uuid.UUID, it store.TripUpload, vehicleLive bool) (store.UpsertResult, error) {
+	if !vehicleLive {
+		// A tombstone wins (the app drops the trip); otherwise the
+		// vehicle is unknown.
+		cur, err := q.GetTripByClientID(ctx, dbgen.GetTripByClientIDParams{MemberID: member, ClientTripID: it.ClientTripID})
+		switch {
+		case err == nil && cur.DeletedAt != nil:
+			return store.UpsertResult{Outcome: store.TripDeleted}, nil
+		case err != nil && !errors.Is(err, pgx.ErrNoRows):
+			return store.UpsertResult{}, err
+		}
+		return store.UpsertResult{Outcome: store.TripVehicleNotFound}, nil
+	}
+	p := upsertParams(member, it)
+	// Retried only when the row that blocked the upsert vanished before we
+	// read it (its tombstone was purged in between).
+	for range maxAttempts {
+		var err error
+		if p.ID, err = uuid.NewV7(); err != nil {
+			return store.UpsertResult{}, err
+		}
+		row, err := q.UpsertTrip(ctx, p)
+		if err == nil {
+			if row.Inserted {
+				return store.UpsertResult{Outcome: store.TripCreated, ID: row.ID}, nil
+			}
+			return store.UpsertResult{Outcome: store.TripUpdated, ID: row.ID}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return store.UpsertResult{}, fmt.Errorf("upsert trip: %w", err)
+		}
+		cur, err := q.GetTripByClientID(ctx, dbgen.GetTripByClientIDParams{MemberID: member, ClientTripID: it.ClientTripID})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			continue
+		case err != nil:
+			return store.UpsertResult{}, err
+		case cur.DeletedAt != nil:
+			return store.UpsertResult{Outcome: store.TripDeleted}, nil
+		default:
+			return store.UpsertResult{Outcome: store.TripUnchanged, ID: cur.ID}, nil
+		}
+	}
+	return store.UpsertResult{}, errors.New("trips: upsert kept racing a purge; retry")
+}
+
+func upsertParams(member uuid.UUID, it store.TripUpload) dbgen.UpsertTripParams {
+	f := it.TripFields
+	return dbgen.UpsertTripParams{
+		MemberID: member, ClientTripID: it.ClientTripID, VehicleID: f.VehicleID,
+		State: f.State, StartedAt: f.StartedAt, EndedAt: f.EndedAt, SnapshotAt: f.SnapshotAt,
+		DurationS: f.DurationS, DistanceKm: f.DistanceKm, EngineDistanceKm: f.EngineDistanceKm,
+		MaxSpeedKmh: f.MaxSpeedKmh, AvgSpeedKmh: f.AvgSpeedKmh, MaxRpm: f.MaxRpm,
+		HarshAccelCount: f.HarshAccelCount, HarshBrakeCount: f.HarshBrakeCount,
+		HarshStartCount: f.HarshStartCount, HarshStopCount: f.HarshStopCount,
+		FuelUsedL: f.FuelUsedL, FuelEconomyKmPerL: f.FuelEconomyKmPerL, FuelCutTimeS: f.FuelCutTimeS,
+		IdleTimeS: f.IdleTimeS, WarmUpTimeS: f.WarmUpTimeS, AccelTimeS: f.AccelTimeS,
+		EcoSpeedTimeS: f.EcoSpeedTimeS, OverSpeedTimeS: f.OverSpeedTimeS, SpeedBands: f.SpeedBands,
+		EcoScore: f.EcoScore, SafetyScore: f.SafetyScore, BatteryMaxV: f.BatteryMaxV,
+		BatteryAvgV: f.BatteryAvgV, CoolantMaxC: f.CoolantMaxC, CoolantAvgC: f.CoolantAvgC,
+		Dtc: f.Dtc, Simulated: f.Simulated, App: f.App,
+	}
+}
+
+// liveTrip reads a live trip by ref, or ErrNotFound.
+func liveTrip(ctx context.Context, q *dbgen.Queries, member uuid.UUID, ref store.TripRef) (dbgen.Trip, error) {
+	var row dbgen.Trip
+	var err error
+	switch {
+	case ref.ID != nil:
+		row, err = q.GetTrip(ctx, dbgen.GetTripParams{MemberID: member, ID: *ref.ID})
+	case ref.ClientID != nil:
+		row, err = q.GetTripByClientID(ctx, dbgen.GetTripByClientIDParams{MemberID: member, ClientTripID: *ref.ClientID})
+		if err == nil && row.DeletedAt != nil {
+			err = pgx.ErrNoRows
+		}
+	default:
+		return dbgen.Trip{}, errors.New("trips: empty trip reference")
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.Trip{}, store.ErrNotFound
+	}
+	return row, err
+}
+
+// GetTrip implements store.Trips.
+func (s *Trips) GetTrip(ctx context.Context, member uuid.UUID, ref store.TripRef) (store.Trip, error) {
+	row, err := liveTrip(ctx, s.q, member, ref)
+	if err != nil {
+		return store.Trip{}, err
+	}
+	return toTrip(row), nil
+}
+
+// DeleteTrip implements store.Trips. The tombstone UPDATE locks the row,
+// so a concurrent snapshot upsert or telemetry upload (which share-locks
+// the trip) either commits first and is erased with it, or runs after and
+// finds the tombstone.
+func (s *Trips) DeleteTrip(ctx context.Context, member uuid.UUID, ref store.TripRef) ([]string, error) {
+	var keys []string
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		row, err := liveTrip(ctx, q, member, ref)
+		if err != nil {
+			return err
+		}
+		gone, err := q.TombstoneTrip(ctx, dbgen.TombstoneTripParams{MemberID: member, ID: row.ID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ErrNotFound // deleted concurrently
+		}
+		if err != nil {
+			return fmt.Errorf("tombstone trip: %w", err)
+		}
+		keys, err = q.DeleteTelemetry(ctx, dbgen.DeleteTelemetryParams{MemberID: member, ClientTripIds: []uuid.UUID{gone.ClientTripID}})
+		if err != nil {
+			return fmt.Errorf("delete telemetry: %w", err)
+		}
+		return nil
+	})
+	return keys, err
+}
+
+// ListTripHistory implements store.Trips.
+func (s *Trips) ListTripHistory(ctx context.Context, member uuid.UUID, hq store.TripHistoryQuery) (store.TripPage, error) {
+	limit, err := pageLimit(hq.Limit)
+	if err != nil {
+		return store.TripPage{}, err
+	}
+	var curAt *time.Time
+	var curID uuid.UUID
+	if hq.After != nil {
+		at := hq.After.StartedAt
+		curAt, curID = &at, hq.After.ID
+	}
+	var rows []dbgen.Trip
+	snap, err := s.walk(ctx, member, nil, hq.Snapshot, func(q *dbgen.Queries) error {
+		var err error
+		if hq.VehicleID != nil {
+			rows, err = q.ListTripsByVehicle(ctx, dbgen.ListTripsByVehicleParams{
+				MemberID: member, VehicleID: *hq.VehicleID, StartedFrom: hq.From, StartedBefore: hq.To,
+				CursorStartedAt: curAt, CursorID: curID, MaxRows: limit,
+			})
+		} else {
+			rows, err = q.ListTrips(ctx, dbgen.ListTripsParams{
+				MemberID: member, StartedFrom: hq.From, StartedBefore: hq.To,
+				CursorStartedAt: curAt, CursorID: curID, MaxRows: limit,
+			})
+		}
+		return err
+	})
+	if err != nil {
+		return store.TripPage{}, err
+	}
+	return store.TripPage{Trips: toTrips(rows), Snapshot: snap}, nil
+}
+
+// DrivingDays implements store.Trips.
+func (s *Trips) DrivingDays(ctx context.Context, member uuid.UUID, from, before time.Time, tz string, vehicle *uuid.UUID) ([]store.DrivingDay, error) {
+	rows, err := s.q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{
+		Tz: tz, MemberID: member, StartedFrom: from, StartedBefore: before, VehicleID: vehicle,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.DrivingDay, 0, len(rows))
+	for _, r := range rows {
+		if !r.Day.Valid {
+			continue
+		}
+		out = append(out, store.DrivingDay{Date: r.Day.Time.UTC(), Count: int(r.TripCount)})
+	}
+	return out, nil
 }
