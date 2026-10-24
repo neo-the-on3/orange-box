@@ -21,6 +21,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/neo-the-on3/orange-box/backend/internal/timeutil"
+	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -509,7 +510,7 @@ type BatchResult struct {
 		ClientId openapi_types.UUID `json:"clientId"`
 
 		// Id Server id when accepted
-		Id *string `json:"id,omitempty"`
+		Id nullable.Nullable[string] `json:"id,omitempty"`
 
 		// Problem RFC 9457 problem details. Never contains PII, tokens or stack traces.
 		Problem *Problem                 `json:"problem,omitempty"`
@@ -538,22 +539,22 @@ type DtcCode = string
 
 // DtcReport defines model for DtcReport.
 type DtcReport struct {
-	ClientReportId openapi_types.UUID  `json:"clientReportId"`
-	ClientTripId   *openapi_types.UUID `json:"clientTripId,omitempty"`
-	CreatedAt      time.Time           `json:"createdAt"`
+	ClientReportId openapi_types.UUID                    `json:"clientReportId"`
+	ClientTripId   nullable.Nullable[openapi_types.UUID] `json:"clientTripId,omitempty"`
+	CreatedAt      time.Time                             `json:"createdAt"`
 
 	// DistanceSinceMilKm PID 0x21
-	DistanceSinceMilKm *int          `json:"distanceSinceMilKm,omitempty"`
-	Id                 string        `json:"id"`
-	Kind               DtcReportKind `json:"kind"`
-	Mil                bool          `json:"mil"`
-	OdometerKm         *int          `json:"odometerKm,omitempty"`
-	Pending            *[]DtcCode    `json:"pending,omitempty"`
-	Permanent          *[]DtcCode    `json:"permanent,omitempty"`
-	ReadAt             time.Time     `json:"readAt"`
-	Stored             *[]DtcCode    `json:"stored,omitempty"`
-	VehicleId          string        `json:"vehicleId"`
-	Vin                *string       `json:"vin,omitempty"`
+	DistanceSinceMilKm nullable.Nullable[int]    `json:"distanceSinceMilKm,omitempty"`
+	Id                 string                    `json:"id"`
+	Kind               DtcReportKind             `json:"kind"`
+	Mil                bool                      `json:"mil"`
+	OdometerKm         nullable.Nullable[int]    `json:"odometerKm,omitempty"`
+	Pending            *[]DtcCode                `json:"pending,omitempty"`
+	Permanent          *[]DtcCode                `json:"permanent,omitempty"`
+	ReadAt             time.Time                 `json:"readAt"`
+	Stored             *[]DtcCode                `json:"stored,omitempty"`
+	VehicleId          string                    `json:"vehicleId"`
+	Vin                nullable.Nullable[string] `json:"vin,omitempty"`
 }
 
 // DtcReportKind defines model for DtcReport.Kind.
@@ -561,19 +562,19 @@ type DtcReportKind string
 
 // DtcReportCreate defines model for DtcReportCreate.
 type DtcReportCreate struct {
-	ClientReportId openapi_types.UUID  `json:"clientReportId"`
-	ClientTripId   *openapi_types.UUID `json:"clientTripId,omitempty"`
+	ClientReportId openapi_types.UUID                    `json:"clientReportId"`
+	ClientTripId   nullable.Nullable[openapi_types.UUID] `json:"clientTripId,omitempty"`
 
 	// DistanceSinceMilKm PID 0x21
-	DistanceSinceMilKm *int                `json:"distanceSinceMilKm,omitempty"`
-	Kind               DtcReportCreateKind `json:"kind"`
-	Mil                bool                `json:"mil"`
-	OdometerKm         *int                `json:"odometerKm,omitempty"`
-	Pending            *[]DtcCode          `json:"pending,omitempty"`
-	Permanent          *[]DtcCode          `json:"permanent,omitempty"`
-	ReadAt             time.Time           `json:"readAt"`
-	Stored             *[]DtcCode          `json:"stored,omitempty"`
-	Vin                *string             `json:"vin,omitempty"`
+	DistanceSinceMilKm nullable.Nullable[int]    `json:"distanceSinceMilKm,omitempty"`
+	Kind               DtcReportCreateKind       `json:"kind"`
+	Mil                bool                      `json:"mil"`
+	OdometerKm         nullable.Nullable[int]    `json:"odometerKm,omitempty"`
+	Pending            *[]DtcCode                `json:"pending,omitempty"`
+	Permanent          *[]DtcCode                `json:"permanent,omitempty"`
+	ReadAt             time.Time                 `json:"readAt"`
+	Stored             *[]DtcCode                `json:"stored,omitempty"`
+	Vin                nullable.Nullable[string] `json:"vin,omitempty"`
 }
 
 // DtcReportCreateKind defines model for DtcReportCreate.Kind.
@@ -581,8 +582,8 @@ type DtcReportCreateKind string
 
 // DtcReportPage defines model for DtcReportPage.
 type DtcReportPage struct {
-	Items      []DtcReport `json:"items"`
-	NextCursor *string     `json:"nextCursor"`
+	Items      []DtcReport               `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // DtcSet defines model for DtcSet.
@@ -617,10 +618,10 @@ type Event struct {
 	Active *bool `json:"active,omitempty"`
 
 	// ClientEventId App-generated id, assigned when the event is recorded and sent on every upload (recommended; optional for compatibility). De-duplication checks this id **and** the fallback key (`clientTripId`, `t`, `type`, `active`, `dtc`); see `POST /v1/telemetry/batches`.
-	ClientEventId *openapi_types.UUID `json:"clientEventId,omitempty"`
-	Dtc           *string             `json:"dtc,omitempty"`
-	Lat           *float64            `json:"lat,omitempty"`
-	Lon           *float64            `json:"lon,omitempty"`
+	ClientEventId *openapi_types.UUID        `json:"clientEventId,omitempty"`
+	Dtc           nullable.Nullable[string]  `json:"dtc,omitempty"`
+	Lat           nullable.Nullable[float64] `json:"lat,omitempty"`
+	Lon           nullable.Nullable[float64] `json:"lon,omitempty"`
 
 	// T Telemetry timestamp: RFC 3339 in UTC with a `Z` suffix and 0 to 9 fractional-second digits, which matches
 	// Android's `Instant.toString()` (e.g. `2026-10-23T14:05:00Z`, `2026-10-23T14:05:00.123Z`,
@@ -636,13 +637,13 @@ type Event struct {
 	Type EventType `json:"type"`
 
 	// Value Measured value that triggered the event (e.g. g-force, km/h, V)
-	Value *float64 `json:"value,omitempty"`
+	Value nullable.Nullable[float64] `json:"value,omitempty"`
 }
 
 // EventPage defines model for EventPage.
 type EventPage struct {
-	Items      []Event `json:"items"`
-	NextCursor *string `json:"nextCursor"`
+	Items      []Event                   `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // EventType Legacy EventTpCd plus SmartEvent warning flags, plus overspeed/idling. Dashcam-related events are out of scope.
@@ -670,25 +671,25 @@ type Make struct {
 
 // MakePage defines model for MakePage.
 type MakePage struct {
-	Items      []Make  `json:"items"`
-	NextCursor *string `json:"nextCursor"`
+	Items      []Make                    `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // Model defines model for Model.
 type Model struct {
 	// BodyType Legacy CarTypeCd.
-	BodyType  *BodyType `json:"bodyType,omitempty"`
-	FirstYear *int      `json:"firstYear,omitempty"`
-	Id        string    `json:"id"`
-	LastYear  *int      `json:"lastYear,omitempty"`
-	MakeId    string    `json:"makeId"`
-	Name      string    `json:"name"`
+	BodyType  *BodyType              `json:"bodyType,omitempty"`
+	FirstYear nullable.Nullable[int] `json:"firstYear,omitempty"`
+	Id        string                 `json:"id"`
+	LastYear  nullable.Nullable[int] `json:"lastYear,omitempty"`
+	MakeId    string                 `json:"makeId"`
+	Name      string                 `json:"name"`
 }
 
 // ModelPage defines model for ModelPage.
 type ModelPage struct {
-	Items      []Model `json:"items"`
-	NextCursor *string `json:"nextCursor"`
+	Items      []Model                   `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // MyRanking defines model for MyRanking.
@@ -729,7 +730,7 @@ type OtpResponse struct {
 
 // PageMeta defines model for PageMeta.
 type PageMeta struct {
-	NextCursor *string `json:"nextCursor"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // Period defines model for Period.
@@ -746,8 +747,8 @@ type PointsBalance struct {
 	} `json:"byCategory,omitempty"`
 
 	// Earned Legacy memberPtAcc
-	Earned     int        `json:"earned"`
-	ExpiringAt *time.Time `json:"expiringAt,omitempty"`
+	Earned     int                          `json:"earned"`
+	ExpiringAt nullable.Nullable[time.Time] `json:"expiringAt,omitempty"`
 
 	// ExpiringSoon Legacy memberPtExp
 	ExpiringSoon *int `json:"expiringSoon,omitempty"`
@@ -767,7 +768,7 @@ type PointsLedgerEntry struct {
 	Description *string                   `json:"description,omitempty"`
 	Id          string                    `json:"id"`
 	OccurredAt  time.Time                 `json:"occurredAt"`
-	TripId      *string                   `json:"tripId,omitempty"`
+	TripId      nullable.Nullable[string] `json:"tripId,omitempty"`
 }
 
 // PointsLedgerEntryCategory defines model for PointsLedgerEntry.Category.
@@ -775,8 +776,8 @@ type PointsLedgerEntryCategory string
 
 // PointsLedgerPage defines model for PointsLedgerPage.
 type PointsLedgerPage struct {
-	Items      []PointsLedgerEntry `json:"items"`
-	NextCursor *string             `json:"nextCursor"`
+	Items      []PointsLedgerEntry       `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // Problem RFC 9457 problem details. Never contains PII, tokens or stack traces.
@@ -803,8 +804,8 @@ type Profile struct {
 	AuthProvider *ProfileAuthProvider `json:"authProvider,omitempty"`
 
 	// CountryCode ISO 3166-1 alpha-2. Legacy countryCd.
-	CountryCode *string    `json:"countryCode,omitempty"`
-	CreatedAt   *time.Time `json:"createdAt,omitempty"`
+	CountryCode nullable.Nullable[string] `json:"countryCode,omitempty"`
+	CreatedAt   *time.Time                `json:"createdAt,omitempty"`
 
 	// DisplayName Shown on leaderboards. Legacy memberNm.
 	DisplayName string `json:"displayName"`
@@ -815,8 +816,8 @@ type Profile struct {
 	RankingOptIn *bool                `json:"rankingOptIn,omitempty"`
 
 	// RegionCode ISO 3166-2 subdivision. Legacy localCd.
-	RegionCode *string    `json:"regionCode,omitempty"`
-	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+	RegionCode nullable.Nullable[string] `json:"regionCode,omitempty"`
+	UpdatedAt  *time.Time                `json:"updatedAt,omitempty"`
 }
 
 // ProfileAuthProvider Sign-in method. Only `email_otp` in v1; new values may be added. Replaces the legacy joinRouteCd social-login values, which are not carried over.
@@ -824,22 +825,22 @@ type ProfileAuthProvider string
 
 // ProfilePatch defines model for ProfilePatch.
 type ProfilePatch struct {
-	CountryCode  *string `json:"countryCode,omitempty"`
-	DisplayName  *string `json:"displayName,omitempty"`
-	RankingOptIn *bool   `json:"rankingOptIn,omitempty"`
-	RegionCode   *string `json:"regionCode,omitempty"`
+	CountryCode  nullable.Nullable[string] `json:"countryCode,omitempty"`
+	DisplayName  *string                   `json:"displayName,omitempty"`
+	RankingOptIn *bool                     `json:"rankingOptIn,omitempty"`
+	RegionCode   nullable.Nullable[string] `json:"regionCode,omitempty"`
 }
 
 // RankingEntry defines model for RankingEntry.
 type RankingEntry struct {
-	DisplayName string  `json:"displayName"`
-	IsMe        bool    `json:"isMe"`
-	Rank        int     `json:"rank"`
-	RegionCode  *string `json:"regionCode,omitempty"`
-	Value       float64 `json:"value"`
+	DisplayName string                    `json:"displayName"`
+	IsMe        bool                      `json:"isMe"`
+	Rank        int                       `json:"rank"`
+	RegionCode  nullable.Nullable[string] `json:"regionCode,omitempty"`
+	Value       float64                   `json:"value"`
 
 	// VehicleLabel e.g. make and model; never plate or VIN
-	VehicleLabel *string `json:"vehicleLabel,omitempty"`
+	VehicleLabel nullable.Nullable[string] `json:"vehicleLabel,omitempty"`
 }
 
 // RankingMetric Legacy *RankingTop10 variants (DrivingScore, EcoSpeed, FuelCut, HarshSpeed, Level, Point, FuelSave) plus best_trip.
@@ -850,10 +851,10 @@ type RankingPage struct {
 	Items []RankingEntry `json:"items"`
 
 	// Metric Legacy *RankingTop10 variants (DrivingScore, EcoSpeed, FuelCut, HarshSpeed, Level, Point, FuelSave) plus best_trip.
-	Metric      RankingMetric      `json:"metric"`
-	NextCursor  *string            `json:"nextCursor"`
-	Period      Period             `json:"period"`
-	PeriodStart openapi_types.Date `json:"periodStart"`
+	Metric      RankingMetric             `json:"metric"`
+	NextCursor  nullable.Nullable[string] `json:"nextCursor"`
+	Period      Period                    `json:"period"`
+	PeriodStart openapi_types.Date        `json:"periodStart"`
 }
 
 // RefreshGrant defines model for RefreshGrant.
@@ -880,23 +881,23 @@ type Sample struct {
 		Y *float64 `json:"y,omitempty"`
 		Z *float64 `json:"z,omitempty"`
 	} `json:"accel,omitempty"`
-	BatteryV      *float64 `json:"batteryV,omitempty"`
-	CoolantC      *float64 `json:"coolantC,omitempty"`
-	EngineLoadPct *float64 `json:"engineLoadPct,omitempty"`
-	FuelLevelPct  *float64 `json:"fuelLevelPct,omitempty"`
-	IntakeAirC    *float64 `json:"intakeAirC,omitempty"`
-	Lat           *float64 `json:"lat,omitempty"`
-	Lon           *float64 `json:"lon,omitempty"`
+	BatteryV      nullable.Nullable[float64] `json:"batteryV,omitempty"`
+	CoolantC      nullable.Nullable[float64] `json:"coolantC,omitempty"`
+	EngineLoadPct nullable.Nullable[float64] `json:"engineLoadPct,omitempty"`
+	FuelLevelPct  nullable.Nullable[float64] `json:"fuelLevelPct,omitempty"`
+	IntakeAirC    nullable.Nullable[float64] `json:"intakeAirC,omitempty"`
+	Lat           nullable.Nullable[float64] `json:"lat,omitempty"`
+	Lon           nullable.Nullable[float64] `json:"lon,omitempty"`
 
 	// MafGps g/s
-	MafGps *float64 `json:"mafGps,omitempty"`
-	MapKpa *float64 `json:"mapKpa,omitempty"`
-	Mil    *bool    `json:"mil,omitempty"`
+	MafGps nullable.Nullable[float64] `json:"mafGps,omitempty"`
+	MapKpa nullable.Nullable[float64] `json:"mapKpa,omitempty"`
+	Mil    nullable.Nullable[bool]    `json:"mil,omitempty"`
 
 	// Pids Extra SAE J1979 mode 01 values keyed by hex PID (e.g. `"0x0B"`), already scaled to SI units.
-	Pids     *map[string]float64 `json:"pids,omitempty"`
-	Rpm      *float64            `json:"rpm,omitempty"`
-	SpeedKmh *float64            `json:"speedKmh,omitempty"`
+	Pids     *map[string]float64        `json:"pids,omitempty"`
+	Rpm      nullable.Nullable[float64] `json:"rpm,omitempty"`
+	SpeedKmh nullable.Nullable[float64] `json:"speedKmh,omitempty"`
 
 	// T Telemetry timestamp: RFC 3339 in UTC with a `Z` suffix and 0 to 9 fractional-second digits, which matches
 	// Android's `Instant.toString()` (e.g. `2026-10-23T14:05:00Z`, `2026-10-23T14:05:00.123Z`,
@@ -906,14 +907,14 @@ type Sample struct {
 	//
 	//
 	// Examples: 2026-10-23T14:05:00.123Z
-	T           UtcInstant `json:"t"`
-	ThrottlePct *float64   `json:"throttlePct,omitempty"`
+	T           UtcInstant                 `json:"t"`
+	ThrottlePct nullable.Nullable[float64] `json:"throttlePct,omitempty"`
 }
 
 // SamplePage defines model for SamplePage.
 type SamplePage struct {
-	Items      []Sample `json:"items"`
-	NextCursor *string  `json:"nextCursor"`
+	Items      []Sample                  `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // SpeedBand defines model for SpeedBand.
@@ -922,35 +923,35 @@ type SpeedBand struct {
 	Seconds float64 `json:"seconds"`
 
 	// ToKmh null means open-ended (legacy timeIn110Over)
-	ToKmh *int `json:"toKmh,omitempty"`
+	ToKmh nullable.Nullable[int] `json:"toKmh,omitempty"`
 }
 
 // StatsSummary Legacy Rank aggregate fields plus ScoreRank stars.
 type StatsSummary struct {
-	DistanceKm    *float64           `json:"distanceKm,omitempty"`
-	DrivingScore  *float64           `json:"drivingScore,omitempty"`
-	DurationS     *int               `json:"durationS,omitempty"`
-	EcoSpeedTimeS *float64           `json:"ecoSpeedTimeS,omitempty"`
-	From          openapi_types.Date `json:"from"`
+	DistanceKm    *float64                   `json:"distanceKm,omitempty"`
+	DrivingScore  nullable.Nullable[float64] `json:"drivingScore,omitempty"`
+	DurationS     *int                       `json:"durationS,omitempty"`
+	EcoSpeedTimeS *float64                   `json:"ecoSpeedTimeS,omitempty"`
+	From          openapi_types.Date         `json:"from"`
 
 	// FuelCost Provisional. `amount`/`saved` are floating-point for now; whether to keep fuel cost at all, and whether money becomes integer minor units, is REQUIREMENTS.md open question 11. Settle it before v1 is final.
-	FuelCost *struct {
+	FuelCost nullable.Nullable[struct {
 		Amount   *float64 `json:"amount,omitempty"`
 		Currency *string  `json:"currency,omitempty"`
 		Saved    *float64 `json:"saved,omitempty"`
-	} `json:"fuelCost,omitempty"`
-	FuelCutTimeS      *float64           `json:"fuelCutTimeS,omitempty"`
-	FuelEconomyKmPerL *float64           `json:"fuelEconomyKmPerL,omitempty"`
-	FuelUsedL         *float64           `json:"fuelUsedL,omitempty"`
-	HarshAccelCount   *int               `json:"harshAccelCount,omitempty"`
-	HarshBrakeCount   *int               `json:"harshBrakeCount,omitempty"`
-	HighLoadTimeS     *float64           `json:"highLoadTimeS,omitempty"`
-	IdleTimeS         *float64           `json:"idleTimeS,omitempty"`
-	Level             *int               `json:"level,omitempty"`
-	MaxSpeedKmh       *float64           `json:"maxSpeedKmh,omitempty"`
-	NormalSpeedTimeS  *float64           `json:"normalSpeedTimeS,omitempty"`
-	OverSpeedTimeS    *float64           `json:"overSpeedTimeS,omitempty"`
-	Period            StatsSummaryPeriod `json:"period"`
+	}] `json:"fuelCost,omitempty"`
+	FuelCutTimeS      *float64                   `json:"fuelCutTimeS,omitempty"`
+	FuelEconomyKmPerL nullable.Nullable[float64] `json:"fuelEconomyKmPerL,omitempty"`
+	FuelUsedL         nullable.Nullable[float64] `json:"fuelUsedL,omitempty"`
+	HarshAccelCount   *int                       `json:"harshAccelCount,omitempty"`
+	HarshBrakeCount   *int                       `json:"harshBrakeCount,omitempty"`
+	HighLoadTimeS     *float64                   `json:"highLoadTimeS,omitempty"`
+	IdleTimeS         *float64                   `json:"idleTimeS,omitempty"`
+	Level             nullable.Nullable[int]     `json:"level,omitempty"`
+	MaxSpeedKmh       nullable.Nullable[float64] `json:"maxSpeedKmh,omitempty"`
+	NormalSpeedTimeS  *float64                   `json:"normalSpeedTimeS,omitempty"`
+	OverSpeedTimeS    *float64                   `json:"overSpeedTimeS,omitempty"`
+	Period            StatsSummaryPeriod         `json:"period"`
 
 	// ScoreStars 0-5 stars per category (legacy *ScoreStar)
 	ScoreStars *struct {
@@ -962,9 +963,9 @@ type StatsSummary struct {
 		NormalSpeed  *int `json:"normalSpeed,omitempty"`
 		OverSpeed    *int `json:"overSpeed,omitempty"`
 	} `json:"scoreStars,omitempty"`
-	To        openapi_types.Date `json:"to"`
-	TripCount int                `json:"tripCount"`
-	VehicleId *string            `json:"vehicleId,omitempty"`
+	To        openapi_types.Date        `json:"to"`
+	TripCount int                       `json:"tripCount"`
+	VehicleId nullable.Nullable[string] `json:"vehicleId,omitempty"`
 }
 
 // StatsSummaryPeriod defines model for StatsSummary.Period.
@@ -973,7 +974,7 @@ type StatsSummaryPeriod string
 // SyncMeta defines model for SyncMeta.
 type SyncMeta struct {
 	// NextSince Sync token for the next incremental walk (pass it as `since`). Set only on the last page (`nextCursor` null) of a walk that can be synced from; `null` otherwise.
-	NextSince *string `json:"nextSince"`
+	NextSince nullable.Nullable[string] `json:"nextSince"`
 }
 
 // TelemetryBatch defines model for TelemetryBatch.
@@ -1039,28 +1040,28 @@ type Trip struct {
 		OsVersion *string `json:"osVersion,omitempty"`
 		Version   *string `json:"version,omitempty"`
 	} `json:"app,omitempty"`
-	AvgSpeedKmh  *float64           `json:"avgSpeedKmh,omitempty"`
-	BatteryAvgV  *float64           `json:"batteryAvgV,omitempty"`
-	BatteryMaxV  *float64           `json:"batteryMaxV,omitempty"`
-	ClientTripId openapi_types.UUID `json:"clientTripId"`
-	CoolantAvgC  *float64           `json:"coolantAvgC,omitempty"`
-	CoolantMaxC  *float64           `json:"coolantMaxC,omitempty"`
-	CreatedAt    time.Time          `json:"createdAt"`
-	DistanceKm   *float64           `json:"distanceKm,omitempty"`
-	Dtc          *DtcSet            `json:"dtc,omitempty"`
-	DurationS    *int               `json:"durationS,omitempty"`
+	AvgSpeedKmh  *float64                   `json:"avgSpeedKmh,omitempty"`
+	BatteryAvgV  nullable.Nullable[float64] `json:"batteryAvgV,omitempty"`
+	BatteryMaxV  nullable.Nullable[float64] `json:"batteryMaxV,omitempty"`
+	ClientTripId openapi_types.UUID         `json:"clientTripId"`
+	CoolantAvgC  nullable.Nullable[float64] `json:"coolantAvgC,omitempty"`
+	CoolantMaxC  nullable.Nullable[float64] `json:"coolantMaxC,omitempty"`
+	CreatedAt    time.Time                  `json:"createdAt"`
+	DistanceKm   *float64                   `json:"distanceKm,omitempty"`
+	Dtc          *DtcSet                    `json:"dtc,omitempty"`
+	DurationS    *int                       `json:"durationS,omitempty"`
 
 	// EcoScore Client-computed (clean-room formula, see docs/telemetry.md). Legacy ecoSafePoint.
-	EcoScore          *float64   `json:"ecoScore,omitempty"`
-	EcoSpeedTimeS     *float64   `json:"ecoSpeedTimeS,omitempty"`
-	EndedAt           *time.Time `json:"endedAt,omitempty"`
-	EngineDistanceKm  *float64   `json:"engineDistanceKm,omitempty"`
-	FuelCutTimeS      *float64   `json:"fuelCutTimeS,omitempty"`
-	FuelEconomyKmPerL *float64   `json:"fuelEconomyKmPerL,omitempty"`
+	EcoScore          nullable.Nullable[float64]   `json:"ecoScore,omitempty"`
+	EcoSpeedTimeS     *float64                     `json:"ecoSpeedTimeS,omitempty"`
+	EndedAt           nullable.Nullable[time.Time] `json:"endedAt,omitempty"`
+	EngineDistanceKm  nullable.Nullable[float64]   `json:"engineDistanceKm,omitempty"`
+	FuelCutTimeS      *float64                     `json:"fuelCutTimeS,omitempty"`
+	FuelEconomyKmPerL nullable.Nullable[float64]   `json:"fuelEconomyKmPerL,omitempty"`
 
 	// FuelUsedL Legacy fuelConsumption
-	FuelUsedL       *float64 `json:"fuelUsedL,omitempty"`
-	HarshAccelCount *int     `json:"harshAccelCount,omitempty"`
+	FuelUsedL       nullable.Nullable[float64] `json:"fuelUsedL,omitempty"`
+	HarshAccelCount *int                       `json:"harshAccelCount,omitempty"`
 
 	// HarshBrakeCount Legacy harshDecelCount
 	HarshBrakeCount *int     `json:"harshBrakeCount,omitempty"`
@@ -1073,10 +1074,10 @@ type Trip struct {
 	OverSpeedTimeS  *float64 `json:"overSpeedTimeS,omitempty"`
 
 	// PointsAwarded Remote-only
-	PointsAwarded *int `json:"pointsAwarded,omitempty"`
+	PointsAwarded nullable.Nullable[int] `json:"pointsAwarded,omitempty"`
 
 	// SafetyScore Legacy safePoint
-	SafetyScore *float64 `json:"safetyScore,omitempty"`
+	SafetyScore nullable.Nullable[float64] `json:"safetyScore,omitempty"`
 
 	// Simulated True when recorded with the debug simulator; excluded from rankings. Legacy simulatedYn.
 	Simulated *bool `json:"simulated,omitempty"`
@@ -1114,25 +1115,25 @@ type TripDeletion struct {
 	Id string `json:"id"`
 
 	// VehicleId Vehicle the trip belonged to, if known
-	VehicleId *string `json:"vehicleId,omitempty"`
+	VehicleId nullable.Nullable[string] `json:"vehicleId,omitempty"`
 }
 
 // TripDeletionPage defines model for TripDeletionPage.
 type TripDeletionPage struct {
-	Items      []TripDeletion `json:"items"`
-	NextCursor *string        `json:"nextCursor"`
+	Items      []TripDeletion            `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 
 	// NextSince Sync token for the next incremental walk (pass it as `since`). Set only on the last page (`nextCursor` null) of a walk that can be synced from; `null` otherwise.
-	NextSince *string `json:"nextSince"`
+	NextSince nullable.Nullable[string] `json:"nextSince"`
 }
 
 // TripPage defines model for TripPage.
 type TripPage struct {
-	Items      []Trip  `json:"items"`
-	NextCursor *string `json:"nextCursor"`
+	Items      []Trip                    `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 
 	// NextSince Sync token for the next incremental walk (pass it as `since`). Set only on the last page (`nextCursor` null) of a walk that can be synced from; `null` otherwise.
-	NextSince *string `json:"nextSince"`
+	NextSince nullable.Nullable[string] `json:"nextSince"`
 }
 
 // TripUpload Trip summary. Legacy SmartTrip, minus ip/weather/mobileCarrier (unnecessary personal data), fuelEconomyA/B/C and maxHp/maxTorq (meaning or source not documented in the client).
@@ -1144,27 +1145,27 @@ type TripUpload struct {
 		OsVersion *string `json:"osVersion,omitempty"`
 		Version   *string `json:"version,omitempty"`
 	} `json:"app,omitempty"`
-	AvgSpeedKmh  *float64           `json:"avgSpeedKmh,omitempty"`
-	BatteryAvgV  *float64           `json:"batteryAvgV,omitempty"`
-	BatteryMaxV  *float64           `json:"batteryMaxV,omitempty"`
-	ClientTripId openapi_types.UUID `json:"clientTripId"`
-	CoolantAvgC  *float64           `json:"coolantAvgC,omitempty"`
-	CoolantMaxC  *float64           `json:"coolantMaxC,omitempty"`
-	DistanceKm   *float64           `json:"distanceKm,omitempty"`
-	Dtc          *DtcSet            `json:"dtc,omitempty"`
-	DurationS    *int               `json:"durationS,omitempty"`
+	AvgSpeedKmh  *float64                   `json:"avgSpeedKmh,omitempty"`
+	BatteryAvgV  nullable.Nullable[float64] `json:"batteryAvgV,omitempty"`
+	BatteryMaxV  nullable.Nullable[float64] `json:"batteryMaxV,omitempty"`
+	ClientTripId openapi_types.UUID         `json:"clientTripId"`
+	CoolantAvgC  nullable.Nullable[float64] `json:"coolantAvgC,omitempty"`
+	CoolantMaxC  nullable.Nullable[float64] `json:"coolantMaxC,omitempty"`
+	DistanceKm   *float64                   `json:"distanceKm,omitempty"`
+	Dtc          *DtcSet                    `json:"dtc,omitempty"`
+	DurationS    *int                       `json:"durationS,omitempty"`
 
 	// EcoScore Client-computed (clean-room formula, see docs/telemetry.md). Legacy ecoSafePoint.
-	EcoScore          *float64   `json:"ecoScore,omitempty"`
-	EcoSpeedTimeS     *float64   `json:"ecoSpeedTimeS,omitempty"`
-	EndedAt           *time.Time `json:"endedAt,omitempty"`
-	EngineDistanceKm  *float64   `json:"engineDistanceKm,omitempty"`
-	FuelCutTimeS      *float64   `json:"fuelCutTimeS,omitempty"`
-	FuelEconomyKmPerL *float64   `json:"fuelEconomyKmPerL,omitempty"`
+	EcoScore          nullable.Nullable[float64]   `json:"ecoScore,omitempty"`
+	EcoSpeedTimeS     *float64                     `json:"ecoSpeedTimeS,omitempty"`
+	EndedAt           nullable.Nullable[time.Time] `json:"endedAt,omitempty"`
+	EngineDistanceKm  nullable.Nullable[float64]   `json:"engineDistanceKm,omitempty"`
+	FuelCutTimeS      *float64                     `json:"fuelCutTimeS,omitempty"`
+	FuelEconomyKmPerL nullable.Nullable[float64]   `json:"fuelEconomyKmPerL,omitempty"`
 
 	// FuelUsedL Legacy fuelConsumption
-	FuelUsedL       *float64 `json:"fuelUsedL,omitempty"`
-	HarshAccelCount *int     `json:"harshAccelCount,omitempty"`
+	FuelUsedL       nullable.Nullable[float64] `json:"fuelUsedL,omitempty"`
+	HarshAccelCount *int                       `json:"harshAccelCount,omitempty"`
 
 	// HarshBrakeCount Legacy harshDecelCount
 	HarshBrakeCount *int     `json:"harshBrakeCount,omitempty"`
@@ -1176,7 +1177,7 @@ type TripUpload struct {
 	OverSpeedTimeS  *float64 `json:"overSpeedTimeS,omitempty"`
 
 	// SafetyScore Legacy safePoint
-	SafetyScore *float64 `json:"safetyScore,omitempty"`
+	SafetyScore nullable.Nullable[float64] `json:"safetyScore,omitempty"`
 
 	// Simulated True when recorded with the debug simulator; excluded from rankings. Legacy simulatedYn.
 	Simulated *bool `json:"simulated,omitempty"`
@@ -1210,22 +1211,22 @@ type UtcInstant = timeutil.UtcInstant
 
 // Variant Legacy SmartCarModel.
 type Variant struct {
-	DiscontinuedYear     *int `json:"discontinuedYear,omitempty"`
-	EngineDisplacementCc *int `json:"engineDisplacementCc,omitempty"`
+	DiscontinuedYear     nullable.Nullable[int] `json:"discontinuedYear,omitempty"`
+	EngineDisplacementCc nullable.Nullable[int] `json:"engineDisplacementCc,omitempty"`
 
 	// FuelType Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other. Unknown future values must be tolerated.
 	FuelType FuelType `json:"fuelType"`
 	Id       string   `json:"id"`
 
 	// ImageUrl Absolute HTTPS URL (legacy carImageFile was a path relative to the service base URL)
-	ImageUrl *string `json:"imageUrl,omitempty"`
-	MakeId   string  `json:"makeId"`
-	ModelId  string  `json:"modelId"`
-	Name     *string `json:"name,omitempty"`
+	ImageUrl nullable.Nullable[string] `json:"imageUrl,omitempty"`
+	MakeId   string                    `json:"makeId"`
+	ModelId  string                    `json:"modelId"`
+	Name     *string                   `json:"name,omitempty"`
 
 	// OfficialFuelEconomyKmPerL Legacy fuelEconomy (unit inferred as km/L)
-	OfficialFuelEconomyKmPerL *float64 `json:"officialFuelEconomyKmPerL,omitempty"`
-	ReleaseYear               *int     `json:"releaseYear,omitempty"`
+	OfficialFuelEconomyKmPerL nullable.Nullable[float64] `json:"officialFuelEconomyKmPerL,omitempty"`
+	ReleaseYear               nullable.Nullable[int]     `json:"releaseYear,omitempty"`
 }
 
 // VariantPage defines model for VariantPage.
@@ -1235,42 +1236,42 @@ type VariantPage struct {
 		FuelType       *[]FuelType `json:"fuelType,omitempty"`
 		Year           *[]int      `json:"year,omitempty"`
 	} `json:"facets,omitempty"`
-	Items      []Variant `json:"items"`
-	NextCursor *string   `json:"nextCursor"`
+	Items      []Variant                 `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // Vehicle defines model for Vehicle.
 type Vehicle struct {
 	// Archived Legacy activeYn=N
-	Archived             bool                `json:"archived"`
-	ClientVehicleId      *openapi_types.UUID `json:"clientVehicleId,omitempty"`
-	CreatedAt            *time.Time          `json:"createdAt,omitempty"`
-	EngineDisplacementCc *int                `json:"engineDisplacementCc,omitempty"`
+	Archived             bool                                  `json:"archived"`
+	ClientVehicleId      nullable.Nullable[openapi_types.UUID] `json:"clientVehicleId,omitempty"`
+	CreatedAt            *time.Time                            `json:"createdAt,omitempty"`
+	EngineDisplacementCc nullable.Nullable[int]                `json:"engineDisplacementCc,omitempty"`
 
 	// FuelType Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other. Unknown future values must be tolerated.
 	FuelType FuelType `json:"fuelType"`
 	Id       *string  `json:"id,omitempty"`
 
 	// IdleStopGo Legacy isgYn
-	IdleStopGo *bool   `json:"idleStopGo,omitempty"`
-	Make       string  `json:"make"`
-	Model      string  `json:"model"`
-	ModelYear  *int    `json:"modelYear,omitempty"`
-	Nickname   *string `json:"nickname,omitempty"`
+	IdleStopGo *bool                  `json:"idleStopGo,omitempty"`
+	Make       string                 `json:"make"`
+	Model      string                 `json:"model"`
+	ModelYear  nullable.Nullable[int] `json:"modelYear,omitempty"`
+	Nickname   *string                `json:"nickname,omitempty"`
 
 	// ObdAdapter Adapter metadata useful for support. Legacy elmVer/protocol. The Bluetooth MAC (legacy obdMac) is not sent.
-	ObdAdapter *ObdAdapterInfo `json:"obdAdapter,omitempty"`
-	OdometerKm *int            `json:"odometerKm,omitempty"`
+	ObdAdapter *ObdAdapterInfo        `json:"obdAdapter,omitempty"`
+	OdometerKm nullable.Nullable[int] `json:"odometerKm,omitempty"`
 
 	// PlateNumber Optional; personal data. Legacy carPlateNo.
-	PlateNumber *string    `json:"plateNumber,omitempty"`
-	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
+	PlateNumber nullable.Nullable[string] `json:"plateNumber,omitempty"`
+	UpdatedAt   *time.Time                `json:"updatedAt,omitempty"`
 
 	// VariantId Catalogue variant, or null for manual entry
-	VariantId *string `json:"variantId,omitempty"`
+	VariantId nullable.Nullable[string] `json:"variantId,omitempty"`
 
 	// Vin Optional; personal data.
-	Vin *string `json:"vin,omitempty"`
+	Vin nullable.Nullable[string] `json:"vin,omitempty"`
 }
 
 // VehicleCreate defines model for VehicleCreate.
@@ -1279,97 +1280,97 @@ type VehicleCreate struct {
 	Archived *bool `json:"archived,omitempty"`
 
 	// ClientVehicleId Local id from the app, for de-duplication
-	ClientVehicleId      *openapi_types.UUID `json:"clientVehicleId,omitempty"`
-	EngineDisplacementCc *int                `json:"engineDisplacementCc,omitempty"`
+	ClientVehicleId      *openapi_types.UUID    `json:"clientVehicleId,omitempty"`
+	EngineDisplacementCc nullable.Nullable[int] `json:"engineDisplacementCc,omitempty"`
 
 	// FuelType Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other. Unknown future values must be tolerated.
 	FuelType FuelType `json:"fuelType"`
 
 	// IdleStopGo Legacy isgYn
-	IdleStopGo *bool   `json:"idleStopGo,omitempty"`
-	Make       string  `json:"make"`
-	Model      string  `json:"model"`
-	ModelYear  *int    `json:"modelYear,omitempty"`
-	Nickname   *string `json:"nickname,omitempty"`
+	IdleStopGo *bool                  `json:"idleStopGo,omitempty"`
+	Make       string                 `json:"make"`
+	Model      string                 `json:"model"`
+	ModelYear  nullable.Nullable[int] `json:"modelYear,omitempty"`
+	Nickname   *string                `json:"nickname,omitempty"`
 
 	// ObdAdapter Adapter metadata useful for support. Legacy elmVer/protocol. The Bluetooth MAC (legacy obdMac) is not sent.
-	ObdAdapter *ObdAdapterInfo `json:"obdAdapter,omitempty"`
-	OdometerKm *int            `json:"odometerKm,omitempty"`
+	ObdAdapter *ObdAdapterInfo        `json:"obdAdapter,omitempty"`
+	OdometerKm nullable.Nullable[int] `json:"odometerKm,omitempty"`
 
 	// PlateNumber Optional; personal data. Legacy carPlateNo.
-	PlateNumber *string `json:"plateNumber,omitempty"`
+	PlateNumber nullable.Nullable[string] `json:"plateNumber,omitempty"`
 
 	// VariantId Catalogue variant, or null for manual entry
-	VariantId *string `json:"variantId,omitempty"`
+	VariantId nullable.Nullable[string] `json:"variantId,omitempty"`
 
 	// Vin Optional; personal data.
-	Vin *string `json:"vin,omitempty"`
+	Vin nullable.Nullable[string] `json:"vin,omitempty"`
 }
 
 // VehiclePage defines model for VehiclePage.
 type VehiclePage struct {
-	Items      []Vehicle `json:"items"`
-	NextCursor *string   `json:"nextCursor"`
+	Items      []Vehicle                 `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"nextCursor"`
 }
 
 // VehiclePatch defines model for VehiclePatch.
 type VehiclePatch struct {
 	// Archived Legacy activeYn=N
-	Archived             *bool `json:"archived,omitempty"`
-	EngineDisplacementCc *int  `json:"engineDisplacementCc,omitempty"`
+	Archived             *bool                  `json:"archived,omitempty"`
+	EngineDisplacementCc nullable.Nullable[int] `json:"engineDisplacementCc,omitempty"`
 
 	// FuelType Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other. Unknown future values must be tolerated.
 	FuelType *FuelType `json:"fuelType,omitempty"`
 
 	// IdleStopGo Legacy isgYn
-	IdleStopGo *bool   `json:"idleStopGo,omitempty"`
-	Make       *string `json:"make,omitempty"`
-	Model      *string `json:"model,omitempty"`
-	ModelYear  *int    `json:"modelYear,omitempty"`
-	Nickname   *string `json:"nickname,omitempty"`
+	IdleStopGo *bool                  `json:"idleStopGo,omitempty"`
+	Make       *string                `json:"make,omitempty"`
+	Model      *string                `json:"model,omitempty"`
+	ModelYear  nullable.Nullable[int] `json:"modelYear,omitempty"`
+	Nickname   *string                `json:"nickname,omitempty"`
 
 	// ObdAdapter Adapter metadata useful for support. Legacy elmVer/protocol. The Bluetooth MAC (legacy obdMac) is not sent.
-	ObdAdapter *ObdAdapterInfo `json:"obdAdapter,omitempty"`
-	OdometerKm *int            `json:"odometerKm,omitempty"`
+	ObdAdapter *ObdAdapterInfo        `json:"obdAdapter,omitempty"`
+	OdometerKm nullable.Nullable[int] `json:"odometerKm,omitempty"`
 
 	// PlateNumber Optional; personal data. Legacy carPlateNo.
-	PlateNumber *string `json:"plateNumber,omitempty"`
+	PlateNumber nullable.Nullable[string] `json:"plateNumber,omitempty"`
 
 	// VariantId Catalogue variant, or null for manual entry
-	VariantId *string `json:"variantId,omitempty"`
+	VariantId nullable.Nullable[string] `json:"variantId,omitempty"`
 
 	// Vin Optional; personal data.
-	Vin *string `json:"vin,omitempty"`
+	Vin nullable.Nullable[string] `json:"vin,omitempty"`
 }
 
 // VehicleWritable defines model for VehicleWritable.
 type VehicleWritable struct {
 	// Archived Legacy activeYn=N
-	Archived             *bool `json:"archived,omitempty"`
-	EngineDisplacementCc *int  `json:"engineDisplacementCc,omitempty"`
+	Archived             *bool                  `json:"archived,omitempty"`
+	EngineDisplacementCc nullable.Nullable[int] `json:"engineDisplacementCc,omitempty"`
 
 	// FuelType Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other. Unknown future values must be tolerated.
 	FuelType *FuelType `json:"fuelType,omitempty"`
 
 	// IdleStopGo Legacy isgYn
-	IdleStopGo *bool   `json:"idleStopGo,omitempty"`
-	Make       *string `json:"make,omitempty"`
-	Model      *string `json:"model,omitempty"`
-	ModelYear  *int    `json:"modelYear,omitempty"`
-	Nickname   *string `json:"nickname,omitempty"`
+	IdleStopGo *bool                  `json:"idleStopGo,omitempty"`
+	Make       *string                `json:"make,omitempty"`
+	Model      *string                `json:"model,omitempty"`
+	ModelYear  nullable.Nullable[int] `json:"modelYear,omitempty"`
+	Nickname   *string                `json:"nickname,omitempty"`
 
 	// ObdAdapter Adapter metadata useful for support. Legacy elmVer/protocol. The Bluetooth MAC (legacy obdMac) is not sent.
-	ObdAdapter *ObdAdapterInfo `json:"obdAdapter,omitempty"`
-	OdometerKm *int            `json:"odometerKm,omitempty"`
+	ObdAdapter *ObdAdapterInfo        `json:"obdAdapter,omitempty"`
+	OdometerKm nullable.Nullable[int] `json:"odometerKm,omitempty"`
 
 	// PlateNumber Optional; personal data. Legacy carPlateNo.
-	PlateNumber *string `json:"plateNumber,omitempty"`
+	PlateNumber nullable.Nullable[string] `json:"plateNumber,omitempty"`
 
 	// VariantId Catalogue variant, or null for manual entry
-	VariantId *string `json:"variantId,omitempty"`
+	VariantId nullable.Nullable[string] `json:"variantId,omitempty"`
 
 	// Vin Optional; personal data.
-	Vin *string `json:"vin,omitempty"`
+	Vin nullable.Nullable[string] `json:"vin,omitempty"`
 }
 
 // Cursor defines model for Cursor.

@@ -33,10 +33,18 @@ type Deps struct {
 	UploadConcurrency int
 	// UploadQueueWait is how long an upload waits for a slot before 503 (default 2s).
 	UploadQueueWait time.Duration
-	// BodyConcurrency caps non-upload request bodies read, decoded and
-	// validated at once (default 16); a further one waits UploadQueueWait,
-	// then gets 503 server_busy.
+	// BodyConcurrency caps signed-in non-upload requests with a body being
+	// pre-scanned, validated, decoded and handled at once (default 16); a
+	// further one waits UploadQueueWait, then gets 503 server_busy. Bodies
+	// are read before a slot is taken.
 	BodyConcurrency int
+	// AnonBodyConcurrency is the same for anonymous requests (sign-in),
+	// in a separate pool (default 8).
+	AnonBodyConcurrency int
+	// AnonReadConcurrency caps anonymous requests with a body in flight,
+	// reading included (default 1024, i.e. at most 16 MiB of buffered
+	// anonymous bodies); beyond it, 503 at once.
+	AnonReadConcurrency int
 	// UploadReadTimeout bounds how long an upload body may take to arrive
 	// once it has a slot (default 10s).
 	UploadReadTimeout time.Duration
@@ -67,6 +75,12 @@ func NewRouter(d Deps) (http.Handler, error) {
 	if d.BodyConcurrency <= 0 {
 		d.BodyConcurrency = 16
 	}
+	if d.AnonBodyConcurrency <= 0 {
+		d.AnonBodyConcurrency = 8
+	}
+	if d.AnonReadConcurrency <= 0 {
+		d.AnonReadConcurrency = 1024
+	}
 	if d.UploadReadTimeout <= 0 {
 		d.UploadReadTimeout = 10 * time.Second
 	}
@@ -95,7 +109,11 @@ func NewRouter(d Deps) (http.Handler, error) {
 	})
 
 	oa, err := newOpenAPIMiddleware(d.Tokens, newUploadLimiter(d.UploadConcurrency, d.UploadQueueWait), d.UploadReadTimeout,
-		newBodyLimiter(d.BodyConcurrency, d.UploadQueueWait))
+		bodyPools{
+			members:   newBodyLimiter(d.BodyConcurrency, d.UploadQueueWait),
+			anonymous: newBodyLimiter(d.AnonBodyConcurrency, d.UploadQueueWait),
+			anonReads: newReadLimiter(d.AnonReadConcurrency),
+		})
 	if err != nil {
 		return nil, err
 	}

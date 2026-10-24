@@ -8,6 +8,10 @@ generate:
   models: true
   embedded-spec: true
 output-options:
+  # Nullable, optional fields become nullable.Nullable[T], which tells an
+  # explicit null (clear the field) from an absent one (leave it), as merge
+  # patches (ProfilePatch, VehiclePatch) need.
+  nullable-type: true
   # Decode request bodies with encoding/json/v2 (exact-case, no duplicate
   # names), so the strict handlers see exactly what kin-openapi validated.
   user-templates:

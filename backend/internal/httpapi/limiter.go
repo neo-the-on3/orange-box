@@ -85,11 +85,13 @@ func (l *uploadLimiter) acquire(ctx context.Context, memberID string) (release f
 }
 
 // bodyLimiter caps how many non-upload request bodies (auth, profile,
-// vehicle, ...) are read, decoded and validated at once, whoever sends them.
-// Each is at most MaxBody bytes and MaxBodyValues values, so N slots bound
-// that memory to a few MiB; a burst of anonymous bodies queues briefly and
-// then gets 503 instead of growing the heap. Rate limiting per client is
-// #114.
+// vehicle, ...) are pre-scanned, validated, decoded and handled at once.
+// Bodies are read before a slot is taken (see openAPIMiddleware.wrap), so a
+// slow sender never holds one. There is one pool for anonymous requests and
+// one for signed-in members, so anonymous traffic can't starve members.
+// Each body is at most MaxBody bytes and MaxBodyValues values, so N slots
+// bound that memory to a few MiB; a burst queues briefly and then gets 503
+// instead of growing the heap. Rate limiting per client is #114.
 type bodyLimiter struct {
 	slots chan struct{}
 	wait  time.Duration
@@ -123,4 +125,37 @@ func (l *bodyLimiter) acquire(ctx context.Context) (release func(), p *problem.P
 	return nil, problem.New(http.StatusServiceUnavailable, problem.CodeServerBusy,
 		"Too many requests are being processed; retry shortly.").
 		WithTitle("Server busy").WithRetryAfter(retryAfterServerBusy)
+}
+
+// readLimiter caps anonymous requests in flight from the start of their body
+// read to the end of the handler, so buffered anonymous bodies stay bounded
+// (MaxBody × N) however many slow senders connect. It never waits: when it
+// is full, the request is answered 503 at once, without reading its body.
+type readLimiter struct {
+	slots chan struct{}
+}
+
+func newReadLimiter(n int) *readLimiter {
+	if n < 1 {
+		n = 1
+	}
+	return &readLimiter{slots: make(chan struct{}, n)}
+}
+
+func (l *readLimiter) tryAcquire() (release func(), p *problem.Problem) {
+	select {
+	case l.slots <- struct{}{}:
+		return func() { <-l.slots }, nil
+	default:
+		return nil, problem.New(http.StatusServiceUnavailable, problem.CodeServerBusy,
+			"Too many requests are being processed; retry shortly.").
+			WithTitle("Server busy").WithRetryAfter(retryAfterServerBusy)
+	}
+}
+
+// bodyPools are the limits for non-upload bodies.
+type bodyPools struct {
+	members   *bodyLimiter // signed-in requests: processing slots
+	anonymous *bodyLimiter // anonymous requests: processing slots
+	anonReads *readLimiter // anonymous requests in flight, reading included
 }

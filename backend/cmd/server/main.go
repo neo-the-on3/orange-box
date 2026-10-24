@@ -115,17 +115,19 @@ func newHandler(cfg config.Config, logger *slog.Logger) (http.Handler, error) {
 			slog.String("env", cfg.Env))
 	}
 	return httpapi.NewRouter(httpapi.Deps{
-		Logger:            logger,
-		Tokens:            tokens,
-		Members:           auth.NewMemoryMembers(), // Postgres store arrives with #105
-		Codes:             auth.NewPendingCodes(),
-		TestMode:          cfg.AuthTestMode,
-		TestCode:          cfg.AuthTestCode,
-		RequestTimeout:    cfg.RequestTimeout,
-		UploadConcurrency: cfg.UploadConcurrency,
-		UploadQueueWait:   cfg.UploadQueueWait,
-		UploadReadTimeout: cfg.UploadReadTimeout,
-		BodyConcurrency:   cfg.BodyConcurrency,
+		Logger:              logger,
+		Tokens:              tokens,
+		Members:             auth.NewMemoryMembers(), // Postgres store arrives with #105
+		Codes:               auth.NewPendingCodes(),
+		TestMode:            cfg.AuthTestMode,
+		TestCode:            cfg.AuthTestCode,
+		RequestTimeout:      cfg.RequestTimeout,
+		UploadConcurrency:   cfg.UploadConcurrency,
+		UploadQueueWait:     cfg.UploadQueueWait,
+		UploadReadTimeout:   cfg.UploadReadTimeout,
+		BodyConcurrency:     cfg.BodyConcurrency,
+		AnonBodyConcurrency: cfg.AnonBodyConcurrency,
+		AnonReadConcurrency: cfg.AnonReadConcurrency,
 	})
 }
 
