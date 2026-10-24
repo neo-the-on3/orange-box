@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"testing"
@@ -195,10 +196,119 @@ func TestSyncTokenOfAnotherDeployment(t *testing.T) {
 	member := newMember(t, q)
 	since := origin(t, q)
 	since.Identity = "pg:1"
-	if _, err := trips.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: since, Limit: 10}); err != store.ErrSyncWindowExpired {
+	if _, err := trips.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: since, Limit: 10}); !errors.Is(err, store.ErrSyncWindowExpired) {
 		t.Fatalf("changes with a foreign token: %v", err)
 	}
-	if _, err := trips.ListTripDeletions(t.Context(), member, store.TripDeletionsQuery{Since: since, Limit: 10}); err != store.ErrSyncWindowExpired {
+	if _, err := trips.ListTripDeletions(t.Context(), member, store.TripDeletionsQuery{Since: since, Limit: 10}); !errors.Is(err, store.ErrSyncWindowExpired) {
 		t.Fatalf("deletions with a foreign token: %v", err)
+	}
+}
+
+// agedTombstone writes a completed trip, deletes it and backdates the
+// tombstone to deletedAt, returning the tombstone's id.
+func agedTombstone(t *testing.T, pool *pgxpool.Pool, q *dbgen.Queries, member, vehicle uuid.UUID, deletedAt time.Time) uuid.UUID {
+	t.Helper()
+	ctx := t.Context()
+	r, err := q.UpsertTrip(ctx, tripParams(member, vehicle, newID(), "completed", deletedAt.Add(-time.Hour)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.TombstoneTrip(ctx, dbgen.TombstoneTripParams{MemberID: member, ID: r.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE trips SET deleted_at = $2 WHERE id = $1`, r.ID, deletedAt); err != nil {
+		t.Fatal(err)
+	}
+	return r.ID
+}
+
+// TestSyncPurgeBetweenCheckAndRead is #177: a purge that commits after the
+// token was checked against the purge boundary and before the deletions
+// page is read must not make tombstones the token needs vanish silently.
+// The check and the read share one snapshot, so the page still has them,
+// and the next page answers sync_window_expired.
+func TestSyncPurgeBetweenCheckAndRead(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	q := dbgen.New(pool)
+	trips := newTrips(t, pool)
+	member := newMember(t, q)
+	vehicle := insertVehicle(t, q, member, nil)
+	old := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
+	a := agedTombstone(t, pool, q, member, vehicle, old)
+	b := agedTombstone(t, pool, q, member, vehicle, old.Add(time.Minute))
+	since := origin(t, q) // issued before the purge, so the purge expires it
+
+	db.SetTripsHook(trips, once("checked", func() {
+		if _, err := q.PurgeTripTombstones(ctx, dbgen.PurgeTripTombstonesParams{DeletedBefore: old.Add(24 * time.Hour), MaxRows: 100}); err != nil {
+			t.Error(err)
+		}
+	}))
+	first, err := trips.ListTripDeletions(ctx, member, store.TripDeletionsQuery{Since: since, Snapshot: true, Limit: 1})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if got := deletionIDs(first); len(got) != 1 || (got[0] != a && got[0] != b) {
+		t.Fatalf("first page = %v, want one of the tombstones checked against the old boundary", got)
+	}
+	last := first.Deletions[0].Change
+	if _, err := trips.ListTripDeletions(ctx, member, store.TripDeletionsQuery{Since: since, After: &last, Limit: 1}); !errors.Is(err, store.ErrSyncWindowExpired) {
+		t.Fatalf("page after the purge: %v, want ErrSyncWindowExpired", err)
+	}
+	if _, err := trips.ListTripChanges(ctx, member, store.TripChangesQuery{Since: since, Snapshot: true, Limit: 10}); !errors.Is(err, store.ErrSyncWindowExpired) {
+		t.Fatalf("trips walk with the purged token: %v, want ErrSyncWindowExpired", err)
+	}
+}
+
+// TestSyncPurgeBoundaryExpiry: a token is expired once a tombstone it
+// might not have seen is purged, and only then; a token taken after the
+// purge works.
+func TestSyncPurgeBoundaryExpiry(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	q := dbgen.New(pool)
+	trips := newTrips(t, pool)
+	member := newMember(t, q)
+	other := newMember(t, q)
+	vehicle := insertVehicle(t, q, member, nil)
+	otherVehicle := insertVehicle(t, q, other, nil)
+	old := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
+	agedTombstone(t, pool, q, member, vehicle, old)
+	agedTombstone(t, pool, q, other, otherVehicle, old)
+
+	if before, err := trips.ListTripDeletions(ctx, member, store.TripDeletionsQuery{Since: origin(t, q), Limit: 10}); err != nil || len(before.Deletions) != 1 {
+		t.Fatalf("before purge: %+v, %v", before, err)
+	}
+	if _, err := q.PurgeTripTombstones(ctx, dbgen.PurgeTripTombstonesParams{DeletedBefore: old.Add(24 * time.Hour), MaxRows: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trips.ListTripDeletions(ctx, member, store.TripDeletionsQuery{Since: origin(t, q), Limit: 10}); !errors.Is(err, store.ErrSyncWindowExpired) {
+		t.Fatalf("old token after purge: %v", err)
+	}
+	b, err := q.GetTripPurgeBoundary(ctx, member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Strictly above the boundary in both time and watermark: accepted.
+	above := origin(t, q)
+	above.IssuedAt, above.Watermark = b.MaxDeletedAt.Add(time.Microsecond), b.MaxWriterXid+1
+	if _, err := trips.ListTripDeletions(ctx, member, store.TripDeletionsQuery{Since: above, Limit: 10}); err != nil {
+		t.Fatalf("token above the boundary: %v", err)
+	}
+	// At the boundary in either one: expired.
+	for name, sp := range map[string]store.SyncPoint{
+		"issuedAt at the purged deletedAt": {Identity: above.Identity, IssuedAt: b.MaxDeletedAt, Watermark: above.Watermark},
+		"watermark at the purged xid":      {Identity: above.Identity, IssuedAt: above.IssuedAt, Watermark: b.MaxWriterXid},
+	} {
+		if _, err := trips.ListTripChanges(ctx, member, store.TripChangesQuery{Since: sp, Limit: 10}); !errors.Is(err, store.ErrSyncWindowExpired) {
+			t.Errorf("%s: %v, want ErrSyncWindowExpired", name, err)
+		}
+	}
+	// The boundary is per member.
+	stranger := newMember(t, q)
+	if _, err := trips.ListTripChanges(ctx, stranger, store.TripChangesQuery{Since: origin(t, q), Limit: 10}); err != nil {
+		t.Fatalf("member without purges: %v", err)
 	}
 }

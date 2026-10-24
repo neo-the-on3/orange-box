@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -68,8 +69,9 @@ func (s *Trips) identity(ctx context.Context, q *dbgen.Queries) (string, error) 
 
 // walk runs read in a read-only REPEATABLE READ transaction. With snapshot
 // set it first takes the new SyncPoint, as the transaction's first
-// statement (#176). since, if not nil, must belong to this deployment.
-func (s *Trips) walk(ctx context.Context, since *store.SyncPoint, snapshot bool, read func(q *dbgen.Queries) error) (*store.SyncPoint, error) {
+// statement (#176). since, if not nil, must belong to this deployment and
+// be above the member's purge boundary (#177), else ErrSyncWindowExpired.
+func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoint, snapshot bool, read func(q *dbgen.Queries) error) (*store.SyncPoint, error) {
 	var out *store.SyncPoint
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
@@ -89,6 +91,15 @@ func (s *Trips) walk(ctx context.Context, since *store.SyncPoint, snapshot bool,
 			if since != nil && since.Identity != identity {
 				return store.ErrSyncWindowExpired
 			}
+			if since != nil {
+				// In the same snapshot as the page (#177): a purge that
+				// commits after this check is invisible to the page read
+				// too, so the page still has every tombstone the token
+				// needs, and the next page or walk sees the new boundary.
+				if err := checkPurgeBoundary(ctx, q, member, *since); err != nil {
+					return err
+				}
+			}
 			if snapshot {
 				out = &store.SyncPoint{Identity: identity, IssuedAt: snap.IssuedAt.UTC(), Watermark: snap.Watermark}
 			}
@@ -100,6 +111,24 @@ func (s *Trips) walk(ctx context.Context, since *store.SyncPoint, snapshot bool,
 		return nil, err
 	}
 	return out, nil
+}
+
+// checkPurgeBoundary rejects a token that a tombstone purge has expired:
+// one is accepted only if its issue time is after the latest purged
+// deletedAt and its watermark is above the highest purged writer id, i.e.
+// no tombstone it might not have seen yet is gone.
+func checkPurgeBoundary(ctx context.Context, q *dbgen.Queries, member uuid.UUID, since store.SyncPoint) error {
+	b, err := q.GetTripPurgeBoundary(ctx, member)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read purge boundary: %w", err)
+	}
+	if !since.IssuedAt.After(b.MaxDeletedAt) || since.Watermark <= b.MaxWriterXid {
+		return store.ErrSyncWindowExpired
+	}
+	return nil
 }
 
 func pageLimit(limit int) (int32, error) {
@@ -125,7 +154,7 @@ func (s *Trips) ListTripChanges(ctx context.Context, member uuid.UUID, tq store.
 	}
 	var rows []dbgen.Trip
 	cx, cid := after(tq.After)
-	snap, err := s.walk(ctx, &tq.Since, tq.Snapshot, func(q *dbgen.Queries) error {
+	snap, err := s.walk(ctx, member, &tq.Since, tq.Snapshot, func(q *dbgen.Queries) error {
 		var err error
 		rows, err = q.ListTripChanges(ctx, dbgen.ListTripChangesParams{
 			MemberID: member, Watermark: tq.Since.Watermark, CursorXid: cx, CursorID: cid, MaxRows: limit,
@@ -147,7 +176,7 @@ func (s *Trips) ListTripDeletions(ctx context.Context, member uuid.UUID, dq stor
 	}
 	var rows []dbgen.ListTripDeletionsRow
 	cx, cid := after(dq.After)
-	snap, err := s.walk(ctx, &dq.Since, dq.Snapshot, func(q *dbgen.Queries) error {
+	snap, err := s.walk(ctx, member, &dq.Since, dq.Snapshot, func(q *dbgen.Queries) error {
 		var err error
 		rows, err = q.ListTripDeletions(ctx, dbgen.ListTripDeletionsParams{
 			MemberID: member, Watermark: dq.Since.Watermark, CursorXid: cx, CursorID: cid, MaxRows: limit,
