@@ -4,13 +4,20 @@
 -- newer; otherwise no row is returned and the caller reads the trip with
 -- GetTripByClientID to tell unchanged from trip_deleted. inserted is true
 -- for a new trip.
+--
+-- updated_at (here and in the tombstone queries) is the wall clock when the
+-- row is written, at millisecond precision like the API, and always at
+-- least 1 ms after the row's previous updated_at. now() would be the
+-- transaction's start: a batch that waited on the row lock behind a later
+-- batch would then commit newer data with an older updatedAt, and clients
+-- keeping the newer updatedAt would keep the stale copy.
 INSERT INTO trips (
     id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at,
     duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm,
     harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count,
     fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s,
     accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score,
-    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app
+    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, updated_at
 ) VALUES (
     @id, @member_id, @client_trip_id, @vehicle_id::uuid, @state::text, @started_at::timestamptz,
     sqlc.narg(ended_at), @snapshot_at::timestamptz,
@@ -22,7 +29,8 @@ INSERT INTO trips (
     sqlc.narg(accel_time_s), sqlc.narg(eco_speed_time_s), sqlc.narg(over_speed_time_s),
     sqlc.narg(speed_bands), sqlc.narg(eco_score), sqlc.narg(safety_score),
     sqlc.narg(battery_max_v), sqlc.narg(battery_avg_v), sqlc.narg(coolant_max_c),
-    sqlc.narg(coolant_avg_c), sqlc.narg(dtc), @simulated::boolean, sqlc.narg(app)
+    sqlc.narg(coolant_avg_c), sqlc.narg(dtc), @simulated::boolean, sqlc.narg(app),
+    date_trunc('milliseconds', clock_timestamp())
 )
 ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
     vehicle_id            = EXCLUDED.vehicle_id,
@@ -58,7 +66,7 @@ ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
     dtc                   = EXCLUDED.dtc,
     simulated             = EXCLUDED.simulated,
     app                   = EXCLUDED.app,
-    updated_at            = now()
+    updated_at            = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond')
 WHERE trips.deleted_at IS NULL
   AND trips.state = 'in_progress'
   AND EXCLUDED.snapshot_at > trips.snapshot_at
@@ -169,7 +177,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
-    updated_at = now(),
+    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond'),
     deleted_at = now()
 WHERE member_id = @member_id AND id = @id AND deleted_at IS NULL
 RETURNING id, client_trip_id;
@@ -187,7 +195,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
-    updated_at = now(),
+    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond'),
     deleted_at = now()
 WHERE member_id = @member_id AND vehicle_id = @vehicle_id::uuid AND deleted_at IS NULL
 RETURNING id, client_trip_id;
@@ -217,7 +225,7 @@ SELECT member_id, max_deleted_at, max_writer_xid FROM per_member
 ON CONFLICT (member_id) DO UPDATE SET
     max_deleted_at = GREATEST(b.max_deleted_at, EXCLUDED.max_deleted_at),
     max_writer_xid = GREATEST(b.max_writer_xid, EXCLUDED.max_writer_xid),
-    updated_at     = now()
+    updated_at     = clock_timestamp()
 RETURNING member_id;
 
 -- name: ListDrivingDays :many
