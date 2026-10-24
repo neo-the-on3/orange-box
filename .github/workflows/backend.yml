@@ -21,6 +21,9 @@ concurrency:
 permissions:
   contents: read
 
+# Third-party actions are pinned by commit SHA (tag in the comment). Bump them
+# together, checking the release notes.
+
 jobs:
   go:
     name: Go vet, test, lint, vuln, build
@@ -30,13 +33,18 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
           cache: true
-          cache-dependency-path: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: generated code is up to date
+        run: |
+          go generate ./internal/api/...
+          git diff --exit-code -- internal/api || { echo "::error::internal/api is stale: run 'make generate' and commit"; exit 1; }
 
       - name: go vet
         run: go vet ./...
@@ -45,14 +53,14 @@ jobs:
         run: go test -race ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
           working-directory: backend
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: go build
@@ -66,26 +74,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The v2 spec arrives with PR #81; until then this job is a no-op.
       - name: Note missing spec
         if: hashFiles('docs/backend/openapi-v2.yaml') == ''
         run: echo "::notice::docs/backend/openapi-v2.yaml not found; skipping spec lint"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: hashFiles('docs/backend/openapi-v2.yaml') != ''
         with:
           node-version: lts/*
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: hashFiles('docs/backend/openapi-v2.yaml') != ''
         with:
           python-version: '3.13'
 
       - name: redocly lint
         if: hashFiles('docs/backend/openapi-v2.yaml') != ''
-        run: npx --yes @redocly/cli@2 lint docs/backend/openapi-v2.yaml
+        run: npx --yes @redocly/cli@2.71.0 lint docs/backend/openapi-v2.yaml
 
       - name: openapi-spec-validator
         if: hashFiles('docs/backend/openapi-v2.yaml') != ''
