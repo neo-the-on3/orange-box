@@ -35,11 +35,13 @@ func TestStorageErrorsAre503(t *testing.T) {
 		code       string
 		retryAfter string
 	}{
-		"lock_timeout":      {fmt.Errorf("get: %w", &pgconn.PgError{Code: "55P03"}), http.StatusServiceUnavailable, "server_busy", "1"},
-		"statement_timeout": {&pgconn.PgError{Code: "57014"}, http.StatusServiceUnavailable, "server_busy", "1"},
-		"deadline":          {fmt.Errorf("acquire: %w", context.DeadlineExceeded), http.StatusServiceUnavailable, "server_busy", "1"},
-		"unreachable":       {&pgconn.PgError{Code: "08006"}, http.StatusServiceUnavailable, "service_unavailable", "5"},
-		"other":             {errors.New("boom"), http.StatusInternalServerError, "internal_error", ""},
+		"lock_timeout":       {fmt.Errorf("get: %w", &pgconn.PgError{Code: "55P03"}), http.StatusServiceUnavailable, "server_busy", "1"},
+		"statement_timeout":  {&pgconn.PgError{Code: "57014"}, http.StatusServiceUnavailable, "server_busy", "1"},
+		"idle in tx timeout": {fmt.Errorf("upsert: %w", &pgconn.PgError{Code: "25P03"}), http.StatusServiceUnavailable, "server_busy", "1"},
+		"idle session":       {&pgconn.PgError{Code: "57P05"}, http.StatusServiceUnavailable, "server_busy", "1"},
+		"deadline":           {fmt.Errorf("acquire: %w", context.DeadlineExceeded), http.StatusServiceUnavailable, "server_busy", "1"},
+		"unreachable":        {&pgconn.PgError{Code: "08006"}, http.StatusServiceUnavailable, "service_unavailable", "5"},
+		"other":              {errors.New("boom"), http.StatusInternalServerError, "internal_error", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

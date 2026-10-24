@@ -23,6 +23,8 @@ func TestClassify(t *testing.T) {
 		"lock_timeout":       {&pgconn.PgError{Code: "55P03"}, store.FailureBusy},
 		"statement_timeout":  {fmt.Errorf("list: %w", &pgconn.PgError{Code: "57014"}), store.FailureBusy},
 		"deadlock":           {&pgconn.PgError{Code: "40P01"}, store.FailureBusy},
+		"idle in tx timeout": {fmt.Errorf("get trip: %w", &pgconn.PgError{Code: "25P03"}), store.FailureBusy},
+		"idle session":       {&pgconn.PgError{Code: "57P05"}, store.FailureBusy},
 		"deadline":           {fmt.Errorf("acquire: %w", context.DeadlineExceeded), store.FailureBusy},
 		"connection failure": {&pgconn.PgError{Code: "08006"}, store.FailureUnavailable},
 		"admin shutdown":     {&pgconn.PgError{Code: "57P01"}, store.FailureUnavailable},
@@ -33,6 +35,45 @@ func TestClassify(t *testing.T) {
 		if got := db.Classify(c.err); got != c.want {
 			t.Errorf("%s: Classify = %d, want %d", name, got, c.want)
 		}
+	}
+}
+
+// TestClassifyIdleTimeouts: the errors a real server gives after closing
+// an idle session, in a transaction or not, are busy (retryable).
+func TestClassifyIdleTimeouts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	for _, c := range []struct {
+		name, setting string
+		inTx          bool
+		code          string
+	}{
+		{"idle in transaction", "idle_in_transaction_session_timeout", true, "25P03"},
+		{"idle session", "idle_session_timeout", false, "57P05"},
+	} {
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Exec(ctx, "SET "+c.setting+" = '100ms'"); err != nil {
+			t.Fatal(err)
+		}
+		if c.inTx {
+			if _, err := conn.Exec(ctx, "BEGIN"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(400 * time.Millisecond)
+		_, err = conn.Exec(ctx, "SELECT 1")
+		var pg *pgconn.PgError
+		if !errors.As(err, &pg) || pg.Code != c.code {
+			t.Errorf("%s: %v, want SQLSTATE %s", c.name, err, c.code)
+		}
+		if got := db.Classify(err); got != store.FailureBusy {
+			t.Errorf("%s: %v → %d, want busy", c.name, err, got)
+		}
+		conn.Release()
 	}
 }
 
