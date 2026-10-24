@@ -59,7 +59,13 @@ class SimulatedElm327(private val controller: SimulatorController) {
             0x0D -> "%02X".format(if (s.engineOn) s.speedKph.coerceIn(0, 255) else 0)
             0x0F -> "%02X".format(INTAKE_C + 40)
             0x10 -> "%04X".format((m.mafGps * 100).toInt().coerceIn(0, 0xFFFF))
+            0x06 -> "%02X".format(STFT_BYTE)
+            0x07 -> "%02X".format(LTFT_BYTE)
+            0x0A -> "%02X".format(FUEL_PRESSURE_KPA / 3)
             0x11 -> "%02X".format(pctByte(s.throttlePercent.toDouble()))
+            0x14 -> "%02XFF".format(if (m.fuelCut) 0x0A else 0x5A) // 0.05 V lean in fuel cut, else 0.45 V
+            0x21 -> "%04X".format(if (s.milOn) MIL_DISTANCE_KM else 0)
+            0x49 -> "%02X".format(pctByte(s.throttlePercent.toDouble()))
             0x2F -> "%02X".format(pctByte(s.fuelPercent.toDouble()))
             0x33 -> "%02X".format(BARO_KPA)
             0x42 -> "%04X".format((voltage(s) * 1000).toInt())
@@ -90,10 +96,18 @@ class SimulatedElm327(private val controller: SimulatorController) {
 
     companion object {
         val BITMAP_BASES = setOf(0x00, 0x20, 0x40)
-        val SUPPORTED = sortedSetOf(0x01, 0x03, 0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2F, 0x33, 0x42, 0x46, 0x51, 0x5C)
+        val SUPPORTED = sortedSetOf(
+            0x01, 0x03, 0x04, 0x05, 0x06, 0x07, 0x0A, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x14, 0x21, 0x2F, 0x33,
+            0x42, 0x46, 0x49, 0x51, 0x5C,
+        )
         const val INTAKE_C = 30
         const val AMBIENT_C = 22
         const val BARO_KPA = 101
+        const val FUEL_PRESSURE_KPA = 300
+        const val MIL_DISTANCE_KM = 42
+        /** +1.6 % short-term, −3.1 % long-term trim. */
+        const val STFT_BYTE = 0x82
+        const val LTFT_BYTE = 0x7C
 
         private fun pctByte(p: Double) = (p * 255 / 100).toInt().coerceIn(0, 255)
 

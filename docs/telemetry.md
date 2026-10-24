@@ -6,7 +6,7 @@ comes from the legacy code. Source: `core:obd` (decoding, polling) and `core:tel
 
 ## 1. Decoding (mode 01)
 
-`ObdPid` decodes 45 PIDs. Data bytes are named A, B, C… in the order received.
+`ObdPid` decodes 46 PIDs. Data bytes are named A, B, C… in the order received.
 
 | PID | Name | Formula | Unit |
 |---|---|---|---|
@@ -22,6 +22,7 @@ comes from the legacy code. Source: `core:obd` (decoding, polling) and `core:tel
 | 0F | Intake air temperature | A − 40 | °C |
 | 10 | MAF | (256A + B)/100 | g/s |
 | 11 | Throttle position | A·100/255 | % |
+| 14 | O2 sensor bank 1 sensor 1 voltage | A/200 (B = short-term trim, unused) | V |
 | 1F | Run time since start | 256A + B | s |
 | 21 | Distance with MIL on | 256A + B | km |
 | 22 | Fuel rail pressure (rel.) | 0.079·(256A + B) | kPa |
@@ -66,8 +67,10 @@ from 01 01, A bit 7 / A & 0x7F.
 with 3 leading pad bytes. The VIN must be 17 characters from `A–H J–N P R–Z 0–9`. The ISO 3779 check digit
 (position 9) is reported as `checkDigitValid` but is not enforced, because it is only mandatory in North America.
 
-**Polling.** Fast PIDs are 0C, 0D, 10, 04, 11 and 5E, every 500 ms. Slow PIDs are 05, 2F, 42, 0F, 0B, 03, 46, 51
-and 5C, every 10th tick (5 s). A `VehicleSample` holds the latest value of each PID. Polling stops when the
+**Polling.** Fast PIDs are 0C, 0D, 10, 04, 11, 5E and 49 (accelerator pedal, for the Detailed Info grid), every
+500 ms. Slow PIDs are 05, 2F, 42, 0F, 0B, 03, 46, 51 and 5C, plus 33, 06, 07, 0A, 21 and 14 for the Detailed Info
+grid, every 10th tick (5 s). Slow ticks also read 01 01 (MIL + stored DTC count) when the car announces it; it lands
+in `VehicleSample.monitor`. A `VehicleSample` holds the latest value of each PID. Polling stops when the
 connection leaves Connected and restarts, with a fresh bitmap read, after reconnecting.
 
 ## 2. Derived metrics (`TelemetryEngine`)
@@ -133,6 +136,24 @@ In debug builds the Simulator's "App readout (debug)" card shows the trip's cumu
 | Coolant warning | ≥ 110 °C | 110 °C |
 | Battery warnings | < 11.8 V low, > 15.0 V over-voltage | 11.8 / 15.0 V |
 | Low fuel | < 10 % | 10 % |
+
+### Dashboard state (#99)
+
+`InstantTelemetry` also carries what the driving dashboard shows. `TelemetrySnapshot.values` passes the raw PIDs
+through for the Detailed Info grid.
+
+| Field | Rule | Default |
+|---|---|---|
+| `ecoLevel` | Only while moving (else 0). Petrol/LPG: engine load (PID 04) < 50 → 1, < 80 → 2, < 90 → 3, else 4. Diesel: boost = MAP − baro (PID 0B − 33, baro 101.3 kPa if missing) < 50 / < 80 / < 100 kPa. 0 without the PID | `ecoLoadThresholds` 50/80/90 %, `ecoBoostThresholdsKpa` 50/80/100 |
+| `coolantWarning` | coolant ≥ 100 °C (the dashboard lamp; `Warning.COOLANT_OVERHEAT` stays at 110 °C) | `coolantWarningC` |
+| `batteryWarning` | engine running (RPM > 0) and voltage outside 13.2–14.8 V | `chargingVoltsRange` |
+| `instantKmPerL` | fuel cut → 30 (full bar); below 5 km/h → 0; else speed / fuel flow, capped at 30; null without speed or flow | `instantKmPerLMax` |
+| `milOn`, `dtcCount` | PID 01 01 bit 7 and A & 0x7F; null if not read | – |
+| `TripTotals.economyKmPerL` | distance / litres once ≥ 0.1 km and some fuel is burned (the dashboard caps it at 99.9) | – |
+
+The panel glows are mapped in `core:dashboard-ui` (`DashboardStateMapper`): the RPM panel is green during fuel cut,
+else tinted by eco level (1 green, 2–3 yellow, 4 red); the speed panel is red during overspeed, else orange during a
+harsh accel/brake event (priority overspeed > harsh > none). Glows animate over 300 ms unless "Remove animations" is on.
 
 All thresholds live in `TelemetryConfig` and can be changed.
 

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dashboard_state_on">on</string>
+    <string name="dashboard_state_off">off</string>
+    <string name="dashboard_state_active">active</string>
+    <string name="dashboard_state_warning">warning</string>
+    <string name="dashboard_no_data">no data</string>
+    <string name="dashboard_not_supported">not supported</string>
+
+    <string name="dashboard_fuel_cut">Fuel-cut</string>
+    <string name="dashboard_overspeed">Overspeed</string>
+    <string name="dashboard_coolant">Coolant</string>
+    <string name="dashboard_battery">Battery</string>
+    <string name="dashboard_eco">Eco</string>
+    <string name="dashboard_accel">Accel.</string>
+    <string name="dashboard_brake">Brake</string>
+    <string name="dashboard_idling">Idling</string>
+    <string name="dashboard_mil">MIL</string>
+    <string name="dashboard_obd">OBD</string>
+    <string name="dashboard_fuel">Fuel</string>
+    <string name="dashboard_trip">Trip</string>
+
+    <string name="dashboard_unit_rpm">rpm</string>
+    <string name="dashboard_unit_kmh">km/h</string>
+    <string name="dashboard_unit_kml">km/L</string>
+    <string name="dashboard_unit_l">L</string>
+    <string name="dashboard_unit_km">km</string>
+
+    <string name="dashboard_spoken_rpm">Engine speed %1$s rpm</string>
+    <string name="dashboard_spoken_speed">Speed %1$s km/h</string>
+    <string name="dashboard_spoken_economy">Trip economy %1$s km/L, instant %2$s km/L</string>
+    <string name="dashboard_spoken_fuel_used">Fuel used %1$s L</string>
+    <string name="dashboard_spoken_trip">Trip %1$s km, %2$s</string>
+    <string name="dashboard_mil_dtcs">on, %1$d stored codes</string>
+
+    <string name="detail_accel_pedal">Accel Pedal Position</string>
+    <string name="detail_fuel_level">Fuel Level</string>
+    <string name="detail_baro">Baro Pressure</string>
+    <string name="detail_speed">Speed</string>
+    <string name="detail_rpm">RPM</string>
+    <string name="detail_engine_load">Engine Load</string>
+    <string name="detail_battery">Battery Voltage</string>
+    <string name="detail_coolant">Coolant Temp.</string>
+    <string name="detail_mil">MIL</string>
+    <string name="detail_st_fuel_trim">ST Fuel Trim</string>
+    <string name="detail_lt_fuel_trim">LT Fuel Trim</string>
+    <string name="detail_fuel_pressure">Fuel Pressure</string>
+    <string name="detail_intake_temp">Intake Air Temp.</string>
+    <string name="detail_ambient_temp">Ambient Air Temp.</string>
+    <string name="detail_throttle">Throttle Position</string>
+    <string name="detail_distance_mil">Distance w. MIL</string>
+    <string name="detail_oil_temp">Eng. Oil Temp.</string>
+    <string name="detail_o2">O2 Sensor Volt.</string>
+    <string name="detail_avg_economy">Avg. Fuel Eco.</string>
+    <string name="detail_fuel_used">Fuel Consump.</string>
+    <string name="detail_co2">CO2 Emission</string>
+    <string name="detail_fuel_cut_time">Fuelcut Time</string>
+    <string name="detail_harsh_accel">Harsh Accel. Count</string>
+    <string name="detail_harsh_brake">Harsh Brake Count</string>
+    <string name="detail_eco_time">Eco-speed Time</string>
+    <string name="detail_overspeed_time">Overspeed Time</string>
+    <string name="detail_idle_time">Idle Time</string>
+</resources>

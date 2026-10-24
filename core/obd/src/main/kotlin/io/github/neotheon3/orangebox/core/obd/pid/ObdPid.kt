@@ -26,6 +26,7 @@ enum class ObdPid(
     INTAKE_TEMP(0x0F, "Intake air temperature", "°C", 1, { it[0] - 40.0 }),
     MAF(0x10, "Mass air flow rate", "g/s", 2, { (256 * it[0] + it[1]) / 100.0 }),
     THROTTLE(0x11, "Throttle position", "%", 1, { pct(it[0]) }),
+    O2_B1S1_VOLTAGE(0x14, "O2 sensor bank 1 sensor 1 voltage", "V", 2, { it[0] / 200.0 }),
     RUN_TIME(0x1F, "Run time since engine start", "s", 2, { (256.0 * it[0] + it[1]) }),
     DISTANCE_WITH_MIL(0x21, "Distance traveled with MIL on", "km", 2, { 256.0 * it[0] + it[1] }),
     FUEL_RAIL_PRESSURE_REL(0x22, "Fuel rail pressure (relative to manifold)", "kPa", 2, { 0.079 * (256 * it[0] + it[1]) }),
