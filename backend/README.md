@@ -5,8 +5,8 @@ service is an optional sync and backup target.
 
 This folder is its own Go module (`github.com/neo-the-on3/orange-box/backend`)
 inside the Orange Box monorepo. It has its own CI workflow
-(`.github/workflows/backend.yml`) that runs only when `backend/**`,
-`docs/backend/**` or that workflow file changes.
+(`.github/workflows/backend.yml`), which runs only when started by hand; see
+[CI](#ci).
 
 ## Status
 
@@ -184,10 +184,36 @@ strict handlers.
 | `make generate`       | Regenerate `internal/api` from the spec                |
 | `make generate-check` | Fail if the committed generated code is stale          |
 | `make docker`         | `docker build -t orange-box-backend:dev .`             |
-| `make check`          | generate-check, vet, test, lint, vuln, build, and docker when a daemon is reachable |
+| `make ci`             | generate-check, vet, lint, vuln, test (`-race`), build: the Go checks CI runs |
+| `make check`          | `make ci` plus the docker build when a daemon is reachable |
 
 After changing the spec, run `make generate` and commit the result; CI fails
 if `internal/api` is stale.
+
+## CI
+
+To save GitHub Actions minutes, the Backend workflow has no `pull_request` or
+`push` triggers; it runs only through `workflow_dispatch`. Verify on your own
+machine while you work, and run CI once per PR, just before merge:
+
+1. Run `make ci` (or `make check`, which adds the image build) in `backend/`
+   until it passes.
+2. Rebase the branch onto the latest `main` and push it.
+3. Start the workflow on that branch and watch it:
+
+   ```sh
+   gh workflow run backend.yml --ref <branch>
+   gh run list --workflow backend.yml --branch <branch> --limit 1
+   gh run watch <run-id>
+   ```
+
+4. Merge (rebase merge) only when that run is green **and** Backend Tester has
+   signed off. If `main` moves before you merge, rebase and run it again.
+
+A newer run on the same branch cancels the one in progress
+(`concurrency: backend-<ref>`). The Go job times out after 15 minutes and the
+spec lint after 5. Go modules, the build cache and the golangci-lint cache are
+restored between runs.
 
 ## Container
 

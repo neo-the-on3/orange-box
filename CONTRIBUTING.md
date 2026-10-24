@@ -38,3 +38,10 @@ History from before this rule (up to PR #94) is left as it is.
 ```
 ./gradlew assembleDebug lintDebug testDebugUnitTest --max-workers=2
 ```
+
+## Backend CI (`backend/`)
+The Backend workflow (`.github/workflows/backend.yml`) runs only when started by hand, to save
+GitHub Actions minutes. Run `make ci` in `backend/` locally while you work; then, once per PR and just
+before merge, rebase the branch onto the latest `main`, push it and run
+`gh workflow run backend.yml --ref <branch>`. Merge only when that run is green and Backend Tester
+has signed off. Details: [`backend/README.md`](backend/README.md#ci).

@@ -59,8 +59,11 @@ docker: ## Build the container image
 docker-if-available: # Build the image when a Docker daemon is reachable
 	@if docker info >/dev/null 2>&1; then $(MAKE) docker; else echo "docker: no daemon reachable, skipping the image build (CI still builds it)"; fi
 
+.PHONY: ci
+ci: generate-check vet lint vuln test build ## Run the Go checks the Backend workflow runs (run this before asking for CI)
+
 .PHONY: check
-check: generate-check vet test lint vuln build docker-if-available ## Run every local check CI runs (docker only if available)
+check: ci docker-if-available ## make ci plus the container build (docker only if available)
 
 .PHONY: clean
 clean: ## Remove build output
