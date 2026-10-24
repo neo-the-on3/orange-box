@@ -160,9 +160,23 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 		upload := isUpload(route.Operation.OperationID)
 		var body []byte
 		if upload {
+			// Header parameters (Idempotency-Key) are checked before the
+			// upload claim, so a request missing its key gets 400, not 429.
+			if err := m.validateHeaders(r, route, pathParams); err != nil {
+				problem.Write(w, r, mapValidationError(err))
+				return
+			}
 			memberID, _ := reqctx.MemberID(r.Context())
 			release, p := m.uploads.acquire(r.Context(), memberID)
 			if p != nil {
+				// A retry of an upload that is still running holds the
+				// member's claim itself: answer the spec's 409
+				// idempotency_in_flight for it. 429 upload_in_progress
+				// is for a different upload.
+				if p.Code == problem.CodeUploadInProgress && m.idempotency != nil &&
+					acceptsIdempotencyKey(route.Operation) && m.idempotency.inFlight(r, route) {
+					p = idempotencyInFlight()
+				}
 				problem.Write(w, r, p)
 				return
 			}
@@ -260,6 +274,26 @@ const (
 	maxMultiErrorBody   = 8 << 10
 	maxMultiErrorValues = 1024
 )
+
+// validateHeaders validates the operation's header parameters only.
+func (m *openAPIMiddleware) validateHeaders(r *http.Request, route *routers.Route, pathParams map[string]string) error {
+	input := &openapi3filter.RequestValidationInput{
+		Request: r, PathParams: pathParams, Route: route,
+		Options: &openapi3filter.Options{
+			SkipSettingDefaults: true,
+			AuthenticationFunc:  func(context.Context, *openapi3filter.AuthenticationInput) error { return nil },
+		},
+	}
+	for _, p := range route.Operation.Parameters {
+		if p.Value == nil || p.Value.In != openapi3.ParameterInHeader {
+			continue
+		}
+		if err := openapi3filter.ValidateParameter(r.Context(), input, p.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // hasBody reports whether r may carry a body (it has one of unknown or
 // non-zero length).

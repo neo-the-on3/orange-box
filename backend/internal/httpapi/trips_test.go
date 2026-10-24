@@ -721,3 +721,75 @@ func TestTripsWithoutDatabase(t *testing.T) {
 		}
 	}
 }
+
+// TestTripUploadRetryInFlight: while an upload runs, a retry with its
+// Idempotency-Key gets the spec's 409 idempotency_in_flight, another upload
+// 429 upload_in_progress, and one without a key 400; afterwards the retry
+// replays.
+func TestTripUploadRetryInFlight(t *testing.T) {
+	t.Parallel()
+	e, pool := newDBTestEnvPool(t)
+	m := e.member("in-flight")
+	vehicle := m.vehicle()
+	ctx := t.Context()
+	// Hold the vehicle row so the upload blocks on its share lock.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM vehicles WHERE id = $1 FOR UPDATE`, vehicle); err != nil {
+		t.Fatal(err)
+	}
+	var holder int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	key := uuid.NewString()
+	body := batch(tripJSON(uuid.New(), vehicle, "in_progress", "2026-10-23T13:00:00Z", "2026-10-23T14:00:00Z"))
+	first := make(chan response, 1)
+	go func() {
+		first <- m.e.do(http.MethodPost, "/v1/trips/batch", strings.NewReader(body),
+			"Authorization", "Bearer "+m.token, "Content-Type", "application/json", "Idempotency-Key", key)
+	}()
+	// Wait until the upload is waiting on the lock (it has claimed the key).
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid)))`, holder).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the upload never waited on the vehicle lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	post := func(headers ...string) response {
+		return m.e.do(http.MethodPost, "/v1/trips/batch", strings.NewReader(body),
+			append([]string{"Authorization", "Bearer " + m.token, "Content-Type", "application/json"}, headers...)...)
+	}
+	if r := post("Idempotency-Key", key); r.status != http.StatusConflict || r.problemCode(t) != "idempotency_in_flight" || r.header.Get("Retry-After") == "" {
+		t.Errorf("retry in flight: %d %s", r.status, r.body)
+	}
+	if r := post("Idempotency-Key", uuid.NewString()); r.status != http.StatusTooManyRequests || r.problemCode(t) != "upload_in_progress" {
+		t.Errorf("another upload: %d %s", r.status, r.body)
+	}
+	if r := post(); r.status != http.StatusBadRequest {
+		t.Errorf("no Idempotency-Key: %d %s", r.status, r.body)
+	}
+	if r := post("Idempotency-Key", "not-a-uuid"); r.status != http.StatusBadRequest {
+		t.Errorf("bad Idempotency-Key: %d %s", r.status, r.body)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := <-first
+	if r.status != http.StatusOK || statuses(results(t, r)) != "created" {
+		t.Fatalf("first upload: %d %s", r.status, r.body)
+	}
+	if again := post("Idempotency-Key", key); again.status != http.StatusOK || !bytes.Equal(again.body, r.body) {
+		t.Fatalf("replay: %d %s", again.status, again.body)
+	}
+}
