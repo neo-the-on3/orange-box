@@ -28,6 +28,19 @@ class SimulatedElm327TransportTest {
         assertEquals(14.1, s.info!!.voltage!!, 0.0)
     }
 
+    @Test fun `delay connect holds the link open for the configured seconds`() = runTest {
+        val c = SimulatorController(SimulatorState(connectDelaySeconds = SimulatorState.CONNECT_DELAY_SECONDS))
+        val t = SimulatedElm327Transport(c)
+        val start = testScheduler.currentTime
+        t.open()
+        assertEquals(10_000L, testScheduler.currentTime - start)
+        assertTrue("Delay connect (10 s)" in c.state.value.activeFailures)
+        c.update { it.copy(connectDelaySeconds = 0) }
+        val again = testScheduler.currentTime
+        SimulatedElm327Transport(c).open()
+        assertEquals(again, testScheduler.currentTime)
+    }
+
     @Test fun `engine off reports 0 rpm and 12_4 V`() = runTest {
         val c = SimulatorController(SimulatorState(engineOn = false))
         val s = session(c)
