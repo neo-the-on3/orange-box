@@ -1,0 +1,64 @@
+// Package db is the Postgres storage layer: the goose migrations, the
+// connection pool, and stores built on the sqlc queries in package dbgen.
+//
+// Schema changes go in a new numbered file under migrations/ (never edit a
+// released one) and queries in queries/; `make generate` regenerates dbgen.
+package db
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Session defaults applied when DATABASE_URL does not set them. They bound
+// how long one statement or an idle transaction can hold the sync
+// watermark back (openapi-v2.yaml, Conventions → Incremental sync).
+var sessionDefaults = map[string]string{
+	"statement_timeout":                   "15s",
+	"idle_in_transaction_session_timeout": "15s",
+	"lock_timeout":                        "5s",
+	"application_name":                    "orange-box-backend",
+}
+
+// Options configures Open.
+type Options struct {
+	// URL is a libpq-style connection string or URL (DATABASE_URL).
+	URL string
+	// MaxConns caps the pool size; 0 keeps pgx's default.
+	MaxConns int
+}
+
+// Open connects a pool, applies the session defaults and pings the server.
+// It does not check the schema version; see CheckMigrated.
+func Open(ctx context.Context, opts Options) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(opts.URL)
+	if err != nil {
+		// The parse error may echo the URL, password included.
+		return nil, errors.New("DATABASE_URL is not a valid Postgres connection string")
+	}
+	for k, v := range sessionDefaults {
+		if _, ok := cfg.ConnConfig.RuntimeParams[k]; !ok {
+			cfg.ConnConfig.RuntimeParams[k] = v
+		}
+	}
+	if opts.MaxConns > 0 && opts.MaxConns <= math.MaxInt32 {
+		cfg.MaxConns = int32(opts.MaxConns)
+	}
+	cfg.MaxConnIdleTime = 5 * time.Minute
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open database pool: %w", err)
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := pool.Ping(pingCtx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+	return pool, nil
+}
