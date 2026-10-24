@@ -58,7 +58,11 @@ var errEmailFormat = errors.New("not an e-mail address")
 
 // validateEmailFormat accepts a bare addr-spec (no display name, no angle
 // brackets) with a dotted domain.
+//
+// Surrounding whitespace is ignored: the spec says addresses are trimmed
+// before use, and the handler normalises them.
 func validateEmailFormat(s string) error {
+	s = strings.TrimSpace(s)
 	a, err := mail.ParseAddress(s)
 	if err != nil || a.Name != "" || a.Address != s {
 		return errEmailFormat
@@ -77,18 +81,21 @@ type TokenVerifier interface {
 
 // openAPIMiddleware is the front door for every /v1 request. In order, it:
 //  1. finds the OpenAPI operation (404/405 problem otherwise);
-//  2. enforces Content-Encoding (gzip on upload operations only, else 415)
-//     and the body limits (413), inflating gzip bodies;
-//  3. authenticates operations that require bearerAuth (401) and puts the
-//     member id in the context;
-//  4. validates parameters and body against the spec (400/415/422).
+//  2. authenticates operations that require bearerAuth (401) and puts the
+//     member id in the context, before any body is read;
+//  3. for upload operations, takes one of a few processing slots (503 with
+//     Retry-After when none frees up in time);
+//  4. enforces Content-Encoding (gzip on upload operations only, else 415)
+//     and the body limits (413), stream-inflating gzip bodies;
+//  5. validates parameters and body against the spec (400/415/422).
 type openAPIMiddleware struct {
-	doc    *openapi3.T
-	router routers.Router
-	tokens TokenVerifier
+	doc     *openapi3.T
+	router  routers.Router
+	tokens  TokenVerifier
+	uploads *uploadLimiter
 }
 
-func newOpenAPIMiddleware(tokens TokenVerifier) (*openAPIMiddleware, error) {
+func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter) (*openAPIMiddleware, error) {
 	doc, err := api.GetSpec()
 	if err != nil {
 		return nil, fmt.Errorf("load embedded spec: %w", err)
@@ -100,7 +107,7 @@ func newOpenAPIMiddleware(tokens TokenVerifier) (*openAPIMiddleware, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build OpenAPI router: %w", err)
 	}
-	return &openAPIMiddleware{doc: doc, router: router, tokens: tokens}, nil
+	return &openAPIMiddleware{doc: doc, router: router, tokens: tokens, uploads: uploads}, nil
 }
 
 func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
@@ -115,13 +122,8 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			info.OperationID = route.Operation.OperationID
 		}
 
-		body, p := readBody(r, isUpload(route.Operation.OperationID))
-		if p != nil {
-			problem.Write(w, r, p)
-			return
-		}
-		setBody(r, body)
-
+		// Authenticate before touching the body, so an anonymous client can
+		// never make the server read, inflate or buffer anything.
 		if requiresBearer(m.doc, route.Operation) {
 			memberID, p := m.authenticate(r)
 			if p != nil {
@@ -130,6 +132,25 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			}
 			r = r.WithContext(reqctx.WithMemberID(r.Context(), memberID))
 		}
+
+		// Upload bodies can be up to 8 MiB in memory each, so only a few are
+		// processed at once; the slot is held until the handler returns.
+		upload := isUpload(route.Operation.OperationID)
+		if upload {
+			release, p := m.uploads.acquire(r.Context())
+			if p != nil {
+				problem.Write(w, r, p)
+				return
+			}
+			defer release()
+		}
+
+		body, p := readBody(r, upload)
+		if p != nil {
+			problem.Write(w, r, p)
+			return
+		}
+		setBody(r, body)
 
 		input := &openapi3filter.RequestValidationInput{
 			Request:    r,
@@ -225,8 +246,35 @@ func (m *openAPIMiddleware) authenticate(r *http.Request) (string, *problem.Prob
 	return memberID, nil
 }
 
+// errTooLarge is returned by limitReader once its limit is exceeded.
+var errTooLarge = errors.New("body too large")
+
+// limitReader reads at most n bytes from r and fails with errTooLarge as
+// soon as the input has more, so oversized input is never read in full.
+type limitReader struct {
+	r io.Reader
+	n int64 // bytes still allowed
+}
+
+func (l *limitReader) Read(p []byte) (int, error) {
+	if l.n < 0 {
+		return 0, errTooLarge
+	}
+	if int64(len(p)) > l.n+1 {
+		p = p[:l.n+1] // one extra byte detects overflow
+	}
+	n, err := l.r.Read(p)
+	l.n -= int64(n)
+	if l.n < 0 {
+		return n, errTooLarge
+	}
+	return n, err
+}
+
 // readBody enforces Content-Encoding and the size limits and returns the
-// (inflated) body. Only upload operations may send gzip.
+// (inflated) body. Only upload operations may send gzip. Gzip is inflated as
+// a stream straight from the connection: neither the compressed nor the
+// inflated input is ever read past its limit.
 func readBody(r *http.Request, upload bool) ([]byte, *problem.Problem) {
 	encoding := strings.TrimSpace(r.Header.Get("Content-Encoding"))
 	gzipped := false
@@ -254,31 +302,83 @@ func readBody(r *http.Request, upload bool) ([]byte, *problem.Problem) {
 	if r.Body == nil || r.Body == http.NoBody {
 		return nil, nil
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
-	if err != nil {
-		return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The request body could not be read.")
-	}
-	if int64(len(raw)) > limit {
-		return nil, tooLarge
-	}
-	if !gzipped {
-		return raw, nil
+
+	var src io.Reader = &limitReader{r: r.Body, n: limit}
+	if gzipped {
+		zr, err := gzip.NewReader(src)
+		if err != nil {
+			if errors.Is(err, errTooLarge) {
+				return nil, tooLarge
+			}
+			return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The gzip body is malformed.")
+		}
+		defer func() { _ = zr.Close() }()
+		src = &limitReader{r: zr, n: MaxUploadBody}
 	}
 
-	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	maxOut := limit
+	if gzipped {
+		maxOut = MaxUploadBody
+	}
+	hint := int64(0)
+	if !gzipped {
+		hint = r.ContentLength
+	}
+	body, err := readCapped(src, hint, maxOut+1)
 	if err != nil {
-		return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The gzip body is malformed.")
+		if errors.Is(err, errTooLarge) {
+			return nil, tooLarge
+		}
+		if gzipped {
+			return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The gzip body is malformed.")
+		}
+		return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The request body could not be read.")
 	}
-	defer func() { _ = zr.Close() }()
-	inflated, err := io.ReadAll(io.LimitReader(zr, MaxUploadBody+1))
-	if err != nil {
-		return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The gzip body is malformed.")
+	if gzipped {
+		r.Header.Del("Content-Encoding")
 	}
-	if len(inflated) > MaxUploadBody {
-		return nil, tooLarge
+	return body, nil
+}
+
+// readCapped reads src to EOF into a buffer that starts at hint (or 32 KiB)
+// and doubles, but never beyond maxCap-1 bytes (the body limit), so a body
+// at the limit costs about 2× the limit in allocations rather than
+// bytes.Buffer's 4×. More than maxCap-1 bytes is errTooLarge.
+func readCapped(src io.Reader, hint, maxCap int64) ([]byte, error) {
+	size := int64(32 << 10)
+	if hint > 0 {
+		size = hint + 1 // +1 so a body of exactly hint bytes sees EOF without growing
 	}
-	r.Header.Del("Content-Encoding")
-	return inflated, nil
+	b := make([]byte, 0, min(size, maxCap))
+	for {
+		if len(b) == cap(b) {
+			if int64(cap(b)) >= maxCap-1 {
+				// Full at the limit: probe for one more byte rather than
+				// reallocating the whole buffer to detect overflow.
+				var one [1]byte
+				n, err := io.ReadFull(src, one[:])
+				switch {
+				case n > 0 || errors.Is(err, errTooLarge):
+					return nil, errTooLarge
+				case errors.Is(err, io.EOF):
+					return b, nil
+				default:
+					return nil, err
+				}
+			}
+			nb := make([]byte, len(b), min(2*int64(cap(b)), maxCap))
+			copy(nb, b)
+			b = nb
+		}
+		n, err := src.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if errors.Is(err, io.EOF) {
+			return b, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 }
 
 func acceptEncoding(upload bool) string {

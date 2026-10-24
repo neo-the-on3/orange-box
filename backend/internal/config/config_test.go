@@ -17,7 +17,8 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Port != 8080 || c.AuthTestMode || c.JWTIssuer != "orange-box" ||
-		c.RequestTimeout != 30*time.Second || c.ShutdownTimeout != 8*time.Second {
+		c.RequestTimeout != 30*time.Second || c.ShutdownTimeout != 8*time.Second ||
+		c.UploadConcurrency != 4 || c.UploadQueueWait != 2*time.Second {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 }
@@ -109,6 +110,9 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"timeout":       {"ENV": "local", "REQUEST_TIMEOUT": "soon"},
 		"shutdown zero": {"ENV": "local", "SHUTDOWN_TIMEOUT": "0s"},
 		"log level":     {"ENV": "local", "LOG_LEVEL": "loud"},
+		"uploads zero":  {"ENV": "local", "UPLOAD_CONCURRENCY": "0"},
+		"uploads text":  {"ENV": "local", "UPLOAD_CONCURRENCY": "many"},
+		"queue wait":    {"ENV": "local", "UPLOAD_QUEUE_WAIT": "-1s"},
 	} {
 		if _, err := Load(env(e)); err == nil {
 			t.Errorf("%s: Load succeeded, want error", name)

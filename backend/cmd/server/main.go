@@ -91,7 +91,7 @@ func run(ctx context.Context, ln net.Listener, cfg config.Config, logger *slog.L
 	case <-ctx.Done():
 	}
 
-	logger.Info("shutting down", slog.Duration("timeout", cfg.ShutdownTimeout))
+	logger.Info("shutting down", slog.String("timeout", cfg.ShutdownTimeout.String()))
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -115,13 +115,15 @@ func newHandler(cfg config.Config, logger *slog.Logger) (http.Handler, error) {
 			slog.String("env", cfg.Env))
 	}
 	return httpapi.NewRouter(httpapi.Deps{
-		Logger:         logger,
-		Tokens:         tokens,
-		Members:        auth.NewMemoryMembers(), // Postgres store arrives with #105
-		Codes:          auth.NewPendingCodes(),
-		TestMode:       cfg.AuthTestMode,
-		TestCode:       cfg.AuthTestCode,
-		RequestTimeout: cfg.RequestTimeout,
+		Logger:            logger,
+		Tokens:            tokens,
+		Members:           auth.NewMemoryMembers(), // Postgres store arrives with #105
+		Codes:             auth.NewPendingCodes(),
+		TestMode:          cfg.AuthTestMode,
+		TestCode:          cfg.AuthTestCode,
+		RequestTimeout:    cfg.RequestTimeout,
+		UploadConcurrency: cfg.UploadConcurrency,
+		UploadQueueWait:   cfg.UploadQueueWait,
 	})
 }
 

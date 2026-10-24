@@ -55,6 +55,13 @@ Without `JWT_PRIVATE_KEY` the server generates a signing key at startup (only
 allowed when `ENV` is `local`, `ci` or `sandbox`), so tokens stop working when
 it restarts. Members are kept in memory until the database lands (#105).
 
+Test-mode guessing limits (all test addresses share one code): asking for a
+code again within `resendAfter` (60 s) keeps the pending one; 5 wrong codes
+lock an address for 10 minutes, and a new code doesn't reset that; after 100
+wrong codes across all addresses in 10 minutes, every verification gets
+`400 otp_locked` with `Retry-After`. Keep test-mode deployments private
+anyway until #114.
+
 The server logs JSON to stdout. SIGINT/SIGTERM drain in-flight requests for
 up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 
@@ -72,6 +79,8 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `REQUEST_TIMEOUT`  | `30s`        | Per-request context deadline. |
 | `SHUTDOWN_TIMEOUT` | `8s`         | Graceful shutdown budget (inside Docker's 10 s stop grace). |
 | `LOG_LEVEL`        | `info`       | `debug`, `info`, `warn` or `error`. |
+| `UPLOAD_CONCURRENCY` | `4`        | Upload bodies processed at once (1–256). |
+| `UPLOAD_QUEUE_WAIT`  | `2s`       | How long an upload waits for a slot before `503 uploads_busy`. |
 | `DATABASE_URL`     | none         | Postgres DSN (planned, #105). |
 
 Keep local values in a `.env` (git-ignored); never commit secrets. To make a
@@ -94,15 +103,25 @@ signing key: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256`.
 ### Request pipeline
 
 request id → access log → panic recovery → default headers → timeout →
-OpenAPI middleware (route lookup with 404/405, `Content-Encoding` and body
-limits, bearer auth, kin-openapi validation) → generated strict handlers.
+OpenAPI middleware (route lookup with 404/405, bearer auth, upload slots,
+`Content-Encoding` and body limits, kin-openapi validation) → generated
+strict handlers.
+
+- Bearer auth runs before any body byte is read, so unauthenticated
+  requests can't make the server buffer or inflate anything.
+- At most `UPLOAD_CONCURRENCY` upload bodies are read, inflated and
+  validated at once; a further upload waits up to `UPLOAD_QUEUE_WAIT`, then
+  gets `503` (`uploads_busy`) with `Retry-After`.
 
 - `X-Request-Id`: a client UUID is echoed, otherwise a UUIDv7 is generated.
   Every problem carries it as `requestId`.
 - `Content-Encoding: gzip` is accepted only on the three batch uploads
   (1 MiB compressed / 8 MiB inflated, `413` beyond); anything else is `415`
-  (`unsupported_encoding`). Other bodies are limited to 64 KiB.
-- Validation errors are `422` (`validation_failed`) with JSON pointers; bad
+  (`unsupported_encoding`). Gzip is inflated as a stream and abandoned as
+  soon as the inflated output passes 8 MiB. Other bodies are limited to
+  64 KiB.
+- Validation errors are `422` (`validation_failed`) with JSON pointers,
+  including integers sent as `415.0`, `1e3` or out of range; bad
   parameters, malformed JSON or a missing body are `400`; a wrong
   `Content-Type` is `415`. Messages are built from the schema and never echo
   submitted values.
@@ -124,7 +143,7 @@ limits, bearer auth, kin-openapi validation) → generated strict handlers.
 | `make generate`       | Regenerate `internal/api` from the spec                |
 | `make generate-check` | Fail if the committed generated code is stale          |
 | `make docker`         | `docker build -t orange-box-backend:dev .`             |
-| `make check`          | generate-check, vet, test, lint, vuln, build and docker |
+| `make check`          | generate-check, vet, test, lint, vuln, build, and docker when a daemon is reachable |
 
 After changing the spec, run `make generate` and commit the result; CI fails
 if `internal/api` is stale.

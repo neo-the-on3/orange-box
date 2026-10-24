@@ -40,11 +40,18 @@ func (s *syncBuffer) String() string {
 type testEnv struct {
 	t      *testing.T
 	srv    *httptest.Server
+	h      http.Handler
 	logs   *syncBuffer
 	tokens *auth.Tokens
 }
 
 func newTestEnv(t *testing.T, testMode bool) *testEnv {
+	t.Helper()
+	return newTestEnvWith(t, testMode, nil)
+}
+
+// newTestEnvWith lets a test adjust the router's Deps before it's built.
+func newTestEnvWith(t *testing.T, testMode bool, adjust func(*Deps)) *testEnv {
 	t.Helper()
 	key, kid, err := auth.GenerateDevKey()
 	if err != nil {
@@ -55,7 +62,7 @@ func newTestEnv(t *testing.T, testMode bool) *testEnv {
 		t.Fatal(err)
 	}
 	logs := &syncBuffer{}
-	h, err := NewRouter(Deps{
+	d := Deps{
 		Logger:         logging.New(logs, slog.LevelDebug),
 		Tokens:         tokens,
 		Members:        auth.NewMemoryMembers(),
@@ -63,13 +70,17 @@ func newTestEnv(t *testing.T, testMode bool) *testEnv {
 		TestMode:       testMode,
 		TestCode:       testCode,
 		RequestTimeout: 5 * time.Second,
-	})
+	}
+	if adjust != nil {
+		adjust(&d)
+	}
+	h, err := NewRouter(d)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return &testEnv{t: t, srv: srv, logs: logs, tokens: tokens}
+	return &testEnv{t: t, srv: srv, h: h, logs: logs, tokens: tokens}
 }
 
 type response struct {

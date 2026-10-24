@@ -66,12 +66,8 @@ func TestTestModeSignIn(t *testing.T) {
 	t.Parallel()
 	e := newTestEnv(t, true)
 
+	// Surrounding spaces are trimmed (the spec says so), not rejected.
 	r := e.postJSON("/v1/auth/otp", `{"email":"  Kiran@Test.OrangeBox.Invalid "}`)
-	// Leading/trailing spaces fail the email format before normalisation.
-	if r.status != http.StatusUnprocessableEntity {
-		t.Fatalf("spaced address: %d %s", r.status, r.body)
-	}
-	r = e.postJSON("/v1/auth/otp", `{"email":"Kiran@Test.OrangeBox.Invalid"}`)
 	if r.status != http.StatusAccepted || r.header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("otp: %d %v %s", r.status, r.header, r.body)
 	}
@@ -110,7 +106,8 @@ func TestTestModeSignIn(t *testing.T) {
 		t.Errorf("second sign-in member %q, want %q", again, memberID)
 	}
 
-	// Five wrong attempts invalidate the code.
+	// Five wrong attempts invalidate the code, and a fresh request doesn't
+	// reset the count: the shared code still can't be used.
 	e.postJSON("/v1/auth/otp", `{"email":"x@test.orangebox.invalid"}`)
 	var last response
 	for range 5 {
@@ -118,6 +115,22 @@ func TestTestModeSignIn(t *testing.T) {
 	}
 	if last.problemCode(t) != "otp_attempts_exceeded" {
 		t.Errorf("5th wrong attempt: %s", last.body)
+	}
+	e.postJSON("/v1/auth/otp", `{"email":"x@test.orangebox.invalid"}`)
+	r = e.postJSON("/v1/auth/token", `{"grantType":"email_otp","email":"x@test.orangebox.invalid","code":"`+testCode+`"}`)
+	if r.problemCode(t) != "otp_attempts_exceeded" {
+		t.Errorf("right code after lockout and resend: %d %s", r.status, r.body)
+	}
+
+	// Asking again within resendAfter keeps the pending code and says how
+	// long to wait.
+	e.postJSON("/v1/auth/otp", `{"email":"wait@test.orangebox.invalid"}`)
+	r = e.postJSON("/v1/auth/otp", `{"email":"wait@test.orangebox.invalid"}`)
+	if r.status != http.StatusAccepted {
+		t.Fatalf("early resend: %d %s", r.status, r.body)
+	}
+	if ra := r.json(t)["resendAfter"].(float64); ra < 1 || ra > 60 {
+		t.Errorf("early resend resendAfter = %v", ra)
 	}
 
 	// Non-test addresses: no e-mail yet.
@@ -382,5 +395,31 @@ func TestValidationPointersAndInstance(t *testing.T) {
 	errs, _ := m["errors"].([]any)
 	if len(errs) != 1 || errs[0].(map[string]any)["pointer"] != "/clientTripId" || errs[0].(map[string]any)["detail"] != "must be a valid uuid" {
 		t.Errorf("errors = %v", errs)
+	}
+}
+
+// JSON Schema accepts 415.0 and 1e3 as integers but Go can't decode them
+// into an int; out-of-range values neither. All three are a 422 pointing at
+// the field, never an opaque 400, and the value isn't echoed.
+func TestIntegerAsFloatIs422(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t, true)
+	token, _ := e.signIn("num@test.orangebox.invalid")
+	vid := uuid.NewString()
+	for _, n := range []string{"415.0", "1e3", "1e30"} {
+		body := `{"stored":[],"pending":[],"permanent":[],"clientReportId":"` + uuid.NewString() +
+			`","kind":"read","readAt":"2000-01-01T00:00:00Z","mil":false,"vin":"00000000000000000","odometerKm":` + n + `}`
+		r := e.postJSON("/v1/vehicles/"+vid+"/dtc-reports", body, "Authorization", "Bearer "+token, "Idempotency-Key", uuid.NewString())
+		if r.status != http.StatusUnprocessableEntity || r.problemCode(t) != "validation_failed" {
+			t.Errorf("%s: %d %s", n, r.status, r.body)
+			continue
+		}
+		errs, _ := r.json(t)["errors"].([]any)
+		if len(errs) != 1 || errs[0].(map[string]any)["pointer"] != "/odometerKm" {
+			t.Errorf("%s: errors = %v", n, errs)
+		}
+		if strings.Contains(string(r.body), n) {
+			t.Errorf("%s: value echoed: %s", n, r.body)
+		}
 	}
 }

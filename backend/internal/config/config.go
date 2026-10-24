@@ -42,6 +42,10 @@ type Config struct {
 	// ShutdownTimeout bounds graceful shutdown (SHUTDOWN_TIMEOUT, default 8s,
 	// inside Docker's default 10s stop grace period).
 	ShutdownTimeout time.Duration
+	// UploadConcurrency caps upload bodies processed at once (UPLOAD_CONCURRENCY, default 4).
+	UploadConcurrency int
+	// UploadQueueWait is how long an upload waits for a slot before 503 (UPLOAD_QUEUE_WAIT, default 2s).
+	UploadQueueWait time.Duration
 	// LogLevel is the minimum log level (LOG_LEVEL: debug, info, warn, error).
 	LogLevel slog.Level
 }
@@ -95,6 +99,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.ShutdownTimeout, err = duration(getenv, "SHUTDOWN_TIMEOUT", 8*time.Second); err != nil {
 		errs = append(errs, err)
+	}
+	if c.UploadQueueWait, err = duration(getenv, "UPLOAD_QUEUE_WAIT", 2*time.Second); err != nil {
+		errs = append(errs, err)
+	}
+	c.UploadConcurrency, err = strconv.Atoi(orDefault(getenv("UPLOAD_CONCURRENCY"), "4"))
+	if err != nil || c.UploadConcurrency < 1 || c.UploadConcurrency > 256 {
+		errs = append(errs, errors.New("UPLOAD_CONCURRENCY must be a number from 1 to 256"))
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))
