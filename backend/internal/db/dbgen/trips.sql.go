@@ -542,6 +542,43 @@ func (q *Queries) ListTripsByVehicle(ctx context.Context, arg ListTripsByVehicle
 	return items, nil
 }
 
+const lockLiveVehiclesForShare = `-- name: LockLiveVehiclesForShare :many
+SELECT id FROM vehicles
+WHERE member_id = $1 AND id = ANY ($2::uuid[]) AND deleted_at IS NULL
+ORDER BY id
+FOR SHARE
+`
+
+type LockLiveVehiclesForShareParams struct {
+	MemberID uuid.UUID
+	Ids      []uuid.UUID
+}
+
+// Taken by a trip batch before it writes: returns which of ids are the
+// member's live vehicles and share-locks them, in id order, so a vehicle
+// delete (which locks the row FOR UPDATE, then tombstones its trips) waits
+// for the batch, or the batch waits for the delete and then finds the
+// vehicle gone. Trips can't be written for a vehicle being deleted.
+func (q *Queries) LockLiveVehiclesForShare(ctx context.Context, arg LockLiveVehiclesForShareParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, lockLiveVehiclesForShare, arg.MemberID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockTripForTelemetry = `-- name: LockTripForTelemetry :one
 SELECT id, deleted_at FROM trips
 WHERE member_id = $1 AND client_trip_id = $2

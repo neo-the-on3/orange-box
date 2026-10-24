@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
@@ -124,4 +125,96 @@ type TripPage struct {
 type TripDeletionPage struct {
 	Deletions []TripDeletion
 	Snapshot  *SyncPoint
+}
+
+// HistoryPos is a position in history order (startedAt desc, id desc); a
+// page continues strictly after it.
+type HistoryPos struct {
+	StartedAt time.Time
+	ID        uuid.UUID
+}
+
+// TripHistoryQuery asks for one page of GET /v1/trips without since.
+type TripHistoryQuery struct {
+	VehicleID *uuid.UUID
+	// From (inclusive) and To (exclusive) bound startedAt.
+	From, To *time.Time
+	// Snapshot asks for a SyncPoint taken with the page's snapshot (the
+	// first page of an unfiltered walk, which ends with nextSince).
+	Snapshot bool
+	After    *HistoryPos
+	Limit    int
+}
+
+// TripRef names a trip by server id or by client trip id (exactly one).
+type TripRef struct {
+	ID       *uuid.UUID
+	ClientID *uuid.UUID
+}
+
+// TripUpload is one item of a trip batch.
+type TripUpload struct {
+	ClientTripID uuid.UUID
+	TripFields
+}
+
+// UpsertOutcome says what happened to one uploaded trip.
+type UpsertOutcome int
+
+const (
+	// TripCreated means a new trip was stored.
+	TripCreated UpsertOutcome = iota + 1
+	// TripUpdated means a newer in_progress snapshot replaced the stored one.
+	TripUpdated
+	// TripUnchanged means the snapshot was not newer, or the trip is
+	// completed (immutable).
+	TripUnchanged
+	// TripDeleted means the member deleted this clientTripId and its
+	// tombstone is still kept; nothing was stored.
+	TripDeleted
+	// TripVehicleNotFound means vehicleId is not one of the member's live
+	// vehicles; nothing was stored.
+	TripVehicleNotFound
+)
+
+// UpsertResult is the outcome for one uploaded trip; ID is the server id
+// for created, updated and unchanged.
+type UpsertResult struct {
+	Outcome UpsertOutcome
+	ID      uuid.UUID
+}
+
+// DrivingDay is a local calendar day with trips.
+type DrivingDay struct {
+	// Date is midnight UTC of the day.
+	Date  time.Time
+	Count int
+}
+
+// Trips stores the members' trips. Every method is scoped to member, and
+// only live rows (deleted_at IS NULL) are read or changed, except that
+// UpsertTrips and the deletion walk look at tombstones.
+type Trips interface {
+	// UpsertTrips stores a batch in one transaction and returns one
+	// result per item, in order. A trip is keyed by (member,
+	// clientTripId); an existing one is replaced only while it is
+	// in_progress and by a newer snapshotAt.
+	UpsertTrips(ctx context.Context, member uuid.UUID, items []TripUpload) ([]UpsertResult, error)
+	// GetTrip returns a live trip or ErrNotFound.
+	GetTrip(ctx context.Context, member uuid.UUID, ref TripRef) (Trip, error)
+	// DeleteTrip tombstones a live trip and deletes its telemetry, or
+	// returns ErrNotFound. It returns the object-storage keys of the
+	// deleted telemetry, which the caller must remove.
+	DeleteTrip(ctx context.Context, member uuid.UUID, ref TripRef) ([]string, error)
+	// ListTripHistory returns a page in startedAt desc, id desc order.
+	ListTripHistory(ctx context.Context, member uuid.UUID, q TripHistoryQuery) (TripPage, error)
+	// ListTripChanges returns a page of a sync walk, or
+	// ErrSyncWindowExpired.
+	ListTripChanges(ctx context.Context, member uuid.UUID, q TripChangesQuery) (TripPage, error)
+	// ListTripDeletions returns a page of tombstones, or
+	// ErrSyncWindowExpired.
+	ListTripDeletions(ctx context.Context, member uuid.UUID, q TripDeletionsQuery) (TripDeletionPage, error)
+	// DrivingDays counts trips per local day (in loc) for trips starting
+	// in [from, before).
+	DrivingDays(ctx context.Context, member uuid.UUID, from, before time.Time, tz string, vehicle *uuid.UUID) ([]DrivingDay, error)
 }
