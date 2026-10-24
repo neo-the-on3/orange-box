@@ -9,6 +9,7 @@
     <string name="trips_month_summary">%1$s · %2$s km · %3$s</string>
     <string name="trips_distance_km">%1$s km</string>
     <string name="trips_economy_kml">%1$s km/L</string>
+    <string name="trips_eco_time">eco %1$s</string>
     <string name="trips_recording">Recording</string>
     <plurals name="trips_count">
         <item quantity="one">%d trip</item>
