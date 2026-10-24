@@ -3,6 +3,9 @@ package io.github.neotheon3.orangebox.feature.trips
 import io.github.neotheon3.orangebox.core.database.TripEntity
 import io.github.neotheon3.orangebox.core.database.TripEventEntity
 import io.github.neotheon3.orangebox.core.database.TripSampleEntity
+import io.github.neotheon3.orangebox.feature.trips.charts.SeriesPoint
+import io.github.neotheon3.orangebox.feature.trips.charts.SpeedZones
+import io.github.neotheon3.orangebox.feature.trips.charts.TripSeries
 import io.github.neotheon3.orangebox.feature.trips.map.GeoPoint
 import java.time.Instant
 import java.time.LocalDateTime
@@ -54,6 +57,10 @@ data class TripDetail(
     val fuelCuts: List<TripEventItem>,
     /** (seconds since the trip start, km/h) at about 1 Hz, for the charts. */
     val speedSeries: List<Pair<Double, Double>>,
+    /** Seconds per speed zone (#45). */
+    val speedZones: SpeedZones = SpeedZones(TripSeries.SPEED_ZONE_BOUNDS, List(TripSeries.SPEED_ZONE_BOUNDS.size + 2) { 0.0 }),
+    /** km/L per minute (#45). */
+    val economySeries: List<SeriesPoint> = emptyList(),
 ) {
     val hasRoute: Boolean get() = route.size >= 2
 }
@@ -106,6 +113,8 @@ object TripDetails {
             events = items.filter { it.type != TripEventType.FUEL_CUT },
             fuelCuts = items.filter { it.type == TripEventType.FUEL_CUT },
             speedSeries = sorted.mapNotNull { s -> s.speedKph?.let { (s.timestampMillis - trip.startedAtMillis) / 1000.0 to it } },
+            speedZones = TripSeries.speedZones(sorted),
+            economySeries = TripSeries.economy(sorted, trip.startedAtMillis),
         )
     }
 }

@@ -55,4 +55,12 @@
     <string name="event_harsh_brake">Harsh braking</string>
     <string name="event_overspeed">Overspeed</string>
     <string name="event_fuel_cut">Fuel cut</string>
+    <string name="chart_speed_zones_title">Speed zones</string>
+    <string name="chart_zone_stopped">Stopped</string>
+    <string name="chart_zone_description">%1$s km/h: %2$s, %3$d percent</string>
+    <string name="chart_speed_title">Speed</string>
+    <string name="chart_economy_title">Economy</string>
+    <string name="chart_unit_kph">km/h</string>
+    <string name="chart_unit_kml">km/L</string>
+    <string name="chart_line_description">%1$s chart, peak %2$s %3$s</string>
 </resources>
