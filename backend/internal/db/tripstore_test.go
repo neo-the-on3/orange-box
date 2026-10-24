@@ -506,29 +506,35 @@ func TestTripUpdatedAtMonotonic(t *testing.T) {
 		t.Fatalf("write of an older transaction committed last: updatedAt %v, the earlier commit's %v", got, newer)
 	}
 
-	// Writes within one millisecond still move it forward.
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var last time.Time
+	// Back-to-back transactions within one millisecond still move it
+	// forward, by at least 1 ms each.
+	last := updatedAt()
 	for i := range 5 {
-		row, err := dbgen.New(tx).UpsertTrip(ctx, tripParams(member, vehicle, a, "in_progress", t0.Add(time.Duration(3+i)*time.Minute)))
-		if err != nil {
+		if _, err := q.UpsertTrip(ctx, tripParams(member, vehicle, a, "in_progress", t0.Add(time.Duration(3+i)*time.Minute))); err != nil {
 			t.Fatal(err)
 		}
-		var u time.Time
-		if err := tx.QueryRow(ctx, `SELECT updated_at FROM trips WHERE id = $1`, row.ID).Scan(&u); err != nil {
-			t.Fatal(err)
-		}
-		if i > 0 && u.Sub(last) < time.Millisecond {
-			t.Fatalf("write %d: updatedAt %v, previous %v", i, u, last)
+		u := updatedAt()
+		if u.Sub(last) < time.Millisecond {
+			t.Fatalf("transaction %d: updatedAt %v, previous %v", i, u, last)
 		}
 		last = u
 	}
-	if err := tx.Commit(ctx); err != nil {
+
+	// Repeats of one trip in a single batch (one transaction) move it
+	// forward once and never ahead of the clock.
+	var batch []store.TripUpload
+	for i := range 200 {
+		batch = append(batch, upload(a, vehicle, "in_progress", t0.Add(time.Duration(10+i)*time.Minute)))
+	}
+	if _, err := trips.UpsertTrips(ctx, member, batch); err != nil {
 		t.Fatal(err)
+	}
+	var clock time.Time
+	if err := pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&clock); err != nil {
+		t.Fatal(err)
+	}
+	if u := updatedAt(); !u.After(last) || u.After(clock) {
+		t.Fatalf("after 200 repeats in a batch: updatedAt %v, previous %v, clock %v", u, last, clock)
 	}
 
 	// So does a delete from an old transaction.
@@ -542,7 +548,7 @@ func TestTripUpdatedAtMonotonic(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if _, err := trips.UpsertTrips(ctx, member, []store.TripUpload{upload(a, vehicle, "in_progress", t0.Add(time.Hour))}); err != nil {
+	if _, err := trips.UpsertTrips(ctx, member, []store.TripUpload{upload(a, vehicle, "in_progress", t0.Add(24*time.Hour))}); err != nil {
 		t.Fatal(err)
 	}
 	after := updatedAt()

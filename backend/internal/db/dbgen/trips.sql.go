@@ -739,7 +739,8 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
-    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond'),
+    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()),
+        trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END),
     deleted_at = now()
 WHERE member_id = $1 AND id = $2 AND deleted_at IS NULL
 RETURNING id, client_trip_id
@@ -775,7 +776,8 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
-    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond'),
+    updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()),
+        trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END),
     deleted_at = now()
 WHERE member_id = $1 AND vehicle_id = $2::uuid AND deleted_at IS NULL
 RETURNING id, client_trip_id
@@ -869,7 +871,8 @@ ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
     dtc                   = EXCLUDED.dtc,
     simulated             = EXCLUDED.simulated,
     app                   = EXCLUDED.app,
-    updated_at            = GREATEST(date_trunc('milliseconds', clock_timestamp()), trips.updated_at + interval '1 millisecond')
+    updated_at            = GREATEST(date_trunc('milliseconds', clock_timestamp()),
+        trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END)
 WHERE trips.deleted_at IS NULL
   AND trips.state = 'in_progress'
   AND EXCLUDED.snapshot_at > trips.snapshot_at
@@ -927,8 +930,11 @@ type UpsertTripRow struct {
 // for a new trip.
 //
 // updated_at (here and in the tombstone queries) is the wall clock when the
-// row is written, at millisecond precision like the API, and always at
-// least 1 ms after the row's previous updated_at. now() would be the
+// row is written, at millisecond precision like the API, and at least 1 ms
+// after the updated_at of the previous transaction that wrote the row (a
+// repeat write in the same transaction, e.g. a clientTripId repeated in a
+// batch, only keeps it from going back, so repeats can't push it ahead of
+// the clock; nobody saw the intermediate value). now() would be the
 // transaction's start: a batch that waited on the row lock behind a later
 // batch would then commit newer data with an older updatedAt, and clients
 // keeping the newer updatedAt would keep the stale copy.
