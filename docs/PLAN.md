@@ -11,7 +11,7 @@ Approach: a **clean-room re-implementation** of CarooLive's OBD-II features. No 
 | minSdk / target | **minSdk 24** (Android Tester's API 25 armeabi-v7a emulator must install it), compile/target 36. Pure Kotlin, **no native libs of our own** (AndroidX ships tiny `libandroidx.graphics.path.so` / `libdatastore_shared_counter.so` for all ABIs incl. armeabi-v7a). Behaviours for API 26+ (notification channels, FGS start), 31+ (BLUETOOTH_CONNECT/SCAN, exact alarms), 33+ (POST_NOTIFICATIONS) and 34+ (FGS types) are version-gated |
 | Dashcam | **Dropped entirely** (no camera, recording, video list/player, impact-triggered clips, YouTube) |
 | Google services | **None** (Kiran, 2026-10-24): no Play Services / `com.google.android.gms`, no Firebase, no Google Maps, no Google sign-in. Location via `android.location.LocationManager`. AndroidX, Material, Hilt/Dagger and Compose are fine |
-| Maps | Keyless: osmdroid or MapLibre (decided when the trip-detail milestone starts) |
+| Maps | Keyless: **MapCompose** (pure Compose, no native libs) + OSM raster tiles under the OSMF tile policy; route always drawn locally. See `docs/adr/0001-keyless-map-library.md` |
 | DI | Hilt |
 | Sign-in | Not in the offline app. M9 (Remote backend) uses **email + OTP**; no Google or social sign-in |
 | Dropped from v1 | Floating overlay, call hang-up, silent crash call/SMS, push (GCM/FingerPush), social login, YouTube upload, server web pages |
