@@ -30,16 +30,22 @@ import kotlin.random.Random
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SlowDevicePlaybackTest {
-    private data class Result(val trip: TripTotals, val wallS: Double, val ecoSamples: Int)
+    private data class Result(val trip: TripTotals, val wallS: Double, val ecoSamples: Int, val brakePeaks: List<Double> = emptyList())
 
-    private suspend fun TestScope.play(script: DriveScript, seed: Int, coastS: Int = 0): Result {
+    private suspend fun TestScope.play(
+        script: DriveScript, seed: Int, coastS: Int = 0,
+        /** Player refresh period; a slow device overruns it (the #142 runs effectively had ~250 ms). */
+        playerTickMillis: Long = 100,
+        /** Time per PID read, as on a real link: later PIDs of a tick are read after the SPEED timestamp. */
+        perPidMillis: Long = 0,
+    ): Result {
         val wall = { (testScheduler.currentTime * LAG).toLong() }
         val controller = SimulatorController()
         val transport = SimulatedElm327Transport(controller).also { it.open() }
         val session = Elm327Session(transport).also { it.initialize() }
         val pids = session.readSupportedPids().filter(PollingConfig().fast + PollingConfig().slow)
         val engine = TelemetryEngine()
-        val player = DriveScriptPlayer(controller, backgroundScope, clock = wall)
+        val player = DriveScriptPlayer(controller, backgroundScope, tickMillis = playerTickMillis, clock = wall)
         val rnd = Random(seed)
         player.start(script)
         runCurrent()
@@ -47,17 +53,26 @@ class SlowDevicePlaybackTest {
         var trip = TripTotals()
         var settledAt: Long? = null
         var ecoSamples = 0
+        val brakePeaks = mutableListOf<Double>()
+        var peak = 0.0
         while (true) {
-            val values = pids.mapNotNull { p -> session.read(p)?.let { p to it } }.toMap()
-            val snap = engine.onSample(VehicleSample(wall(), values))
+            val stamp = wall()
+            val values = LinkedHashMap<io.github.neotheon3.orangebox.core.obd.pid.ObdPid, Double>()
+            for (p in pids) {
+                session.read(p)?.let { values[p] = it }
+                if (perPidMillis > 0) { advanceTimeBy(perPidMillis); runCurrent() }
+            }
+            val snap = engine.onSample(VehicleSample(stamp, values))
             if (snap.instant.eco) ecoSamples++
+            if (snap.instant.harshBrake) peak = maxOf(peak, -(snap.instant.accelMps2 ?: 0.0))
+            else if (peak > 0) { brakePeaks += peak; peak = 0.0 }
             trip = snap.trip
             val done = controller.state.value.runningScript == null
             if (done && settledAt == null) settledAt = wall()
             if (settledAt != null && wall() - settledAt >= coastS * 1000L) break
             advanceTimeBy(rnd.nextLong(500, 1101)); runCurrent()
         }
-        return Result(trip, (settledAt!! - startWall) / 1000.0, ecoSamples)
+        return Result(trip, (settledAt!! - startWall) / 1000.0, ecoSamples, brakePeaks)
     }
 
     @Test fun `script plays in wall time on a slow device`() = runTest {
@@ -91,6 +106,24 @@ class SlowDevicePlaybackTest {
             // The 2 m/s² coast itself is never eco. Only the first sample of the coast can be: its 1 s
             // window still half covers the 100 km/h cruise, and below 92 km/h the RPM is under 2500.
             assertTrue("seed $seed samples=${r.ecoSamples} eco=${r.trip.ecoS}", r.ecoSamples <= 1 && r.trip.ecoS <= 1.1 * LAG)
+        }
+    }
+
+    /**
+     * #142: with the player refreshing the simulator state only every (overrunning) tick, the dongle answered
+     * with a value up to a tick old while the sample carried the read time. That biased City eco low
+     * (mean ≈ 89 s, down to 81 s) and pushed a Harsh brake peak to +20 %. The dongle now evaluates the script
+     * at the read itself, so a slow player tick changes nothing.
+     */
+    @Test fun `a slow player tick and per-PID read time neither bias eco nor inflate harsh peaks`() = runTest {
+        val city = (1..30).map { play(DriveScript.CITY, it, playerTickMillis = 250, perPidMillis = 10).trip.ecoS }
+        assertTrue("city eco $city", city.all { it in 86.0..96.0 })
+        assertEquals("city eco mean", 91.0, city.average(), 1.5)
+        for (seed in 1..30) {
+            val r = play(DriveScript.HARSH, seed, playerTickMillis = 250, perPidMillis = 10)
+            assertEquals(2, r.trip.harshBrakeCount)
+            // Nominal 5.56 m/s²; the documented on-device bound is +15 %.
+            assertTrue("seed $seed brake peaks ${r.brakePeaks}", r.brakePeaks.all { it <= 5.56 * 1.15 })
         }
     }
 
