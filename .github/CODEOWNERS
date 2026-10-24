@@ -1,0 +1,6 @@
+# Code owners. Only the backend paths are assigned here; every other path
+# keeps the default review rules. Note: the Android and backend agents both
+# work through the neo-the-on3 account, so ownership is per path, not per person.
+/backend/                       @neo-the-on3
+/docs/backend/                  @neo-the-on3
+/.github/workflows/backend.yml  @neo-the-on3
