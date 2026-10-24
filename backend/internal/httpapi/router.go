@@ -18,6 +18,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
+	"github.com/neo-the-on3/orange-box/backend/internal/synctoken"
 )
 
 // Deps are the router's collaborators.
@@ -61,6 +62,12 @@ type Deps struct {
 	// Idempotency stores Idempotency-Keys. Nil (no database) means the
 	// header is validated but not acted on.
 	Idempotency store.Idempotency
+	// Trips stores trips. Nil (no database) makes the trip operations
+	// answer 501.
+	Trips store.Trips
+	// SyncTokenKey signs sync tokens and trip cursors (SYNC_TOKEN_KEY).
+	// Nil generates an ephemeral key: tokens then expire on restart.
+	SyncTokenKey []byte
 	// ClassifyError sorts storage errors (db.Classify) so a busy or
 	// unreachable database answers 503 instead of 500 (#178).
 	ClassifyError func(error) store.Failure
@@ -102,6 +109,13 @@ func NewRouter(d Deps) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	if d.SyncTokenKey == nil {
+		d.SyncTokenKey = synctoken.GenerateKey()
+	}
+	syncCodec, err := synctoken.New(d.SyncTokenKey)
+	if err != nil {
+		return nil, err
+	}
 	srv := &Server{
 		apiVersion: spec.Info.Version,
 		tokens:     d.Tokens,
@@ -113,6 +127,8 @@ func NewRouter(d Deps) (http.Handler, error) {
 		ready:      d.Ready,
 		logger:     d.Logger,
 		vehicles:   d.Vehicles,
+		trips:      d.Trips,
+		sync:       syncCodec,
 	}
 	errs := errorHandlers{logger: d.Logger, classify: d.ClassifyError}
 	strict := api.NewStrictHandlerWithOptions(srv, nil, api.StrictHTTPServerOptions{

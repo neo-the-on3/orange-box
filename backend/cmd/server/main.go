@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	_ "time/tzdata" // /v1/trips/days takes an IANA tz; don't depend on the image's zoneinfo
 
 	"github.com/neo-the-on3/orange-box/backend/internal/auth"
 	"github.com/neo-the-on3/orange-box/backend/internal/config"
@@ -120,6 +121,7 @@ func run(ctx context.Context, ln net.Listener, cfg config.Config, logger *slog.L
 type store struct {
 	members     auth.MemberStore
 	vehicles    storage.Vehicles            // nil without a database
+	trips       *db.Trips                   // nil without a database
 	idempotency storage.Idempotency         // nil without a database
 	classify    func(error) storage.Failure // nil without a database
 	ready       func(context.Context) error // nil when there is nothing to check
@@ -130,7 +132,7 @@ type store struct {
 // (config.Load requires it outside dev environments), in-memory otherwise.
 func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (store, error) {
 	if cfg.DatabaseURL == "" {
-		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle operations answer 501")
+		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle and trip operations answer 501")
 		return store{members: auth.NewMemoryMembers(), close: func() {}}, nil
 	}
 	pool, err := db.Open(ctx, db.Options{URL: cfg.DatabaseURL, MaxConns: cfg.DBMaxConns})
@@ -155,8 +157,14 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		pool.Close()
 		return store{}, err
 	}
+	trips, err := db.NewTrips(ctx, pool, cfg.SyncDeploymentID)
+	if err != nil {
+		pool.Close()
+		return store{}, err
+	}
 	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
 	return store{
+		trips:       trips,
 		members:     db.NewMembers(pool),
 		vehicles:    db.NewVehicles(pool),
 		idempotency: db.NewIdempotency(pool),
@@ -171,6 +179,10 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 	if err != nil {
 		return nil, err
 	}
+	if cfg.SyncTokenKey == nil {
+		// config.Load only allows this in local, ci and sandbox.
+		logger.Warn("SYNC_TOKEN_KEY not set: using an ephemeral key; sync tokens expire on restart")
+	}
 	if cfg.AuthTestMode {
 		logger.Warn("AUTH_TEST_MODE is on: @test.orangebox.invalid addresses sign in with the static test code",
 			slog.String("env", cfg.Env))
@@ -180,6 +192,8 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		Tokens:              tokens,
 		Members:             st.members,
 		Vehicles:            st.vehicles,
+		Trips:               tripStore(st.trips),
+		SyncTokenKey:        cfg.SyncTokenKey,
 		Idempotency:         st.idempotency,
 		ClassifyError:       st.classify,
 		Ready:               st.ready,
@@ -194,6 +208,14 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		AnonBodyConcurrency: cfg.AnonBodyConcurrency,
 		AnonReadConcurrency: cfg.AnonReadConcurrency,
 	})
+}
+
+// tripStore keeps a nil *db.Trips a nil interface.
+func tripStore(t *db.Trips) storage.Trips {
+	if t == nil {
+		return nil
+	}
+	return t
 }
 
 func newTokens(cfg config.Config, logger *slog.Logger) (*auth.Tokens, error) {

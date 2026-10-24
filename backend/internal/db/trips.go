@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db/dbgen"
@@ -481,6 +482,10 @@ func (s *Trips) DrivingDays(ctx context.Context, member uuid.UUID, from, before 
 	rows, err := s.q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{
 		Tz: tz, MemberID: member, StartedFrom: from, StartedBefore: before, VehicleID: vehicle,
 	})
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "22023" { // invalid_parameter_value: time zone not recognized
+		return nil, store.ErrInvalidTimeZone
+	}
 	if err != nil {
 		return nil, err
 	}

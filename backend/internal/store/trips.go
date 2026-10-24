@@ -14,6 +14,9 @@ import (
 // it might still need has been purged. The client does a full resync.
 var ErrSyncWindowExpired = errors.New("store: sync window expired")
 
+// ErrInvalidTimeZone means the database doesn't know a time zone name.
+var ErrInvalidTimeZone = errors.New("store: unknown time zone")
+
 // SyncPoint is what a sync token carries (openapi-v2.yaml, Conventions →
 // Incremental sync).
 type SyncPoint struct {
