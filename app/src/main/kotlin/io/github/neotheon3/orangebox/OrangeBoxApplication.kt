@@ -18,6 +18,7 @@ class OrangeBoxApplication : Application() {
     @Inject lateinit var dongleLinkEvents: DongleLinkEvents
     @Inject lateinit var backendConfig: BackendConfigRepository
     @Inject @ApplicationScope lateinit var appScope: CoroutineScope
+    @Inject lateinit var drivingController: io.github.neotheon3.orangebox.driving.DrivingController
 
     override fun onCreate() {
         AndroidLogSink.install(debug = BuildConfig.DEBUG)
@@ -25,6 +26,8 @@ class OrangeBoxApplication : Application() {
         OrangeLog.i(OrangeLog.Areas.APP, "start", "version" to BuildConfig.VERSION_NAME, "sdk" to android.os.Build.VERSION.SDK_INT)
         // Bluetooth ACL connect/disconnect for the selected dongle feeds the same bus as the Simulator buttons.
         AclLinkReceiver(dongleLinkEvents).register(this)
+        // Dongle connect -> driving service + trip recording (M4).
+        drivingController.install(this)
         appScope.launch {
             backendConfig.config.map { it.mode }.distinctUntilChanged().collect {
                 OrangeLog.i(OrangeLog.Areas.BACKEND, "mode", "mode" to it.wireName)

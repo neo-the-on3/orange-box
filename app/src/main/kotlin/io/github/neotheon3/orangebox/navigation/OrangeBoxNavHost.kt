@@ -38,7 +38,13 @@ import io.github.neotheon3.orangebox.feature.setup.setupScreens
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
-fun OrangeBoxNavHost(debugEntries: DebugEntries, showOnboarding: Boolean, driveSession: DriveSession) {
+fun OrangeBoxNavHost(
+    debugEntries: DebugEntries,
+    showOnboarding: Boolean,
+    driveSession: DriveSession,
+    /** Count of "open the dashboard" requests (notification taps); each new value opens it once. */
+    openDashboardRequests: Int = 0,
+) {
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     // Chosen once: finishing onboarding navigates to Home and drops Onboarding from the back stack.
@@ -70,6 +76,10 @@ fun OrangeBoxNavHost(debugEntries: DebugEntries, showOnboarding: Boolean, driveS
                 onOpenPermissions = { navController.navigate(PermissionsDestination) { launchSingleTop = true } },
             )
             with(debugEntries) { registerDestinations(navController) }
+        }
+        LaunchedEffect(openDashboardRequests) {
+            // Not during onboarding: the notice and permissions come first.
+            if (openDashboardRequests > 0 && !showOnboarding) navController.openDashboard()
         }
         EndDriveSnackbar(driveSession, snackbar, onUndo = { navController.openDashboard() })
         SnackbarHost(

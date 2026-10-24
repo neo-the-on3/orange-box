@@ -105,6 +105,11 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
 
     private data class Pending(val t: Long, val speed: Double?, val flow: Double?, val instant: InstantTelemetry)
 
+    /** Starts new [TripTotals] (a new recorded trip) and keeps the instant state and event detectors. */
+    fun resetTrip() {
+        trip = emptyTrip()
+    }
+
     fun reset() {
         last = null
         lastSnapshot = null
