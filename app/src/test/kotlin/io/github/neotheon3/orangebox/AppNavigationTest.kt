@@ -57,6 +57,19 @@ class AppNavigationTest {
         compose.onNodeWithTag("permissions_screen").assertIsDisplayed()
     }
 
+    @Test fun `a driving notification tap opens the dashboard and back returns home`() {
+        walkOnboarding()
+        compose.activityRule.scenario.onActivity {
+            it.handleOpenDashboard(
+                android.content.Intent(it, MainActivity::class.java)
+                    .putExtra(io.github.neotheon3.orangebox.driving.DrivingNotifications.EXTRA_OPEN_DASHBOARD, true),
+            )
+        }
+        compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasTestTag("dashboard_end_driving")).fetchSemanticsNodes().isNotEmpty() }
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTextCount("Backend: Off") > 0 }
+    }
+
     @Test fun `home opens settings and back`() {
         walkOnboarding()
         compose.onNodeWithText("Backend: Off").assertIsDisplayed()

@@ -20,10 +20,12 @@ object DatabaseModule {
             .build()
 
     @Provides fun provideVehicleDao(db: OrangeBoxDatabase): VehicleDao = db.vehicleDao()
+    @Provides fun provideTripDao(db: OrangeBoxDatabase): TripDao = db.tripDao()
 }
 
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class VehicleRepositoryModule {
     @Binds abstract fun bindVehicleRepository(impl: RoomVehicleRepository): VehicleRepository
+    @Binds abstract fun bindTripRepository(impl: RoomTripRepository): TripRepository
 }

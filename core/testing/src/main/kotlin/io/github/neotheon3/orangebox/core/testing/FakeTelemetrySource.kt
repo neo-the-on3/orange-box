@@ -6,4 +6,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 class FakeTelemetrySource(initial: TelemetrySnapshot? = null) : TelemetrySource {
     override val latest = MutableStateFlow(initial)
+    var resetTripCalls = 0
+        private set
+
+    override fun resetTrip() { resetTripCalls++ }
 }

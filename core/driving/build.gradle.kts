@@ -9,7 +9,10 @@ android {
 
 dependencies {
     api(project(":core:obd"))
+    api(project(":core:telemetry"))
+    api(project(":core:database"))
     implementation(project(":core:common"))
+    implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(project(":core:testing"))

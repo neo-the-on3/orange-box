@@ -50,5 +50,6 @@ object OrangeLog {
         const val BACKEND = "Backend"
         const val TELEMETRY = "Telemetry"
         const val APP = "App"
+        const val TRIP = "Trip"
     }
 }

@@ -25,6 +25,17 @@ class MigrationTest {
         }
     }
 
+    @Test fun `1 to 2 keeps vehicles and adds the trip tables`() {
+        helper.createDatabase(DB, 1).use { db ->
+            db.execSQL("INSERT INTO vehicles (name, maker, model, fuel, displacementCc, odometerKm, createdAtMillis) VALUES ('A', NULL, NULL, 'PETROL', 1200, 10, 1)")
+        }
+        helper.runMigrationsAndValidate(DB, 2, true).use { db ->
+            db.query("SELECT COUNT(*) FROM vehicles").use { c -> c.moveToFirst(); assertEquals(1, c.getInt(0)) }
+            db.execSQL("INSERT INTO trips (vehicleId, startedAtMillis, lastSampleAtMillis, durationS, distanceKm, fuelLitres, co2Grams, idleS, fuelCutS, ecoS, overspeedS, harshAccelCount, harshBrakeCount, overspeedCount, maxSpeedKph) VALUES (1, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)")
+            db.query("SELECT COUNT(*) FROM trips").use { c -> c.moveToFirst(); assertEquals(1, c.getInt(0)) }
+        }
+    }
+
     @Test fun `all migrations reach the current version`() {
         helper.createDatabase(DB, 1).close()
         helper.runMigrationsAndValidate(DB, OrangeBoxDatabase.VERSION, true, *Migrations.ALL).close()

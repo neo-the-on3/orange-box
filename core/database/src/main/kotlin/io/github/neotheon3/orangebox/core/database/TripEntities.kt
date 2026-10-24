@@ -1,0 +1,70 @@
+package io.github.neotheon3.orangebox.core.database
+
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+/**
+ * One recorded drive. [endedAtMillis] is null while recording; the summary columns are checkpointed
+ * every few seconds, so a trip left open by process death keeps its last checkpoint and is closed by
+ * [TripDao.closeOrphans] with [endReason] `process_death`.
+ */
+@Entity(tableName = "trips", indices = [Index("startedAtMillis")])
+data class TripEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val vehicleId: Long?,
+    val startedAtMillis: Long,
+    val endedAtMillis: Long? = null,
+    /** Timestamp of the last sample written; the end time for orphans. */
+    val lastSampleAtMillis: Long,
+    /** engine_off, disconnected, user, process_death. */
+    val endReason: String? = null,
+    val durationS: Double = 0.0,
+    val distanceKm: Double = 0.0,
+    val fuelLitres: Double = 0.0,
+    val co2Grams: Double = 0.0,
+    val idleS: Double = 0.0,
+    val fuelCutS: Double = 0.0,
+    val ecoS: Double = 0.0,
+    val overspeedS: Double = 0.0,
+    val harshAccelCount: Int = 0,
+    val harshBrakeCount: Int = 0,
+    val overspeedCount: Int = 0,
+    val maxSpeedKph: Double = 0.0,
+)
+
+/** About one per second while recording. Location columns are null without a fix or permission. */
+@Entity(
+    tableName = "trip_samples",
+    foreignKeys = [ForeignKey(entity = TripEntity::class, parentColumns = ["id"], childColumns = ["tripId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("tripId", "timestampMillis")],
+)
+data class TripSampleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val tripId: Long,
+    val timestampMillis: Long,
+    val speedKph: Double?,
+    val rpm: Double?,
+    val fuelFlowLph: Double?,
+    val coolantC: Double?,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val accuracyM: Float? = null,
+)
+
+/** Driving events: harsh_accel, harsh_brake, overspeed, fuel_cut. */
+@Entity(
+    tableName = "trip_events",
+    foreignKeys = [ForeignKey(entity = TripEntity::class, parentColumns = ["id"], childColumns = ["tripId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("tripId", "timestampMillis")],
+)
+data class TripEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val tripId: Long,
+    val timestampMillis: Long,
+    val type: String,
+    val value: Double? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+)

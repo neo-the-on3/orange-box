@@ -2,4 +2,16 @@
     <string name="app_name">Orange Box</string>
     <string name="drive_ended">Drive ended</string>
     <string name="drive_ended_undo">Undo</string>
+
+    <string name="channel_driving">Driving</string>
+    <string name="channel_driving_desc">Shown while the OBD dongle is connected and a trip is recording.</string>
+    <string name="channel_drive_start">Start driving</string>
+    <string name="channel_drive_start_desc">When the dongle connects while Orange Box is not on screen.</string>
+    <string name="notif_connected_title">OBD dongle connected</string>
+    <string name="notif_connected_text">A trip starts recording when the engine runs.</string>
+    <string name="notif_recording_title">Recording trip</string>
+    <string name="notif_recording_text">%1$s km · %2$s</string>
+    <string name="notif_start_driving">Start driving</string>
+    <string name="notif_drive_start_title">Your car is connected</string>
+    <string name="notif_drive_start_text">Tap to open the driving dashboard.</string>
 </resources>
