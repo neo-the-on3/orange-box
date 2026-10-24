@@ -44,6 +44,8 @@ fun OrangeBoxNavHost(
     driveSession: DriveSession,
     /** Count of "open the dashboard" requests (notification taps); each new value opens it once. */
     openDashboardRequests: Int = 0,
+    /** A request arrived during onboarding and was not followed (undo any lock-screen flags). */
+    onDashboardRequestIgnored: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
@@ -79,7 +81,9 @@ fun OrangeBoxNavHost(
         }
         LaunchedEffect(openDashboardRequests) {
             // Not during onboarding: the notice and permissions come first.
-            if (openDashboardRequests > 0 && !showOnboarding) navController.openDashboard()
+            if (openDashboardRequests > 0) {
+                if (showOnboarding) onDashboardRequestIgnored() else navController.openDashboard()
+            }
         }
         EndDriveSnackbar(driveSession, snackbar, onUndo = { navController.openDashboard() })
         SnackbarHost(

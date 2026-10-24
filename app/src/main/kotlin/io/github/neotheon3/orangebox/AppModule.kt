@@ -8,6 +8,7 @@ import io.github.neotheon3.orangebox.core.common.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Singleton
 
@@ -44,10 +45,12 @@ object TelemetryModule {
         connection: io.github.neotheon3.orangebox.core.obd.ObdConnection,
         poller: io.github.neotheon3.orangebox.core.obd.pid.PidPoller,
         vehicles: io.github.neotheon3.orangebox.core.database.VehicleRepository,
+        prefs: io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository,
     ): io.github.neotheon3.orangebox.core.telemetry.TelemetrySource =
         io.github.neotheon3.orangebox.core.telemetry.LiveTelemetry(
             scope, connection, poller,
             vehicle = vehicles.activeVehicle.map { it?.let(VehicleProfiles::of) },
+            overspeedKph = prefs.preferences.map { it.dashboard.overspeedKph.toDouble() }.distinctUntilChanged(),
         )
 }
 

@@ -155,6 +155,7 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val accel = windowedAccel(t, speed)
         val newAccel = harshAccelEvent.update(t, accel)
         val newBrake = harshBrakeEvent.update(t, accel?.let { -it })
+        applyOverspeedThreshold()
         val newOverspeed = overspeedEvent.update(t, speed)
         val load = sample[ObdPid.THROTTLE] ?: sample[ObdPid.ENGINE_LOAD]
         val status = sample[ObdPid.FUEL_SYSTEM_STATUS]?.toInt()
@@ -247,6 +248,17 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
     }
 
     private var reportedFuelType: FuelType? = null
+
+    /**
+     * Overspeed threshold, km/h (Settings; [TelemetryConfig.overspeedKph] by default). Overspeed starts above it
+     * and ends below it − [TelemetryConfig.overspeedHysteresisKph]. Applied from the next sample.
+     */
+    @Volatile var overspeedKph: Double = config.overspeedKph
+
+    private fun applyOverspeedThreshold() {
+        val kph = overspeedKph
+        if (overspeedEvent.startAt != kph + 1e-9) overspeedEvent.setThresholds(kph + 1e-9, kph - config.overspeedHysteresisKph)
+    }
 
     /** The user's vehicle (M3 setup). The car's own PID 51 report still wins for fuel type. */
     @Volatile var vehicle: VehicleProfile? = null

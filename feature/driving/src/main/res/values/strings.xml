@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="dashboard_emergency">Emergency</string>
+    <string name="dashboard_quick_launch">Open %1$s</string>
     <string name="dashboard_diagnostics">Diagnostics</string>
     <string name="dashboard_detailed_info">Detailed Info.</string>
     <string name="dashboard_detail_shown">detail grid shown</string>

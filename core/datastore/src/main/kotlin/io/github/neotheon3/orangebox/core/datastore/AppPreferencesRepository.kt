@@ -4,10 +4,13 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import io.github.neotheon3.orangebox.core.model.AppPreferences
+import io.github.neotheon3.orangebox.core.model.DashboardButton
+import io.github.neotheon3.orangebox.core.model.DashboardPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -24,6 +27,8 @@ interface AppPreferencesRepository {
     suspend fun markPermissionsAsked(permissions: Collection<String>)
     /** Remembers the onboarding step in progress; null clears it. */
     suspend fun setOnboardingStep(step: String?)
+    /** Stores the dashboard settings (overspeed clamped, invalid emergency numbers dropped to the default). */
+    suspend fun setDashboard(dashboard: DashboardPreferences)
 }
 
 @Singleton
@@ -38,6 +43,13 @@ class DataStoreAppPreferencesRepository @Inject constructor(
             activeVehicleId = p[VEHICLE],
             askedPermissions = p[ASKED].orEmpty(),
             onboardingStep = p[ONBOARDING_STEP],
+            dashboard = DashboardPreferences(
+                button = DashboardButton.entries.firstOrNull { it.name == p[DASH_BUTTON] } ?: DashboardButton.HAZARD,
+                emergencyNumber = p[DASH_EMERGENCY],
+                quickLaunchPackage = p[DASH_LAUNCH],
+                overspeedKph = DashboardPreferences.clampOverspeed(p[DASH_OVERSPEED] ?: DashboardPreferences.DEFAULT_OVERSPEED_KPH),
+                autoShowDashboard = p[DASH_AUTO_SHOW] ?: false,
+            ),
         )
     }.distinctUntilChanged()
 
@@ -56,7 +68,23 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         dataStore.edit { if (step == null) it.remove(ONBOARDING_STEP) else it[ONBOARDING_STEP] = step }
     }
 
+    override suspend fun setDashboard(dashboard: DashboardPreferences) {
+        dataStore.edit {
+            it[DASH_BUTTON] = dashboard.button.name
+            val number = dashboard.emergencyNumber?.trim()?.takeIf(DashboardPreferences::isValidEmergencyNumber)
+            if (number == null) it.remove(DASH_EMERGENCY) else it[DASH_EMERGENCY] = number
+            if (dashboard.quickLaunchPackage == null) it.remove(DASH_LAUNCH) else it[DASH_LAUNCH] = dashboard.quickLaunchPackage!!
+            it[DASH_OVERSPEED] = DashboardPreferences.clampOverspeed(dashboard.overspeedKph)
+            it[DASH_AUTO_SHOW] = dashboard.autoShowDashboard
+        }
+    }
+
     internal companion object {
+        val DASH_BUTTON = stringPreferencesKey("dashboard_button")
+        val DASH_EMERGENCY = stringPreferencesKey("dashboard_emergency_number")
+        val DASH_LAUNCH = stringPreferencesKey("dashboard_quick_launch_package")
+        val DASH_OVERSPEED = intPreferencesKey("dashboard_overspeed_kph")
+        val DASH_AUTO_SHOW = booleanPreferencesKey("dashboard_auto_show")
         val ONBOARDING_STEP = stringPreferencesKey("onboarding_step")
         val ONBOARDING = booleanPreferencesKey("onboarding_complete")
         val DISCLAIMER = booleanPreferencesKey("disclaimer_accepted")

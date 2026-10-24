@@ -14,4 +14,5 @@
     <string name="notif_start_driving">Start driving</string>
     <string name="notif_drive_start_title">Your car is connected</string>
     <string name="notif_drive_start_text">Tap to open the driving dashboard.</string>
+    <string name="notif_allow_full_screen">Allow full screen</string>
 </resources>

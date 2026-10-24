@@ -110,7 +110,7 @@ ignored.
 value or a short gap can't split one sustained event:
 - an event starts when the value reaches its threshold, and no sooner than `eventRearmMillis` (2 s) after the previous event of that kind ended;
 - a harsh event ends only after |accel| stays below `harshReleaseFraction` (50 %) of its threshold for `eventReleaseHoldMillis` (1 s);
-- overspeed ends below `overspeedKph − overspeedHysteresisKph` (117 km/h); overspeed time counts while the event is active;
+- overspeed ends below `overspeedKph − overspeedHysteresisKph` (threshold − 3, so 117 km/h at the default 120); overspeed time counts while the event is active;
 - missing values and gaps of up to 5 s hold the state, and a longer gap (signal lost) ends it.
 
 Start and end are logged under `OrangeBox/Telemetry` (`harsh_accel_start`, `harsh_accel_end` with its duration, peak and the value it ended at (for `overspeed_end`, the speed), and the same for `harsh_brake` and `overspeed`).
@@ -129,7 +129,7 @@ In debug builds the Simulator's "App readout (debug)" card shows the trip's cumu
 | Idling | stationary and RPM > 0 | – |
 | Fuel cut | speed ≥ 20 km/h, RPM ≥ 1000, and throttle (or load) ≤ 8 %; with no throttle/load, PID 03 = 0x04 | 20 km/h, 1000 rpm, 8 % |
 | Eco | moving, RPM ≤ 2500 and abs(accel) ≤ 1.5 m/s² | 2500 rpm, 1.5 m/s² |
-| Overspeed | speed > 120 km/h; ends below 117 km/h (hysteresis) | 120 km/h, 3 km/h |
+| Overspeed | speed > threshold; ends below threshold − 3 km/h (hysteresis) | Settings → Driving dashboard, 40–200 km/h in 5 km/h steps, default 120; hysteresis 3 km/h |
 | Harsh acceleration | accel ≥ 3.0 m/s² (≈ 0.31 g), counted once per event | 3.0 m/s² |
 | Harsh braking | −accel ≥ 3.5 m/s² (≈ 0.36 g), counted once per event | 3.5 m/s² |
 | Speed zones | stationary, ≤30, ≤60, ≤90, ≤120, >120 km/h | `speedZones` |
@@ -155,7 +155,11 @@ The panel glows are mapped in `core:dashboard-ui` (`DashboardStateMapper`): the 
 else tinted by eco level (1 green, 2–3 yellow, 4 red); the speed panel is red during overspeed, else orange during a
 harsh accel/brake event (priority overspeed > harsh > none). Glows animate over 300 ms unless "Remove animations" is on.
 
-All thresholds live in `TelemetryConfig` and can be changed.
+All thresholds live in `TelemetryConfig` and can be changed. The overspeed threshold is also a user setting
+(`DashboardPreferences.overspeedKph`, Settings → Driving dashboard → Overspeed warning): `LiveTelemetry` feeds it to
+`TelemetryEngine.overspeedKph`, which retunes `EventDetector` (start above N, end below N − 3) before the next sample.
+A change during an active event keeps the event until speed drops below the new release point. The dashboard's red
+speed glow follows the same event, so it uses the setting too. The golden drive numbers below use the default 120 km/h.
 
 ## 3. Scripted drives (debug Simulator)
 

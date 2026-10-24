@@ -56,9 +56,16 @@ const val DETAIL_TRANSITION_MILLIS = 500
 @Composable
 fun DashboardRoute(onEndDriving: () -> Unit, onBack: () -> Unit, viewModel: DashboardViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val controls by viewModel.controls.collectAsStateWithLifecycle()
     KeepScreenOn()
+    ShowWhenLocked(controls.showWhenLocked)
     BackHandler(onBack = onBack)
-    DashboardScreen(state, onEndDriving = { viewModel.endDriving(); onEndDriving() })
+    DashboardScreen(
+        state,
+        onEndDriving = { viewModel.endDriving(); onEndDriving() },
+        leftButton = controls.leftButton,
+        onQuickLaunch = viewModel::quickLaunch,
+    )
 }
 
 @Composable
@@ -84,6 +91,8 @@ fun DashboardScreen(
     modifier: Modifier = Modifier,
     initialShowDetail: Boolean = false,
     settings: DashboardSettings = DashboardSettings(reduceMotion = rememberReduceMotion()),
+    leftButton: LeftButton = LeftButton.Hazard(EMERGENCY_NUMBER),
+    onQuickLaunch: (String) -> Unit = {},
 ) {
     var showDetail by rememberSaveable { mutableStateOf(initialShowDetail) }
     var dialog by rememberSaveable { mutableStateOf<DashboardDialog?>(null) }
@@ -100,11 +109,16 @@ fun DashboardScreen(
                         onEmergency = { dialog = DashboardDialog.EMERGENCY },
                         onDiagnostics = { dialog = DashboardDialog.DIAGNOSTICS },
                         onEndDriving = onEndDriving,
+                        leftButton = leftButton,
+                        onQuickLaunch = onQuickLaunch,
                     )
                 }
             }
             when (dialog) {
-                DashboardDialog.EMERGENCY -> EmergencyPromptDialog(onDismiss = { dialog = null })
+                DashboardDialog.EMERGENCY -> EmergencyPromptDialog(
+                    onDismiss = { dialog = null },
+                    number = (leftButton as? LeftButton.Hazard)?.number ?: EMERGENCY_NUMBER,
+                )
                 DashboardDialog.DIAGNOSTICS -> DiagnosticsStubDialog(state, onDismiss = { dialog = null })
                 null -> Unit
             }

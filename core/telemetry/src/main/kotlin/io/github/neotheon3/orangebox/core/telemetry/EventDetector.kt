@@ -13,14 +13,26 @@ import java.util.Locale
  */
 internal class EventDetector(
     private val name: String,
-    private val startAt: Double,
-    private val releaseBelow: Double,
+    startAt: Double,
+    releaseBelow: Double,
     private val releaseHoldMillis: Long,
     private val rearmMillis: Long,
     private val unit: String,
     /** Extra key the end line repeats the last value under, e.g. `speed_kmh` for overspeed. */
     private val endValueKey: String? = null,
 ) {
+    /** Thresholds; change them with [setThresholds] (an event in progress keeps running until it releases). */
+    var startAt: Double = startAt
+        private set
+    var releaseBelow: Double = releaseBelow
+        private set
+
+    fun setThresholds(startAt: Double, releaseBelow: Double) {
+        require(releaseBelow <= startAt) { "releaseBelow must not exceed startAt" }
+        this.startAt = startAt
+        this.releaseBelow = releaseBelow
+    }
+
     var active = false
         private set
     private var startedAt = 0L

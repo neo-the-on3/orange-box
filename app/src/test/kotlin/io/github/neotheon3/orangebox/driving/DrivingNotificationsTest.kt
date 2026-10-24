@@ -30,7 +30,7 @@ class DrivingNotificationsTest {
 
     @Test fun `without POST_NOTIFICATIONS on API 33+ nothing is posted`() {
         shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
-        DrivingNotifications.postDriveStart(context, fullScreen = false)
+        DrivingNotifications.postDriveStart(context, autoShow = false, fullScreenAllowed = true)
         assertTrue(shadowOf(nm).allNotifications.isEmpty())
     }
 
@@ -46,7 +46,7 @@ class DrivingNotificationsTest {
 
     @Test fun `start driving notification opens the dashboard from its tap and its action`() {
         DrivingNotifications.ensureChannels(context)
-        DrivingNotifications.postDriveStart(context, fullScreen = false)
+        DrivingNotifications.postDriveStart(context, autoShow = false, fullScreenAllowed = true)
         val n = posted()
         assertEquals(DrivingNotifications.CHANNEL_DRIVE_START, n.channelId)
         assertOpensDashboard(n.contentIntent)
@@ -55,11 +55,32 @@ class DrivingNotificationsTest {
         assertNull(n.fullScreenIntent)
     }
 
-    @Test fun `full-screen intent only when allowed`() {
+    @Test fun `full-screen intent only with auto-show on and the permission allowed`() {
         DrivingNotifications.ensureChannels(context)
-        DrivingNotifications.postDriveStart(context, fullScreen = true)
-        assertNotNull(posted().fullScreenIntent)
-        assertOpensDashboard(posted().fullScreenIntent)
+        DrivingNotifications.postDriveStart(context, autoShow = true, fullScreenAllowed = true)
+        val n = posted()
+        assertNotNull(n.fullScreenIntent)
+        assertOpensDashboard(n.fullScreenIntent)
+        val intent = shadowOf(n.fullScreenIntent).savedIntent
+        assertTrue(intent.getBooleanExtra(DrivingNotifications.EXTRA_SHOW_WHEN_LOCKED, false))
+        assertEquals(1, n.actions.size)
+    }
+
+    @Test fun `auto-show without the permission falls back to a normal notification with a settings link`() {
+        DrivingNotifications.ensureChannels(context)
+        DrivingNotifications.postDriveStart(context, autoShow = true, fullScreenAllowed = false)
+        val n = posted()
+        assertNull(n.fullScreenIntent)
+        assertOpensDashboard(n.contentIntent)
+        val allow = n.actions.single { it.title.toString() == "Allow full screen" }
+        assertTrue(shadowOf(allow.actionIntent).isActivityIntent)
+    }
+
+    @Test fun `auto-show off never uses the full-screen intent even when allowed`() {
+        DrivingNotifications.ensureChannels(context)
+        DrivingNotifications.postDriveStart(context, autoShow = false, fullScreenAllowed = true)
+        assertNull(posted().fullScreenIntent)
+        assertFalse(shadowOf(posted().contentIntent).savedIntent.getBooleanExtra(DrivingNotifications.EXTRA_SHOW_WHEN_LOCKED, false))
     }
 
     @Config(sdk = [33]) @Test fun `API 33 may use the full-screen intent from the manifest permission`() {
@@ -70,13 +91,13 @@ class DrivingNotificationsTest {
         // Robolectric's NotificationManager answers false, like a device where the user has not allowed it.
         assertFalse(DrivingNotifications.canUseFullScreenIntent(context))
         DrivingNotifications.ensureChannels(context)
-        DrivingNotifications.postDriveStart(context)
+        DrivingNotifications.postDriveStart(context, autoShow = true)
         assertNull(posted().fullScreenIntent)
     }
 
     @Test fun `no notification permission posts nothing`() {
         shadowOf(nm).setNotificationsEnabled(false)
-        DrivingNotifications.postDriveStart(context, fullScreen = true)
+        DrivingNotifications.postDriveStart(context, autoShow = true, fullScreenAllowed = true)
         assertTrue(shadowOf(nm).allNotifications.isEmpty())
     }
 

@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.neotheon3.orangebox.core.dashboardui.BottomBarAppButton
 import io.github.neotheon3.orangebox.core.dashboardui.BottomBarButton
 import io.github.neotheon3.orangebox.core.dashboardui.BottomBarButtonSize
 import io.github.neotheon3.orangebox.core.dashboardui.BottomBarToggle
@@ -20,7 +21,7 @@ import io.github.neotheon3.orangebox.core.dashboardui.DashboardColors
 import io.github.neotheon3.orangebox.core.dashboardui.DashboardIcons
 
 /**
- * Bottom bar (§4.5): Emergency (hazard) far left, Diagnostics shortcut where the legacy map launcher
+ * Bottom bar (§4.5): Emergency (hazard) or the user's quick-launch app far left (Settings), Diagnostics shortcut where the legacy map launcher
  * was, the Detailed Info toggle in the middle, the old quick-call slot left empty (D2), End driving
  * (power) far right. Every target is ≥ 56 dp.
  */
@@ -33,16 +34,24 @@ fun DashboardBottomBar(
     onDiagnostics: () -> Unit,
     onEndDriving: () -> Unit,
     modifier: Modifier = Modifier,
+    leftButton: LeftButton = LeftButton.Hazard(EMERGENCY_NUMBER),
+    onQuickLaunch: (String) -> Unit = {},
 ) {
     Row(
         modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).testTag("dashboard_bottom_bar"),
         horizontalArrangement = Arrangement.spacedBy(if (landscape) 16.dp else 8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BottomBarButton(
-            DashboardIcons.Hazard, stringResource(R.string.dashboard_emergency), onEmergency,
-            Modifier.testTag("dashboard_emergency"), iconTint = DashboardColors.HazardRed,
-        )
+        when (leftButton) {
+            is LeftButton.Hazard -> BottomBarButton(
+                DashboardIcons.Hazard, stringResource(R.string.dashboard_emergency), onEmergency,
+                Modifier.testTag("dashboard_emergency"), iconTint = DashboardColors.HazardRed,
+            )
+            is LeftButton.QuickLaunch -> BottomBarAppButton(
+                leftButton.icon, stringResource(R.string.dashboard_quick_launch, leftButton.label),
+                { onQuickLaunch(leftButton.packageName) }, Modifier.testTag("dashboard_quick_launch"),
+            )
+        }
         if (landscape) Spacer(Modifier.weight(1f))
         BottomBarButton(
             DashboardIcons.MilEngine, stringResource(R.string.dashboard_diagnostics), onDiagnostics,
