@@ -57,6 +57,8 @@ class DrivingController @Inject constructor(
             scope.launch {
                 recorder.stop(TripRecorder.END_USER)
                 context.stopService(DrivingService.startIntent(context))
+                // The service cancels it too; this also clears one left over by a service that is already gone.
+                DrivingNotifications.cancelOngoing(context)
             }
         }
         scope.launch {
