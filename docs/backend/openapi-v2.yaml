@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Orange Box API
-  version: 1.0.0-draft.6
+  version: 1.0.0-draft.7
   summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
   description: |
     Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
@@ -51,12 +51,45 @@ info:
       (proposal). A retry with the same key and fingerprint returns the original response (same status and body);
       the same key with a different fingerprint returns `422` (`code=idempotency_key_reused`); a retry while the
       first request is still processing returns `409` (`code=idempotency_in_flight`). `409` is used for nothing
-      else, so clients can always retry it.
+      else, so clients can always retry it. Exception: a deletion tombstone beats a stored replay. A retry of
+      `POST /v1/vehicles` whose vehicle has since been deleted gets `410` (`code=vehicle_deleted`), not the stored
+      `201`.
     * **Deletion tombstones**: deleting a trip (directly, or through `DELETE /v1/vehicles/{vehicleId}?cascade=true`)
-      erases its data and leaves a tombstone holding only the server id, the `clientTripId` and `deletedAt`. Late
-      uploads for a tombstoned `clientTripId` are acknowledged but never recreate the trip, and incremental sync
-      reports the deletion through `GET /v1/trips/deletions`. Tombstones are kept for at least 90 days (proposal;
-      longer than the app's 30-day upload backlog) and are erased with the account.
+      erases its data and leaves a tombstone holding only the server id, the `clientTripId` and `deletedAt`.
+      Deleting a vehicle likewise leaves a tombstone for its `clientVehicleId`. Tombstones are **scoped per member**
+      (keyed by member plus `clientTripId` or `clientVehicleId`): another member's identical client id is
+      unaffected. Late uploads for a tombstoned `clientTripId` are acknowledged but never recreate the trip,
+      `POST /v1/vehicles` with a tombstoned `clientVehicleId` returns `410`, and incremental sync reports trip
+      deletions through `GET /v1/trips/deletions`. Both kinds of tombstone are kept for at least 90 days after
+      `deletedAt` (proposal; longer than the app's 30-day upload backlog) and are erased with the account. After
+      that, a trip or vehicle upload with the same client id is treated as new.
+    * **Incremental sync (sync tokens)**: `GET /v1/trips` and `GET /v1/trips/deletions` use an opaque,
+      server-issued sync token instead of a client-remembered timestamp.
+      - The last page of a walk (`nextCursor: null`) carries `nextSince`, which the app stores and passes back as
+        `since`. It is returned even when there are no changes, so the app always gets a fresh token. Earlier
+        pages have `nextSince: null`. A full `GET /v1/trips` walk without `since` also ends with `nextSince`, which
+        is how a new device starts syncing. `since` cannot be combined with `vehicleId`, `from` or `to` (`400`),
+        and a walk that uses those filters returns `nextSince: null`.
+      - The token is a **commit-ordered watermark**, captured when the walk's first page is served and carried in
+        the cursor. Reference implementation (Postgres): every trip row and tombstone stores the id of the
+        transaction that last wrote it (`pg_current_xact_id()`), and the token holds
+        `pg_snapshot_xmin(pg_current_snapshot())` from the start of the walk: the oldest transaction still running
+        at that moment. A walk with `since=T` returns rows whose writer id is at or above T's watermark. Any write
+        that had not committed when T was issued has a writer id at or above that watermark, so late-committing
+        transactions and equal timestamps can't be missed.
+      - `since` is **inclusive** and delivery is **at least once**. An item can come back in a later walk (e.g. a
+        row committed just before the token was taken, or one changed again mid-walk). The app applies items
+        idempotently: it upserts trips by `id`, keeping the newer `updatedAt`, and treats a repeated tombstone as a
+        no-op. A long-running transaction only holds the watermark back, which means more repeats, never a miss.
+      - `cursor` is **exclusive**: each page continues strictly after the previous page's last item. In sync
+        walks the order is the server's change order (writer transaction id, then `id`), not `updatedAt`.
+      - Order of calls: walk `GET /v1/trips?since=S` to its last page and keep its `nextSince` as S'. Then walk
+        `GET /v1/trips/deletions?since=S` (same S) to its last page and ignore that walk's own `nextSince`. Then
+        store S'. Deletions committed before S' was taken show up in the deletions walk; later ones have writer
+        ids at or above S' and show up next time.
+      - Tokens older than the tombstone retention (90 days, proposal) are rejected with `400`
+        (`code=sync_window_expired`) on both endpoints. The app then does a full `GET /v1/trips` without `since`
+        and drops local trips the server no longer returns.
     * **Rate limits**: every response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds),
       set by middleware (declared explicitly only on a few operations to keep the document readable). Every
       operation documents `429`. `429` and `503` carry `Retry-After`. Clients back off exponentially with jitter.
@@ -534,8 +567,10 @@ paths:
         De-duplicated by `clientVehicleId`. If the caller already has a vehicle (archived or not) with the same
         `clientVehicleId`, nothing is created or changed and the existing vehicle is returned with `200`, whatever
         the body says; the app then uses `PATCH` with its `ETag` to change it. This makes a retry safe even under a
-        new `Idempotency-Key`. If that vehicle was deleted, the response is `410` (`code=vehicle_deleted`) and the
-        app must not retry.
+        new `Idempotency-Key`. If the caller deleted a vehicle with that `clientVehicleId` in the last 90 days
+        (proposal, see Deletion tombstones), the response is `410` (`code=vehicle_deleted`) and the app must not
+        retry. The tombstone wins over a stored `Idempotency-Key` replay: a retry of the original create after the
+        deletion gets `410`, not the stored `201`. The check is per member.
       x-legacy-mapping:
         replaces: ['/smart.json cmd=insertCar']
         notes: The legacy OBD adapter Bluetooth MAC (`obdMac`) is not sent; it stays on the device.
@@ -567,7 +602,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/Conflict'}
         '410':
-          description: A vehicle with this `clientVehicleId` was deleted (`code=vehicle_deleted`). Do not retry.
+          description: The caller deleted a vehicle with this `clientVehicleId` within the tombstone retention (`code=vehicle_deleted`). Returned even when a stored `Idempotency-Key` replay exists. Do not retry.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -897,12 +932,14 @@ paths:
     get:
       tags: [trips]
       operationId: listTrips
-      summary: List trips (newest first, or by change time for incremental sync)
+      summary: List trips (newest first, or in change order for incremental sync)
       description: |
-        Without `updatedSince`, trips are ordered by `startedAt` descending, then `id` (history view, restore).
-        With `updatedSince`, trips are ordered by **(`updatedAt`, `id`) ascending** so a cursor walk is stable while
-        trips keep changing; the app stores the last `updatedAt` it saw and passes it as the next `updatedSince`.
-        Deleted trips never appear here; fetch them from `GET /v1/trips/deletions` with the same instant.
+        Without `since`, trips are ordered by `startedAt` descending, then `id` (history view, restore). If no
+        `vehicleId`, `from` or `to` filter is set, the last page carries `nextSince` to start incremental sync.
+        With `since` (a sync token from an earlier walk's `nextSince`), only trips written at or after the token's
+        watermark are returned, in server change order, and the last page carries the next token. See
+        Conventions → Incremental sync for the inclusive/exclusive rules and the call order with
+        `GET /v1/trips/deletions`. Deleted trips never appear here.
       x-legacy-mapping:
         replaces: none
         notes: Legacy had no trip-list JSON API; trip history was shown in server-rendered pages (`/m/view.do`, `/m/chart.do`). Used for restore on a new device.
@@ -912,7 +949,7 @@ paths:
         - {name: vehicleId, in: query, schema: {type: string}}
         - {name: from, in: query, description: 'Trips starting at or after this instant', schema: {type: string, format: date-time}}
         - {name: to, in: query, description: 'Trips starting before this instant', schema: {type: string, format: date-time}}
-        - {name: updatedSince, in: query, description: 'Incremental sync - only trips changed after this instant; switches the order to (updatedAt, id) ascending', schema: {type: string, format: date-time}}
+        - $ref: '#/components/parameters/Since'
       responses:
         '200':
           description: Page of trips
@@ -928,17 +965,17 @@ paths:
     get:
       tags: [trips]
       operationId: listTripDeletions
-      summary: Trips deleted since an instant (incremental sync)
+      summary: Trips deleted since a sync token (incremental sync)
       description: |
-        Returns tombstones of the caller's trips deleted after `since` (directly or through a vehicle cascade),
-        ordered by (`deletedAt`, `id`) ascending. A second device uses it together with
-        `GET /v1/trips?updatedSince=` to remove trips deleted elsewhere. Tombstones are kept for at least 90 days
-        (proposal); if `since` is older than that, the response is `400` with `code=sync_window_expired` and the
-        app does a full resync (`GET /v1/trips` without `updatedSince`).
+        Returns the caller's trip tombstones (per member) written at or after the watermark of `since`, from a
+        direct delete or a vehicle cascade, in server change order. Run it after the `GET /v1/trips?since=` walk
+        with the **same** `since` value and keep the trips walk's `nextSince` (Conventions → Incremental sync).
+        Delivery is at least once. Tombstones are kept for at least 90 days (proposal). An older token gets `400`
+        with `code=sync_window_expired`, and the app does a full resync (`GET /v1/trips` without `since`).
       x-legacy-mapping:
         replaces: none
       parameters:
-        - {name: since, in: query, required: true, schema: {type: string, format: date-time}}
+        - {name: since, in: query, required: true, description: 'Sync token (`nextSince` of an earlier `GET /v1/trips` walk).', schema: {type: string, minLength: 1, maxLength: 512}}
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
       responses:
@@ -1077,7 +1114,9 @@ paths:
         Samples and events are appended to the trip identified by `clientTripId` (the trip summary may arrive
         before or after its telemetry, so an unknown `clientTripId` is normal and is **never** a `404`).
         De-duplication is by `clientBatchId` (and the `Idempotency-Key` header). Individual samples are
-        de-duplicated by (`clientTripId`, `t`) and events by (`clientTripId`, `t`, `type`). Processing may be
+        de-duplicated by (`clientTripId`, `t`). Events are de-duplicated by (`clientTripId`, `clientEventId`) when
+        `clientEventId` is present, otherwise by (`clientTripId`, `t`, `type`, `active`, `dtc`), with `t` at
+        millisecond precision. Processing may be
         asynchronous: `202` means durably stored, not necessarily aggregated.
 
         The counts in the acknowledgement cover **this batch only**: in-batch duplicates and out-of-range values
@@ -1347,6 +1386,11 @@ components:
       required: true
       description: Server trip id, or the client trip id prefixed with `client:` (e.g. `client:0192f1b2-...`).
       schema: {type: string}
+    Since:
+      name: since
+      in: query
+      description: Opaque sync token from the `nextSince` of an earlier walk. Inclusive, at-least-once (Conventions → Incremental sync). Cannot be combined with `vehicleId`, `from` or `to`.
+      schema: {type: string, minLength: 1, maxLength: 512}
     IfMatch:
       name: If-Match
       in: header
@@ -1871,16 +1915,24 @@ components:
               problem: {$ref: '#/components/schemas/Problem'}
     TripDeletion:
       type: object
-      description: Tombstone of a deleted trip. Holds no trip data.
+      description: Tombstone of a deleted trip, scoped to the calling member. Holds no trip data.
       required: [id, clientTripId, deletedAt]
       properties:
         id: {type: string, description: Server trip id}
         clientTripId: {type: string, format: uuid}
         vehicleId: {type: [string, 'null'], description: 'Vehicle the trip belonged to, if known'}
         deletedAt: {type: string, format: date-time}
+    SyncMeta:
+      type: object
+      required: [nextSince]
+      properties:
+        nextSince:
+          type: [string, 'null']
+          description: Sync token for the next incremental walk (pass it as `since`). Set only on the last page (`nextCursor` null) of a walk that can be synced from; `null` otherwise.
     TripDeletionPage:
       allOf:
         - $ref: '#/components/schemas/PageMeta'
+        - $ref: '#/components/schemas/SyncMeta'
         - type: object
           required: [items]
           properties:
@@ -1888,6 +1940,7 @@ components:
     TripPage:
       allOf:
         - $ref: '#/components/schemas/PageMeta'
+        - $ref: '#/components/schemas/SyncMeta'
         - type: object
           required: [items]
           properties:
@@ -1927,7 +1980,8 @@ components:
       type: object
       required: [t, type]
       properties:
-        t: {type: string, format: date-time}
+        clientEventId: {type: string, format: uuid, description: 'Optional app-generated id. When present, the event is de-duplicated on (`clientTripId`, `clientEventId`); when absent, on (`clientTripId`, `t`, `type`, `active`, `dtc`).'}
+        t: {type: string, format: date-time, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$', description: 'Event time in UTC with exactly millisecond precision (e.g. `2026-10-23T14:05:00.123Z`).'}
         type: {$ref: '#/components/schemas/EventType'}
         active: {type: boolean, default: true, description: 'Warning started (true) or cleared (false). Legacy ThreeState Y/N.'}
         lat: {type: [number, 'null'], format: double, minimum: -90, maximum: 90}
@@ -2037,6 +2091,7 @@ components:
             fuelCut: {type: integer, minimum: 0, maximum: 5}
         fuelCost:
           type: [object, 'null']
+          description: 'Provisional. `amount`/`saved` are floating-point for now; whether to keep fuel cost at all, and whether money becomes integer minor units, is REQUIREMENTS.md open question 11. Settle it before v1 is final.'
           properties:
             amount: {type: number, format: double}
             saved: {type: number, format: double}
