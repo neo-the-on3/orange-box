@@ -30,19 +30,14 @@ adb logcat -c
 adb shell am start -W -n "$PKG/$ACTIVITY" > /dev/null
 wait_for_text "Welcome to Orange Box" onboarding-welcome || fail "First launch did not show onboarding"
 shot 00-onboarding-welcome
-tap_attr text "Get started" onboarding-welcome-tap || fail "Get started not found"
-wait_for_text "Before you drive" onboarding-disclaimer || fail "Disclaimer step missing"
-tap_attr text "I understand and accept" onboarding-accept || fail "Accept checkbox not found"
-tap_attr text "Continue" onboarding-disclaimer-next || fail "Continue (disclaimer) not found"
-wait_for_text "Permissions" onboarding-permissions || fail "Permissions step missing"
+tap_until text "Get started" "Before you drive" onboarding-disclaimer || fail "Disclaimer step missing"
+tap_until text "I understand and accept" 'checked="true"' onboarding-accept || fail "Accept checkbox not found"
+tap_until text "Continue" "Permissions" onboarding-permissions || fail "Permissions step missing"
 shot 00-onboarding-permissions
-tap_attr text "Continue" onboarding-permissions-next || fail "Continue (permissions) not found"
-wait_for_text "Your car" onboarding-vehicle || fail "Vehicle step missing"
-tap_attr text "Skip for now" onboarding-vehicle-skip || fail "Skip (vehicle) not found"
-wait_for_text "Pair the ELM327" onboarding-dongle || fail "Dongle step missing"
-tap_attr text "Skip for now" onboarding-dongle-skip || fail "Skip (dongle) not found"
-tap_attr text "Start using Orange Box" onboarding-finish || fail "Finish not found"
-wait_for_text "Backend:" onboarding-home || fail "Onboarding did not end on Home"
+tap_until text "Continue" "Your car" onboarding-vehicle || fail "Vehicle step missing"
+tap_until text "Skip for now" "Pair the ELM327" onboarding-dongle || fail "Dongle step missing"
+tap_until text "Skip for now" "Start using Orange Box" onboarding-finish-step || fail "Finish step missing"
+tap_until text "Start using Orange Box" "Backend:" onboarding-home || fail "Onboarding did not end on Home"
 adb logcat -d | grep -q "onboarding_complete" || fail "onboarding_complete log line missing"
 adb shell am force-stop "$PKG"
 

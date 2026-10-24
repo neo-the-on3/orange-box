@@ -68,6 +68,16 @@ tap_attr() {
   return 1
 }
 
+# tap_until <attr> <value> <expected fixed text> <dump-name>: tap, and tap again (up to 3 times) if the
+# expected text has not appeared. A busy CI emulator (boot-time ANRs elsewhere) sometimes drops a tap.
+tap_until() {
+  for _ in 1 2 3; do
+    tap_attr "$1" "$2" "$4-tap" || true
+    wait_for_text "$3" "$4" 8 && return 0
+  done
+  return 1
+}
+
 # Home overflow -> Simulator, retrying the menu tap (it can be lost during a configuration change).
 open_simulator() {
   local name="${1:-open-sim}"
