@@ -28,26 +28,19 @@ for _ in $(seq 1 20); do
 done
 grep -q "Recording trip" "$OUT/notifications.txt" || { echo "driving notification missing" >&2; exit 1; }
 
-# Leave the app first: the live tiles animate, and uiautomator cannot dump a window that never goes idle
-# (it then leaves the previous dump in place). From the launcher, the tap also tests a background open.
+# The ongoing notification's chronometer ticks every second, so uiautomator never sees the shade idle
+# and can't dump it. Open the shade with a swipe (`cmd statusbar expand-notifications` is ignored on the
+# CI image), screenshot it, and tap the notification at its place in the layout (proportional to the screen).
+# Leaving the app first also makes the tap a background open.
 adb shell input keyevent KEYCODE_HOME
 sleep 2
-# A busy CI emulator sometimes ignores the first expand; retry, then fall back to a swipe down from the top.
-shade_open=false
-for i in 1 2 3; do
-  if [ "$i" -lt 3 ]; then adb shell cmd statusbar expand-notifications; else adb shell input swipe 500 5 500 1400 400; fi
-  sleep 2
-  shot "27-shade-try-$i"
-  if wait_for_text "Recording trip" shade 5; then shade_open=true; break; fi
-done
-$shade_open || { echo "notification shade did not show the driving notification" >&2; exit 1; }
+read -r W H < <(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -n1 | tr 'x' ' ')
+adb shell input swipe $(( W / 2 )) 5 $(( W / 2 )) $(( H * 6 / 10 )) 400
+sleep 3
 shot 27-notification-shade
-# "Start driving" (the action) if the notification is expanded, else its body: both open the dashboard.
-if grep -qi 'text="Start driving"' "$OUT/shade.xml"; then
-  tap_attr text "$(grep -oi 'text="Start driving"' "$OUT/shade.xml" | head -n1 | sed -E 's/text="(.*)"/\1/')" shade-tap
-else
-  tap_attr text "Recording trip" shade-tap
-fi
+# Ours is the first notification: its "Recording trip" row sits at about (30 %, 36 %) of the screen whether
+# or not it is expanded (see 27-notification-shade.png). The body and "Start driving" both open the dashboard.
+adb shell input tap $(( W * 30 / 100 )) $(( H * 36 / 100 ))
 trap - EXIT
 wait_for_regex 'content-desc="End driving"' notif-dashboard 15
 shot 28-dashboard-from-notification
