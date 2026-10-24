@@ -23,6 +23,7 @@ class FakeAppPreferencesRepository(initial: AppPreferences = AppPreferences()) :
             ),
         )
     }
+    override suspend fun setMapTilesEnabled(enabled: Boolean) { state.value = state.value.copy(mapTilesEnabled = enabled) }
     override suspend fun markPermissionsAsked(permissions: Collection<String>) {
         state.value = state.value.copy(askedPermissions = state.value.askedPermissions + permissions)
     }
