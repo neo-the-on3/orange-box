@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.view.WindowCompat
 
 /** The bottom-left dashboard button, from Settings. */
 sealed interface LeftButton {
@@ -36,6 +37,29 @@ fun ShowWhenLocked(enabled: Boolean) {
     DisposableEffect(activity, enabled) {
         if (enabled) activity.setLockScreenFlags(true)
         onDispose { if (enabled) activity.setLockScreenFlags(false) }
+    }
+}
+
+/**
+ * The dashboard is always dark, and since #145 the status-bar strip above the bezel arch is black, so
+ * while it is on screen the status- and navigation-bar icons are forced light (white). The activity's
+ * `enableEdgeToEdge()` picks dark icons when the system is in light mode, which would leave them
+ * invisible (#149). The previous appearance is restored when the dashboard leaves. The flags live on
+ * the activity window, so this also covers the dashboard shown over the lock screen.
+ */
+@Composable
+fun LightSystemBarIcons() {
+    val activity = LocalContext.current.findActivity() ?: return
+    DisposableEffect(activity) {
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        val previousStatus = controller.isAppearanceLightStatusBars
+        val previousNavigation = controller.isAppearanceLightNavigationBars
+        controller.isAppearanceLightStatusBars = false
+        controller.isAppearanceLightNavigationBars = false
+        onDispose {
+            controller.isAppearanceLightStatusBars = previousStatus
+            controller.isAppearanceLightNavigationBars = previousNavigation
+        }
     }
 }
 

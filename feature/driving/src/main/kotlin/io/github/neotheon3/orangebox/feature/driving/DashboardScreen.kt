@@ -96,6 +96,7 @@ fun DashboardScreen(
 ) {
     var showDetail by rememberSaveable { mutableStateOf(initialShowDetail) }
     var dialog by rememberSaveable { mutableStateOf<DashboardDialog?>(null) }
+    LightSystemBarIcons()
     DashboardTheme(settings) {
         BezelBackground(modifier.fillMaxSize().testTag("dashboard")) {
             BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
