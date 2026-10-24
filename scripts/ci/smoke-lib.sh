@@ -2,10 +2,9 @@
 # Shared helpers for emulator smoke scripts. Needs OUT (artifact dir).
 
 ui_dump() {
-  # Remove the previous dump so a failed dump (window never idle) can't be read as the current screen.
-  adb shell rm -f /sdcard/ui.xml > /dev/null 2>&1 || true
-  adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1 || true
-  adb shell cat /sdcard/ui.xml > "$OUT/$1.xml" 2>/dev/null || true
+  # One adb round trip (the Undo snackbar only lives 5 s). The previous dump is removed first so a failed
+  # dump (a window that never goes idle) can't be read as the current screen.
+  adb shell 'rm -f /sdcard/ui.xml; uiautomator dump /sdcard/ui.xml > /dev/null 2>&1; cat /sdcard/ui.xml 2>/dev/null' > "$OUT/$1.xml" 2>/dev/null || true
   dismiss_system_dialogs "$1"
 }
 
