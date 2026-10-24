@@ -52,7 +52,9 @@ fun interface ActiveVehicleId {
  *   overspeed and fuel-cut events;
  * - the summary is checkpointed every [CHECKPOINT_MILLIS] together with the pending rows, so process
  *   death loses at most that much; the first trip of a process closes trips a dead process left open;
- * - it ends after [ENGINE_OFF_GRACE_MILLIS] without the engine running (engine off or link lost), or on [stop].
+ * - it ends after [ENGINE_OFF_GRACE_MILLIS] without the engine running, or on [stop]: as engine_off only once
+ *   a sample has read the engine as not running (a poll stall on a live link holds the trip open), as
+ *   disconnected when the link is gone;
  * A reconnect inside the grace period continues the same trip (totals are carried over the engine reset).
  */
 @Singleton
@@ -90,6 +92,9 @@ class TripRecorder(
     private var lastSampleAt = Long.MIN_VALUE
     private var lastCheckpointWall = 0L
     private var engineOnWall = 0L
+    /** The latest sample of this trip read the engine as not running (rpm 0 or missing). */
+    private var engineOffRead = false
+    private var stallLogged = false
     private var flags = Flags()
     private val samples = mutableListOf<TripSampleEntity>()
     private val events = mutableListOf<TripEventEntity>()
@@ -120,6 +125,8 @@ class TripRecorder(
     private suspend fun onSnapshot(s: TelemetrySnapshot) {
         val engineOn = (s.instant.rpm ?: 0.0) > 0.0
         if (engineOn) engineOnWall = clock.now()
+        engineOffRead = !engineOn
+        stallLogged = false
         val current = trip
         if (current == null) {
             if (engineOn && connection.state.value is ObdConnectionState.Connected) begin(s)
@@ -167,6 +174,7 @@ class TripRecorder(
         trip = started
         beganAtSample = s.timestampMillis
         base = TripTotals(); last = TripTotals(); flags = Flags()
+        engineOffRead = false; stallLogged = false
         lastSampleAt = Long.MIN_VALUE
         lastCheckpointWall = clock.now()
         samples.clear(); events.clear()
@@ -178,8 +186,20 @@ class TripRecorder(
 
     private suspend fun checkGrace() {
         if (trip == null) return
-        if (clock.now() - engineOnWall < ENGINE_OFF_GRACE_MILLIS) return
-        finish(if (connection.state.value is ObdConnectionState.Connected) END_ENGINE_OFF else END_DISCONNECTED)
+        val silentMillis = clock.now() - engineOnWall
+        if (silentMillis < ENGINE_OFF_GRACE_MILLIS) return
+        val connected = connection.state.value is ObdConnectionState.Connected
+        // A poll stall (no samples while the link is still up) is not engine-off: a slow or busy ELM327, or
+        // a stalled device, says nothing about the engine. While connected the trip ends only once a sample
+        // has actually read the engine as not running; a dead link ends it as disconnected (#142).
+        if (connected && !engineOffRead) {
+            if (!stallLogged) {
+                stallLogged = true
+                OrangeLog.i(OrangeLog.Areas.TRIP, "trip_grace_held", "reason" to "poll_stall", "silent_s" to silentMillis / 1000)
+            }
+            return
+        }
+        finish(if (connected) END_ENGINE_OFF else END_DISCONNECTED)
     }
 
     private suspend fun checkpoint(t: TripEntity) {

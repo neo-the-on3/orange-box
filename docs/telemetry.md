@@ -197,6 +197,31 @@ Expect a few seconds of scatter on a device even so. The 1 s acceleration window
 state mean one poll interval at a phase change can go either way. For example, the first sample of the
 Highway coast-down is eco: its window still half covers the 100 km/h cruise, and the RPM is already under 2500.
 
+**Stale simulator values (#142).** On build 0.1.0.35 the API 25 ARM emulator still read City eco low
+(87.4–88.0 s on clean runs, mean ≈ 88.4) and one Harsh brake peak at +19 %. Telemetry time already comes
+from sample timestamps: `PidPoller` stamps each sample when SPEED is requested, and `TelemetryEngine` and
+its event detectors use only those stamps, never arrival time. The skew was in the simulator. The player
+refreshed `SimulatorState` once per tick (100 ms, overrunning on a slow device), and the simulated dongle
+answered from that state, so a value could be up to a tick older than the stamp on its sample.
+The windowed acceleration then came out too high or too low by roughly accel × skew / window.
+- City's 10 s, 1.39 m/s² pull-aways sit only 0.11 m/s² under the 1.5 m/s² eco limit, so skew (plus whole-km/h
+  speed rounding) pushed some of their samples over the limit, cutting eco time.
+- The same skew inflated the 5.56 m/s² braking peaks.
+- A JVM replay with 0.5–1.1 s polling and a 250 ms effective player tick reproduces it: City eco
+  81–93 s (mean 88.9 s) and Harsh brake peaks up to +22 %.
+
+The dongle now evaluates the playing script (or the coast-down) at the moment of each read
+(`SimulatorController.readState()`); the player's tick only refreshes the Simulator screen. With the same
+replay, City eco is 85.9–95.5 s over 150 runs (mean 90.7 s, 1st–99th percentile 86.1–94.6 s), Harsh eco
+17.0–22.2 s, and brake peaks stay within +4 %. `SlowDevicePlaybackTest` covers this with a 250 ms tick and
+10 ms per PID read.
+
+The scatter that remains is inherent to polling. The tick period varies between 0.5 and 1.1 s, PID 0D is whole
+km/h, and each eco edge falls somewhere inside one poll interval. City has six eco edges, each with a
+pull-away that is barely under the eco limit. An exact 1 s window (speed interpolated at t − 1 s) was tried
+and rejected, because it lets the ±1 km/h rounding through unsmoothed and biased City eco low again (mean 88.9 s).
+Hence the City eco tolerance below is ±5 s, and Harsh eco is ±3.5 s.
+
 The legacy app's "eco speed" is a different metric (time between 60 and 80 km/h,
 `DEFAULT_ECO_MIN_ECO_SPEED`/`DEFAULT_ECO_MAX_ECO_SPEED`, computed inside its closed OBD library). By design
 it isn't reproduced here (see the note at the top).
@@ -204,12 +229,14 @@ it isn't reproduced here (see the note at the top).
 ### On-device tolerances
 
 On a real device or a slow emulator, a scripted drive passes when it is within these bounds of the golden
-values above. They cover the sampling scatter described above. The playback-clock bug (#120) was a
-systematic drift, and these bounds would not have hidden it.
+values above. They cover the sampling scatter described above. The playback-clock bug (#120) and the stale
+simulator values (#142) were systematic drifts, and these bounds would not have hidden them: a mean shift
+shows up as runs that all land on one side of the golden.
 
 | Metric | Tolerance |
 |---|---|
-| Eco time (City, Harsh) | ±3 s of golden |
+| Eco time, City | ±5 s of golden (polling scatter, see #142 above) |
+| Eco time, Harsh | ±3.5 s of golden |
 | Overspeed duration (Highway) | ±2 s of golden |
 | Harsh accel/brake peaks | +15 % / −10 % of nominal |
 | Event counts (harsh accel/brake, overspeed) | exact |

@@ -23,6 +23,20 @@ class SimulatorM2Test {
         assertEquals(SimulatedElm327.SUPPORTED.toSet(), s.all)
     }
 
+    @Test fun `a playing script is evaluated at the read, not at the player's last tick (#142)`() = runTest {
+        val c = SimulatorController()
+        val s = session(c)
+        // A 1 s refresh tick: the state flow lags, the dongle must not.
+        val player = DriveScriptPlayer(c, backgroundScope, tickMillis = 1_000, clock = { testScheduler.currentTime })
+        player.start(DriveScript.HARSH) // 0→60 km/h in 4 s
+        runCurrent()
+        advanceTimeBy(1_500) // last refresh at t = 1 s (15 km/h); the car is at 22.5 km/h now
+        assertEquals(15, c.state.value.speedKph)
+        assertEquals(23.0, s.read(ObdPid.SPEED)!!, 0.0)
+        player.stop()
+        runCurrent()
+    }
+
     @Test fun `decoded values follow the state`() = runTest {
         val c = SimulatorController(SimulatorState(speedKph = 80, rpm = 2880, throttlePercent = 30, fuelPercent = 40, coolantC = 90))
         val s = session(c)
@@ -121,13 +135,14 @@ class SimulatorM2Test {
     @Test fun `coast deceleration follows the clock when ticks overrun`() = runTest {
         val wall = { testScheduler.currentTime * 2 }
         val c = SimulatorController()
-        c.update { it.copy(speedKph = 72) }
         val p = DriveScriptPlayer(c, backgroundScope, tickMillis = 250, clock = wall)
-        p.start(DriveScript.IDLE); runCurrent()
-        c.update { it.copy(speedKph = 72) }
+        p.start(DriveScript.HARSH); runCurrent()
+        advanceTimeBy(3_000); runCurrent() // 6 s of wall time: cruising at 60 km/h
+        assertEquals(60, c.state.value.speedKph)
         p.stop(); runCurrent()
         advanceTimeBy(2_500); runCurrent() // 5 s of wall time at 7.2 km/h/s
-        assertEquals(36, c.state.value.speedKph)
+        assertEquals(24, c.state.value.speedKph)
+        assertEquals(24, c.readState().speedKph)
     }
 
     @Test fun `starting a new script cancels the coast`() = runTest {
