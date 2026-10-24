@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Orange Box API
-  version: 1.0.0-draft.1
+  version: 1.0.0-draft.2
   summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
   description: |
     Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
@@ -15,7 +15,8 @@ info:
 
     ## Conventions
     * **Transport**: HTTPS only (TLS 1.2+). Plain HTTP must be refused, not redirected.
-    * **Auth**: `Authorization: Bearer <JWT>` on every operation except `GET /v1/health` and `POST /v1/auth/token`.
+    * **Auth**: `Authorization: Bearer <JWT>` on every operation except `GET /v1/health`, `POST /v1/auth/otp` and
+      `POST /v1/auth/token`.
       The member is identified by the token's subject. Member ids are **never** accepted in request bodies or
       query strings for authorisation.
     * **Media types**: `application/json` (UTF-8) for requests and responses; `application/merge-patch+json`
@@ -71,7 +72,7 @@ tags:
   - name: health
     description: Service liveness
   - name: auth
-    description: Token exchange and session lifecycle
+    description: E-mail one-time-code sign-in, token exchange and session lifecycle
   - name: me
     description: Profile and account lifecycle of the calling member
   - name: vehicles
@@ -113,25 +114,89 @@ paths:
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
 
+  /v1/auth/otp:
+    post:
+      tags: [auth]
+      operationId: requestOtp
+      summary: Send a one-time sign-in code to an e-mail address
+      description: |
+        Starts e-mail sign-in. The server generates a random **6-digit** code, stores only a hash of it (never the
+        plain code), and e-mails it to the address through the operator's transactional e-mail provider (SMTP or e-mail API). The
+        code expires after **10 minutes** and allows at most **5** verification attempts, after which it is
+        invalidated and a new code must be requested. Requesting a new code invalidates any earlier unused code for
+        that address.
+
+        To prevent account enumeration the response is **always `202`** for any well-formed address, whether or
+        not a member exists, and whether or not an e-mail was actually sent (e.g. silently suppressed by the
+        per-address limit or a bounce list). There is no separate registration step: the first successful
+        `POST /v1/auth/token` with `grantType=email_otp` creates the member.
+
+        Rate limits (proposal): about **3 sends per e-mail address per 15 minutes**, plus a per-IP limit. Exceeding
+        the per-IP limit returns `429` with `Retry-After` and the `RateLimit-*` headers. Exceeding the per-address
+        limit still returns `202` (to avoid revealing anything about the address); `resendAfter` tells the app
+        when to enable its "resend code" button.
+
+        Addresses are trimmed and normalised to lower case before use. The plain address and the code are never
+        logged.
+      security: []
+      x-legacy-mapping:
+        replaces: none
+        notes: New. Legacy had no verification of the client-supplied e-mail (`loginId`).
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OtpRequest'}
+            examples:
+              otp:
+                value: {email: driver@example.com}
+      responses:
+        '202':
+          description: |
+            Accepted. If the address can receive a code, one has been (or will shortly be) sent. The same response
+            is returned for unknown addresses.
+          headers:
+            Cache-Control: {$ref: '#/components/headers/NoStore'}
+            X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OtpResponse'}
+              example: {expiresIn: 600, resendAfter: 60}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
   /v1/auth/token:
     post:
       tags: [auth]
       operationId: createToken
-      summary: Exchange an OIDC ID token (or a refresh token) for an access token
+      summary: Exchange an e-mail one-time code (or a refresh token) for tokens
       description: |
-        `grantType=id_token`: the server verifies the ID token signature against the provider's JWKS, `iss`,
-        `aud` (the app's OAuth client id), `exp` and `nonce` if present, then finds or creates the member keyed by
-        (`iss`, `sub`). Returns a short-lived access JWT (proposal: 15 min) and a rotating refresh token
-        (proposal: 30 days, single use; reuse detection revokes the whole token family).
+        `grantType=email_otp`: verifies the 6-digit code sent by `POST /v1/auth/otp` for that e-mail address
+        (constant-time hash comparison). On success the code is consumed and the server finds the member by the
+        normalised e-mail address, or creates one on the first successful sign-in (`isNewMember=true`). The
+        address is thereby verified.
 
-        `grantType=refresh_token`: rotates the refresh token.
+        `grantType=refresh_token`: rotates the refresh token. Refresh tokens are opaque, **single use** and live
+        **30 days** (proposal). Each use returns a new refresh token; presenting an already-used refresh token
+        is treated as theft and **revokes the whole token family** (all sessions descended from that sign-in).
 
-        Alternative deployment (see open questions): the server may skip this exchange and accept the provider's
-        ID token directly as the bearer token. This endpoint is then not implemented.
+        Both grants return a short-lived access JWT (**15 min**, signed with **ES256**, `kid` header identifying
+        the signing key so keys can be rotated) and a new refresh token.
+
+        Errors are `application/problem+json` with `status: 400` and a stable `code`:
+        * `invalid_grant`: wrong code, expired code, no pending code for the address, or an unknown, expired,
+          revoked or reused refresh token. The response does not say which, to avoid enumeration.
+        * `otp_attempts_exceeded`: the code has been invalidated after 5 wrong attempts. Request a new code with
+          `POST /v1/auth/otp`.
+        Repeated failures from one IP are additionally rate-limited (`429`).
       security: []
       x-legacy-mapping:
         replaces: ['/smart.json cmd=checkMember', '/smart.json cmd=regMember', 'POST /mbrLogin.do cmd=login.json']
-        notes: Legacy identified members by a client-supplied e-mail (`loginId`) with no verification and used a server session cookie. Replaced by verified OIDC + bearer tokens. Registration is implicit on first exchange (`isNewMember=true`).
+        notes: Legacy identified members by a client-supplied e-mail (`loginId`) with no verification and used a server session cookie. Replaced by a verified e-mail one-time code + bearer tokens. Registration is implicit on first sign-in (`isNewMember=true`).
       parameters:
         - $ref: '#/components/parameters/XRequestId'
       requestBody:
@@ -140,8 +205,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/TokenRequest'}
             examples:
-              idToken:
-                value: {grantType: id_token, provider: google, idToken: eyJhbGciOiJSUzI1NiJ9.example.sig, nonce: 5f1c2c1e}
+              emailOtp:
+                value: {grantType: email_otp, email: driver@example.com, code: '042917', device: {appVersion: 1.0.0, osVersion: Android 15}}
               refresh:
                 value: {grantType: refresh_token, refreshToken: rt_01HFXK3Q8J6Z}
       responses:
@@ -152,9 +217,32 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TokenResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
+        '400':
+          description: Malformed request, or the grant was rejected (`invalid_grant`, `otp_attempts_exceeded`)
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+              examples:
+                invalidGrant:
+                  value:
+                    type: https://api.example.invalid/problems/invalid-grant
+                    title: Invalid grant
+                    status: 400
+                    detail: The code or refresh token is invalid or expired.
+                    instance: /v1/auth/token
+                    code: invalid_grant
+                    requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a10
+                attemptsExceeded:
+                  value:
+                    type: https://api.example.invalid/problems/otp-attempts-exceeded
+                    title: Too many attempts
+                    status: 400
+                    detail: Request a new code.
+                    instance: /v1/auth/token
+                    code: otp_attempts_exceeded
+                    requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a11
         '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableContent'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
 
   /v1/auth/logout:
@@ -894,9 +982,9 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Access JWT issued by `POST /v1/auth/token` (RS256/ES256, `iss` = API issuer, `aud` = `orange-box-api`,
-        `sub` = member id, `exp` at most 15 min proposed), or, in the alternative deployment, an OIDC ID token from
-        an allow-listed provider verified against its JWKS. The member is always derived from `sub`.
+        Access JWT issued by `POST /v1/auth/token` (ES256 with a `kid` header for key rotation, `iss` = API
+        issuer, `aud` = `orange-box-api`, `sub` = member id, `exp` 15 min after issue). The member is always derived
+        from `sub`.
 
   parameters:
     Limit:
@@ -1002,7 +1090,7 @@ components:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     Forbidden:
-      description: Authenticated but not allowed (e.g. account pending deletion, provider not allow-listed)
+      description: Authenticated but not allowed (e.g. account pending deletion or suspended)
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
@@ -1083,7 +1171,7 @@ components:
         instance: {type: string, format: uri-reference}
         code:
           type: string
-          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `etag_mismatch`, `batch_too_large`).
+          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `etag_mismatch`, `batch_too_large`).
         requestId: {type: string}
         errors:
           type: array
@@ -1108,21 +1196,32 @@ components:
 
     TokenRequest:
       oneOf:
-        - $ref: '#/components/schemas/IdTokenGrant'
+        - $ref: '#/components/schemas/EmailOtpGrant'
         - $ref: '#/components/schemas/RefreshGrant'
       discriminator:
         propertyName: grantType
         mapping:
-          id_token: '#/components/schemas/IdTokenGrant'
+          email_otp: '#/components/schemas/EmailOtpGrant'
           refresh_token: '#/components/schemas/RefreshGrant'
-    IdTokenGrant:
+    OtpRequest:
       type: object
-      required: [grantType, provider, idToken]
+      additionalProperties: false
+      required: [email]
       properties:
-        grantType: {type: string, const: id_token}
-        provider: {type: string, enum: [google], description: 'Allow-listed OIDC provider. More may be added.'}
-        idToken: {type: string}
-        nonce: {type: string}
+        email: {type: string, format: email, maxLength: 254, description: 'Trimmed and normalised to lower case by the server.'}
+    OtpResponse:
+      type: object
+      required: [expiresIn]
+      properties:
+        expiresIn: {type: integer, description: 'Seconds until the code expires (600).', examples: [600]}
+        resendAfter: {type: integer, minimum: 0, description: 'Seconds before the app should offer to resend a code.'}
+    EmailOtpGrant:
+      type: object
+      required: [grantType, email, code]
+      properties:
+        grantType: {type: string, const: email_otp}
+        email: {type: string, format: email, maxLength: 254, description: 'The address the code was sent to (same normalisation as `POST /v1/auth/otp`).'}
+        code: {type: string, pattern: '^[0-9]{6}$', description: '6-digit one-time code from the e-mail. Sent as a string to keep leading zeros.'}
         device:
           type: object
           description: Optional, for session listing. No hardware identifiers.
@@ -1153,11 +1252,11 @@ components:
       properties:
         id: {type: string, readOnly: true}
         displayName: {type: string, minLength: 1, maxLength: 40, description: 'Shown on leaderboards. Legacy memberNm.'}
-        email: {type: [string, 'null'], format: email, readOnly: true, description: 'From the verified ID token; never used as an identifier.'}
+        email: {type: [string, 'null'], format: email, readOnly: true, description: 'Verified sign-in e-mail address (verified by the one-time code), normalised to lower case and unique per member. Used to sign in; never accepted as an identifier in requests.'}
         countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$', description: 'ISO 3166-1 alpha-2. Legacy countryCd.'}
         regionCode: {type: [string, 'null'], description: 'ISO 3166-2 subdivision. Legacy localCd.'}
         rankingOptIn: {type: boolean, default: false}
-        authProvider: {type: string, readOnly: true, description: 'Legacy joinRouteCd'}
+        authProvider: {type: string, readOnly: true, enum: [email_otp], description: 'Sign-in method. Only `email_otp` in v1; new values may be added. Replaces the legacy joinRouteCd social-login values, which are not carried over.'}
         createdAt: {type: string, format: date-time, readOnly: true}
         updatedAt: {type: string, format: date-time, readOnly: true}
     ProfilePatch:
