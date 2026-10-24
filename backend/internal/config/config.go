@@ -42,10 +42,14 @@ type Config struct {
 	// ShutdownTimeout bounds graceful shutdown (SHUTDOWN_TIMEOUT, default 8s,
 	// inside Docker's default 10s stop grace period).
 	ShutdownTimeout time.Duration
-	// UploadConcurrency caps upload bodies processed at once (UPLOAD_CONCURRENCY, default 4).
+	// UploadConcurrency caps upload bodies processed at once (UPLOAD_CONCURRENCY,
+	// default 2, sized for a 512 MB host with GOMEMLIMIT=400MiB).
 	UploadConcurrency int
 	// UploadQueueWait is how long an upload waits for a slot before 503 (UPLOAD_QUEUE_WAIT, default 2s).
 	UploadQueueWait time.Duration
+	// UploadReadTimeout bounds how long an upload body may take to arrive
+	// once it holds a slot (UPLOAD_READ_TIMEOUT, default 10s, then 408).
+	UploadReadTimeout time.Duration
 	// LogLevel is the minimum log level (LOG_LEVEL: debug, info, warn, error).
 	LogLevel slog.Level
 }
@@ -103,7 +107,10 @@ func Load(getenv func(string) string) (Config, error) {
 	if c.UploadQueueWait, err = duration(getenv, "UPLOAD_QUEUE_WAIT", 2*time.Second); err != nil {
 		errs = append(errs, err)
 	}
-	c.UploadConcurrency, err = strconv.Atoi(orDefault(getenv("UPLOAD_CONCURRENCY"), "4"))
+	if c.UploadReadTimeout, err = duration(getenv, "UPLOAD_READ_TIMEOUT", 10*time.Second); err != nil {
+		errs = append(errs, err)
+	}
+	c.UploadConcurrency, err = strconv.Atoi(orDefault(getenv("UPLOAD_CONCURRENCY"), "2"))
 	if err != nil || c.UploadConcurrency < 1 || c.UploadConcurrency > 256 {
 		errs = append(errs, errors.New("UPLOAD_CONCURRENCY must be a number from 1 to 256"))
 	}

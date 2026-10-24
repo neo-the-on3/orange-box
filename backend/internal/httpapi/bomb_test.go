@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -135,6 +137,7 @@ func TestUploadConcurrencyLimit(t *testing.T) {
 		d.UploadQueueWait = 50 * time.Millisecond
 	})
 	token, _ := e.signIn("busy@test.orangebox.invalid")
+	other, _ := e.signIn("busy2@test.orangebox.invalid")
 
 	// The first upload takes the slot and then stalls mid-body.
 	pr, pw := io.Pipe()
@@ -151,9 +154,10 @@ func TestUploadConcurrencyLimit(t *testing.T) {
 		t.Fatal("first upload never started reading its body")
 	}
 
+	// Another member's upload finds no free slot: 503.
 	second := &countingReader{r: strings.NewReader(telemetryBody("2026-10-23T14:05:00Z"))}
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, uploadRequest(second, "Authorization", "Bearer "+token))
+	e.h.ServeHTTP(rec, uploadRequest(second, "Authorization", "Bearer "+other))
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"uploads_busy"`) ||
 		rec.Header().Get("Retry-After") == "" {
 		t.Errorf("second upload: %d %v %s", rec.Code, rec.Header(), rec.Body)
@@ -193,5 +197,191 @@ func TestLimitReader(t *testing.T) {
 		if buf.Len() > 11 {
 			t.Errorf("%d bytes: buffered %d", tc.in, buf.Len())
 		}
+	}
+}
+
+// gzipJSON compresses prefix + n×item (comma separated) + suffix.
+func gzipJSON(t *testing.T, prefix, item, suffix string, n int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	_, _ = io.WriteString(zw, prefix)
+	chunk := strings.Repeat(item+",", 4096)
+	for ; n > 4096; n -= 4096 {
+		_, _ = io.WriteString(zw, chunk)
+	}
+	_, _ = io.WriteString(zw, strings.Repeat(item+",", n-1)+item+suffix)
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// measure serves req once and returns the recorder, the bytes allocated and
+// the time taken.
+func measure(h http.Handler, req *http.Request) (*httptest.ResponseRecorder, uint64, time.Duration) {
+	rec := httptest.NewRecorder()
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+	h.ServeHTTP(rec, req)
+	elapsed := time.Since(start)
+	runtime.ReadMemStats(&after)
+	return rec, after.TotalAlloc - before.TotalAlloc, elapsed
+}
+
+// Regression for the second PR #163 review: kin-openapi's MultiError
+// validated every item of `{"trips":[{},{},…]}` regardless of maxItems
+// (1.36 GB and 16 s for 1 MiB inflated). The pre-scan stops at item 101.
+// Not parallel, so the allocation figures are the test's own.
+func TestArrayBombMaxItems(t *testing.T) {
+	e := newTestEnv(t, true)
+	token, _ := e.signIn("arraybomb@test.orangebox.invalid")
+	// ~8 MiB of `{},` inflated from ~16 KB of gzip.
+	bomb := gzipJSON(t, `{"trips":[`, `{}`, `]}`, (MaxUploadBody-32)/3)
+	if len(bomb) > MaxCompressedBody {
+		t.Fatalf("bomb is %d bytes", len(bomb))
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/trips/batch", bytes.NewReader(bomb))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec, alloc, elapsed := measure(e.h, req)
+	t.Logf("8 MiB of {} items (%d B gzip): %d, %d MiB allocated, %v", len(bomb), rec.Code, alloc>>20, elapsed)
+
+	if rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), `{"pointer":"/trips","detail":"must have at most 100 items"}`) {
+		t.Fatalf("status %d %s", rec.Code, rec.Body)
+	}
+	// The inflated body buffer is ~16 MiB of allocations; decoding the
+	// 2.8M objects would be hundreds of MiB.
+	if alloc > 40<<20 {
+		t.Errorf("allocated %d MiB", alloc>>20)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("took %v", elapsed)
+	}
+}
+
+// Arrays the schema leaves unbounded (a trip's dtc.stored) are covered by
+// the MaxJSONValues budget: over it is 413 before decoding; under it,
+// fail-fast validation keeps the cost proportional to the body.
+func TestArrayBombUnbounded(t *testing.T) {
+	e := newTestEnv(t, true)
+	token, _ := e.signIn("nestedbomb@test.orangebox.invalid")
+	post := func(n int) (*httptest.ResponseRecorder, uint64, time.Duration) {
+		body := gzipJSON(t, `{"trips":[{"dtc":{"stored":[`, `{}`, `]}}]}`, n)
+		req := httptest.NewRequest(http.MethodPost, "/v1/trips/batch", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Encoding", "gzip")
+		req.Header.Set("Idempotency-Key", uuid.NewString())
+		req.Header.Set("Authorization", "Bearer "+token)
+		return measure(e.h, req)
+	}
+
+	rec, alloc, elapsed := post((MaxUploadBody - 64) / 3)
+	t.Logf("over budget: %d, %d MiB allocated, %v", rec.Code, alloc>>20, elapsed)
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"batch_too_large"`) {
+		t.Fatalf("over budget: status %d %s", rec.Code, rec.Body)
+	}
+	if alloc > 40<<20 || elapsed > 2*time.Second {
+		t.Errorf("over budget: allocated %d MiB in %v", alloc>>20, elapsed)
+	}
+
+	rec, alloc, elapsed = post(MaxJSONValues - 16)
+	t.Logf("under budget: %d, %d MiB allocated, %v", rec.Code, alloc>>20, elapsed)
+	if rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), `"pointer":"/trips/0/dtc/stored/0"`) {
+		t.Fatalf("under budget: status %d %s", rec.Code, rec.Body)
+	}
+	// Decoding 500k empty objects into map[string]any is ~100 B each.
+	if alloc > 160<<20 || elapsed > 3*time.Second {
+		t.Errorf("under budget: allocated %d MiB in %v", alloc>>20, elapsed)
+	}
+}
+
+// A member gets one upload at a time: a second one while the first is in
+// flight is 429 upload_in_progress, without its body being read.
+func TestUploadOnePerMember(t *testing.T) {
+	t.Parallel()
+	e := newTestEnvWith(t, true, func(d *Deps) { d.UploadConcurrency = 4 })
+	token, _ := e.signIn("one@test.orangebox.invalid")
+
+	pr, pw := io.Pipe()
+	slow := &countingReader{r: pr, first: make(chan struct{})}
+	done := make(chan int)
+	go func() {
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, uploadRequest(slow, "Authorization", "Bearer "+token))
+		done <- rec.Code
+	}()
+	select {
+	case <-slow.first:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first upload never started reading its body")
+	}
+
+	second := &countingReader{r: strings.NewReader(telemetryBody("2026-10-23T14:05:00Z"))}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, uploadRequest(second, "Authorization", "Bearer "+token))
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), `"upload_in_progress"`) ||
+		rec.Header().Get("Retry-After") == "" {
+		t.Errorf("second upload: %d %v %s", rec.Code, rec.Header(), rec.Body)
+	}
+	if second.n.Load() != 0 {
+		t.Errorf("second upload's body was read")
+	}
+
+	_, _ = io.WriteString(pw, telemetryBody("2026-10-23T14:05:00Z"))
+	_ = pw.Close()
+	if code := <-done; code != http.StatusNotImplemented {
+		t.Errorf("first upload: %d", code)
+	}
+	rec = httptest.NewRecorder()
+	e.h.ServeHTTP(rec, uploadRequest(strings.NewReader(telemetryBody("2026-10-23T14:05:00Z")), "Authorization", "Bearer "+token))
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("upload after the first finished: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A stalled upload body is cut off after UploadReadTimeout with 408 and its
+// slot is freed, instead of holding it for the server's 30 s ReadTimeout.
+func TestUploadReadDeadline(t *testing.T) {
+	t.Parallel()
+	e := newTestEnvWith(t, true, func(d *Deps) {
+		d.UploadConcurrency = 1
+		d.UploadReadTimeout = 300 * time.Millisecond
+	})
+	token, _ := e.signIn("stall@test.orangebox.invalid")
+
+	conn, err := net.Dial("tcp", e.srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Headers promise 1000 bytes; only a few arrive.
+	_, _ = io.WriteString(conn, "POST /v1/telemetry/batches HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"+
+		"Idempotency-Key: "+uuid.NewString()+"\r\nAuthorization: Bearer "+token+"\r\nContent-Length: 1000\r\n\r\n{\"clie")
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	start := time.Now()
+	res, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusRequestTimeout {
+		t.Errorf("status %d", res.StatusCode)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("took %v", d)
+	}
+
+	// The slot is free again.
+	r := e.do(http.MethodPost, "/v1/telemetry/batches", strings.NewReader(telemetryBody("2026-10-23T14:05:00Z")),
+		"Content-Type", "application/json", "Idempotency-Key", uuid.NewString(), "Authorization", "Bearer "+token)
+	if r.status != http.StatusNotImplemented {
+		t.Errorf("upload after timeout: %d %s", r.status, r.body)
 	}
 }

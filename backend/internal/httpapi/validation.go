@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/mail"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -83,19 +86,24 @@ type TokenVerifier interface {
 //  1. finds the OpenAPI operation (404/405 problem otherwise);
 //  2. authenticates operations that require bearerAuth (401) and puts the
 //     member id in the context, before any body is read;
-//  3. for upload operations, takes one of a few processing slots (503 with
-//     Retry-After when none frees up in time);
+//  3. for upload operations, takes the member's single upload claim (429)
+//     and one of a few processing slots (503 with Retry-After when none
+//     frees up in time), and gives the body a short read deadline (408);
 //  4. enforces Content-Encoding (gzip on upload operations only, else 415)
 //     and the body limits (413), stream-inflating gzip bodies;
-//  5. validates parameters and body against the spec (400/415/422).
+//  5. pre-scans the JSON for maxItems, value-count and depth limits without
+//     decoding it (422/413/400), see prescan;
+//  6. validates parameters and body against the spec (400/415/422), failing
+//     fast on large bodies.
 type openAPIMiddleware struct {
-	doc     *openapi3.T
-	router  routers.Router
-	tokens  TokenVerifier
-	uploads *uploadLimiter
+	doc               *openapi3.T
+	router            routers.Router
+	tokens            TokenVerifier
+	uploads           *uploadLimiter
+	uploadReadTimeout time.Duration
 }
 
-func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter) (*openAPIMiddleware, error) {
+func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadReadTimeout time.Duration) (*openAPIMiddleware, error) {
 	doc, err := api.GetSpec()
 	if err != nil {
 		return nil, fmt.Errorf("load embedded spec: %w", err)
@@ -107,7 +115,7 @@ func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter) (*openAP
 	if err != nil {
 		return nil, fmt.Errorf("build OpenAPI router: %w", err)
 	}
-	return &openAPIMiddleware{doc: doc, router: router, tokens: tokens, uploads: uploads}, nil
+	return &openAPIMiddleware{doc: doc, router: router, tokens: tokens, uploads: uploads, uploadReadTimeout: uploadReadTimeout}, nil
 }
 
 func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
@@ -137,12 +145,19 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 		// processed at once; the slot is held until the handler returns.
 		upload := isUpload(route.Operation.OperationID)
 		if upload {
-			release, p := m.uploads.acquire(r.Context())
+			memberID, _ := reqctx.MemberID(r.Context())
+			release, p := m.uploads.acquire(r.Context(), memberID)
 			if p != nil {
 				problem.Write(w, r, p)
 				return
 			}
 			defer release()
+			// A slot is held while the body arrives, so a slow or stalled
+			// client gets a short deadline rather than the server's 30 s
+			// ReadTimeout. Not every ResponseWriter supports it (tests).
+			if m.uploadReadTimeout > 0 {
+				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(m.uploadReadTimeout))
+			}
 		}
 
 		body, p := readBody(r, upload)
@@ -150,30 +165,73 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			problem.Write(w, r, p)
 			return
 		}
-		setBody(r, body)
+		if len(body) > 0 {
+			if p := prescan(body, requestBodySchema(route.Operation, r.Header.Get("Content-Type"))); p != nil {
+				problem.Write(w, r, p)
+				return
+			}
+		}
 
-		input := &openapi3filter.RequestValidationInput{
-			Request:    r,
-			PathParams: pathParams,
-			Route:      route,
-			Options: &openapi3filter.Options{
-				MultiError:          true,
-				SkipSettingDefaults: true, // keep the body byte-exact for idempotency fingerprints
-				// Authentication already happened above.
-				AuthenticationFunc: func(context.Context, *openapi3filter.AuthenticationInput) error { return nil },
-			},
-		}
-		if r.Method == http.MethodHead {
-			input.Request = r.Clone(r.Context())
-			input.Request.Method = http.MethodGet
-		}
-		if err := openapi3filter.ValidateRequest(r.Context(), input); err != nil {
+		if err := m.validate(r, route, pathParams, body, false); err != nil {
+			// Fail-fast validation reports the first error only. For small
+			// bodies, validate again to list every invalid field: its cost
+			// is bounded by the body size.
+			if len(body) <= maxMultiErrorBody {
+				if all := m.validate(r, route, pathParams, body, true); all != nil {
+					err = all
+				}
+			}
 			problem.Write(w, r, mapValidationError(err))
 			return
 		}
 		setBody(r, body) // the validator consumed it
 		next.ServeHTTP(w, r)
 	})
+}
+
+// maxMultiErrorBody is the largest body validated with MultiError, which
+// lists every invalid field. kin-openapi's MultiError validates every array
+// item even past maxItems and builds an error per item, which costs about
+// 4 KB of memory per byte-sized item ({}): 1.3 GB for a 1 MiB body. Larger
+// bodies are validated fail-fast and report their first invalid field.
+const maxMultiErrorBody = 8 << 10
+
+// validate runs kin-openapi request validation over body.
+func (m *openAPIMiddleware) validate(r *http.Request, route *routers.Route, pathParams map[string]string, body []byte, multi bool) error {
+	setBody(r, body)
+	input := &openapi3filter.RequestValidationInput{
+		Request:    r,
+		PathParams: pathParams,
+		Route:      route,
+		Options: &openapi3filter.Options{
+			MultiError:          multi,
+			SkipSettingDefaults: true, // keep the body byte-exact for idempotency fingerprints
+			// Authentication already happened in wrap.
+			AuthenticationFunc: func(context.Context, *openapi3filter.AuthenticationInput) error { return nil },
+		},
+	}
+	if r.Method == http.MethodHead {
+		input.Request = r.Clone(r.Context())
+		input.Request.Method = http.MethodGet
+	}
+	return openapi3filter.ValidateRequest(r.Context(), input)
+}
+
+// requestBodySchema returns the operation's body schema for contentType, or
+// nil when there is none (the validator then reports 415 or ignores the body).
+func requestBodySchema(op *openapi3.Operation, contentType string) *openapi3.Schema {
+	if op.RequestBody == nil || op.RequestBody.Value == nil {
+		return nil
+	}
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil
+	}
+	media := op.RequestBody.Value.Content.Get(mt)
+	if media == nil || media.Schema == nil {
+		return nil
+	}
+	return media.Schema.Value
 }
 
 // findRoute returns the operation for r. HEAD is served by the GET operation.
@@ -310,6 +368,9 @@ func readBody(r *http.Request, upload bool) ([]byte, *problem.Problem) {
 			if errors.Is(err, errTooLarge) {
 				return nil, tooLarge
 			}
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				return nil, bodyTimeout()
+			}
 			return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The gzip body is malformed.")
 		}
 		defer func() { _ = zr.Close() }()
@@ -329,6 +390,9 @@ func readBody(r *http.Request, upload bool) ([]byte, *problem.Problem) {
 		if errors.Is(err, errTooLarge) {
 			return nil, tooLarge
 		}
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil, bodyTimeout()
+		}
 		if gzipped {
 			return nil, problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The gzip body is malformed.")
 		}
@@ -338,6 +402,13 @@ func readBody(r *http.Request, upload bool) ([]byte, *problem.Problem) {
 		r.Header.Del("Content-Encoding")
 	}
 	return body, nil
+}
+
+// bodyTimeout is the problem for an upload body that missed its read
+// deadline. The connection can't be reused after a timed-out read.
+func bodyTimeout() *problem.Problem {
+	return problem.New(http.StatusRequestTimeout, problem.CodeRequestTimeout,
+		"The request body was not received in time.").WithHeader("Connection", "close")
 }
 
 // readCapped reads src to EOF into a buffer that starts at hint (or 32 KiB)

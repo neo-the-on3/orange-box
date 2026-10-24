@@ -18,5 +18,10 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 COPY --from=build /out/server /server
 USER nonroot:nonroot
 ENV PORT=8080
+# Sized for a 512 MB host: the Go GC works harder as the heap nears 400 MiB,
+# leaving headroom for the runtime, stacks and the OS. With the default
+# UPLOAD_CONCURRENCY=2, peak upload memory is about 2 × 125 MB. Raise both
+# together on bigger hosts.
+ENV GOMEMLIMIT=400MiB
 EXPOSE 8080
 ENTRYPOINT ["/server"]

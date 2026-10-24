@@ -28,10 +28,13 @@ type Deps struct {
 	TestCode string
 	// RequestTimeout bounds each request's context.
 	RequestTimeout time.Duration
-	// UploadConcurrency caps upload bodies processed at once (default 4).
+	// UploadConcurrency caps upload bodies processed at once (default 2).
 	UploadConcurrency int
 	// UploadQueueWait is how long an upload waits for a slot before 503 (default 2s).
 	UploadQueueWait time.Duration
+	// UploadReadTimeout bounds how long an upload body may take to arrive
+	// once it has a slot (default 10s).
+	UploadReadTimeout time.Duration
 	// Now is the clock (time.Now if nil).
 	Now func() time.Time
 }
@@ -51,10 +54,13 @@ func NewRouter(d Deps) (http.Handler, error) {
 		d.RequestTimeout = 30 * time.Second
 	}
 	if d.UploadConcurrency <= 0 {
-		d.UploadConcurrency = 4
+		d.UploadConcurrency = 2
 	}
 	if d.UploadQueueWait <= 0 {
 		d.UploadQueueWait = 2 * time.Second
+	}
+	if d.UploadReadTimeout <= 0 {
+		d.UploadReadTimeout = 10 * time.Second
 	}
 	spec, err := api.GetSpec()
 	if err != nil {
@@ -80,7 +86,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 		ErrorHandlerFunc: errs.request,
 	})
 
-	oa, err := newOpenAPIMiddleware(d.Tokens, newUploadLimiter(d.UploadConcurrency, d.UploadQueueWait))
+	oa, err := newOpenAPIMiddleware(d.Tokens, newUploadLimiter(d.UploadConcurrency, d.UploadQueueWait), d.UploadReadTimeout)
 	if err != nil {
 		return nil, err
 	}
