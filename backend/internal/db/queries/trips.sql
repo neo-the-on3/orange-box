@@ -229,18 +229,21 @@ ON CONFLICT (member_id) DO UPDATE SET
 RETURNING member_id;
 
 -- name: ListDrivingDays :many
--- GET /v1/trips/days: trips per local calendar day in time zone tz (an IANA
--- name the handler has validated), for trips starting in
--- [started_from, started_before). vehicle_id NULL means every vehicle.
-SELECT (started_at AT TIME ZONE @tz::text)::date AS day, count(*) AS trip_count
+-- GET /v1/trips/days: live trips per range, for trips starting in
+-- [bounds[i], bounds[i+1]) (bucket i, 1-based). bounds must be strictly
+-- increasing; the handler passes the local midnights of the requested days,
+-- computed in Go, so the time zone database is Go's (which knows every
+-- backward-compatible alias, e.g. Asia/Calcutta), not the server's.
+-- vehicle_id NULL means every vehicle. Buckets without trips are left out.
+SELECT width_bucket(started_at, @bounds::timestamptz[])::int AS bucket, count(*) AS trip_count
 FROM trips
 WHERE member_id = @member_id
   AND deleted_at IS NULL
-  AND started_at >= @started_from::timestamptz
-  AND started_at < @started_before::timestamptz
+  AND started_at >= (@bounds::timestamptz[])[1]
+  AND started_at < (@bounds::timestamptz[])[cardinality(@bounds::timestamptz[])]
   AND (sqlc.narg(vehicle_id)::uuid IS NULL OR vehicle_id = sqlc.narg(vehicle_id)::uuid)
-GROUP BY day
-ORDER BY day;
+GROUP BY bucket
+ORDER BY bucket;
 
 -- name: LockLiveVehiclesForShare :many
 -- Taken by a trip batch before it writes: returns which of ids are the

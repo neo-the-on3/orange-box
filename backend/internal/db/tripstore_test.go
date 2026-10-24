@@ -136,7 +136,7 @@ func TestTripStoreMemberScope(t *testing.T) {
 	if d, err := trips.ListTripDeletions(ctx, stranger, store.TripDeletionsQuery{Since: origin(t, q), Limit: 10}); err != nil || len(d.Deletions) != 0 {
 		t.Fatalf("stranger deletions: %+v, %v", d, err)
 	}
-	if days, err := trips.DrivingDays(ctx, stranger, t0.Add(-48*time.Hour), t0.Add(48*time.Hour), "UTC", nil); err != nil || len(days) != 0 {
+	if days, err := trips.DrivingDays(ctx, stranger, []time.Time{t0.Add(-48 * time.Hour), t0.Add(48 * time.Hour)}, nil); err != nil || days[0] != 0 {
 		t.Fatalf("stranger days: %+v, %v", days, err)
 	}
 	// Deleting twice is not found; the trip is gone from every live read.
@@ -146,7 +146,7 @@ func TestTripStoreMemberScope(t *testing.T) {
 	if h, _ := trips.ListTripHistory(ctx, member, store.TripHistoryQuery{Limit: 10}); len(h.Trips) != 0 {
 		t.Fatalf("history after delete: %+v", h.Trips)
 	}
-	if days, _ := trips.DrivingDays(ctx, member, t0.Add(-48*time.Hour), t0.Add(48*time.Hour), "UTC", nil); len(days) != 0 {
+	if days, _ := trips.DrivingDays(ctx, member, []time.Time{t0.Add(-48 * time.Hour), t0.Add(48 * time.Hour)}, nil); days[0] != 0 {
 		t.Fatalf("days after delete: %+v", days)
 	}
 }

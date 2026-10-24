@@ -825,15 +825,25 @@ func TestDrivingDays(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	days, err := q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{
-		Tz: "Asia/Kolkata", MemberID: member,
-		StartedFrom:   time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC),
-		StartedBefore: time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC),
-	})
+	// Local midnights in Asia/Kolkata, Oct 22 to Oct 25.
+	var bounds []time.Time
+	for d := 22; d <= 25; d++ {
+		bounds = append(bounds, time.Date(2026, 10, d, 0, 0, 0, 0, time.UTC).Add(-330*time.Minute))
+	}
+	days, err := q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{Bounds: bounds, MemberID: member})
 	if err != nil || len(days) != 2 {
 		t.Fatalf("days = %+v, %v", days, err)
 	}
-	if d := days[0].Day.Time; d.Day() != 23 || days[0].TripCount != 2 || days[1].TripCount != 1 {
+	// Buckets are 1-based: 2 is Oct 23, 3 is Oct 24.
+	if days[0].Bucket != 2 || days[0].TripCount != 2 || days[1].Bucket != 3 || days[1].TripCount != 1 {
 		t.Errorf("days = %+v", days)
+	}
+	// A trip exactly on a bound belongs to the range it starts.
+	p := tripParams(member, vehicle, newID(), "completed", bounds[0].Add(time.Hour))
+	if _, err := q.UpsertTrip(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if days, _ := q.ListDrivingDays(ctx, dbgen.ListDrivingDaysParams{Bounds: bounds[:2], MemberID: member}); len(days) != 1 || days[0].Bucket != 1 || days[0].TripCount != 1 {
+		t.Errorf("bound-exact days = %+v", days)
 	}
 }

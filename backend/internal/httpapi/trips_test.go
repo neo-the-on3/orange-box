@@ -571,10 +571,53 @@ func TestDrivingDays(t *testing.T) {
 	if got := days("from=2026-01-01&to=2026-12-31"); got != "2026-10-22=2,2026-10-23=1,2026-11-30=1" {
 		t.Errorf("365 days = %s", got)
 	}
-	for _, query := range []string{"from=2026-10-02&to=2026-10-01", "from=2026-01-01&to=2027-01-02", "from=2026-10-01&to=2026-10-31&tz=Mars/Base", "from=2026-10-01&to=2026-10-31&tz=Local", "from=2026-10-01"} {
+	// Backward-compatible aliases (Android reports Asia/Calcutta) count like
+	// their canonical zones. 20:00Z and 10:00Z on the 22nd, 10:00Z on the 23rd.
+	for alias, canonical := range map[string]string{
+		"Asia/Calcutta":        "Asia/Kolkata",
+		"Asia/Katmandu":        "Asia/Kathmandu",
+		"US/Pacific":           "America/Los_Angeles",
+		"America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+		"Europe/Kiev":          "Europe/Kyiv",
+		"Asia/Saigon":          "Asia/Ho_Chi_Minh",
+		"Etc/GMT-14":           "Pacific/Kiritimati",
+	} {
+		got, want := days("from=2026-10-01&to=2026-10-31&tz="+url.QueryEscape(alias)), days("from=2026-10-01&to=2026-10-31&tz="+url.QueryEscape(canonical))
+		if got != want || got == "" {
+			t.Errorf("tz=%s: %s, %s: %s", alias, got, canonical, want)
+		}
+	}
+	if got := days("from=2026-10-01&to=2026-10-31&tz=Asia/Calcutta"); got != "2026-10-22=1,2026-10-23=2" {
+		t.Errorf("Calcutta days = %s", got)
+	}
+	if got := days("from=2026-10-01&to=2026-10-31&tz=US/Pacific"); got != "2026-10-22=2,2026-10-23=1" {
+		t.Errorf("US/Pacific days = %s", got)
+	}
+	for _, query := range []string{"from=2026-10-02&to=2026-10-01", "from=2026-01-01&to=2027-01-02", "from=2026-10-01&to=2026-10-31&tz=Mars/Base", "from=2026-10-01&to=2026-10-31&tz=Local", "from=2026-10-01&to=2026-10-31&tz=Factory", "from=2026-10-01&to=2026-10-31&tz=posixrules", "from=2026-10-01&to=2026-10-31&tz=../etc/passwd", "from=2026-10-01"} {
 		if r := m.call(http.MethodGet, "/v1/trips/days?"+query, ""); r.status != http.StatusBadRequest {
 			t.Errorf("days?%s: %d %s", query, r.status, r.body)
 		}
+	}
+}
+
+// TestDrivingDaysSkippedMidnight: in America/Santiago, 2026-09-06 starts
+// at 01:00 (DST skips midnight); the days around it still split right.
+func TestDrivingDaysSkippedMidnight(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("days-dst")
+	v := m.vehicle()
+	for _, start := range []string{"2026-09-06T03:30:00Z" /* 23:30 on the 5th, UTC-4 */, "2026-09-06T04:30:00Z" /* 01:30 on the 6th, UTC-3 */, "2026-09-07T02:30:00Z" /* 23:30 on the 6th */} {
+		m.upload(tripJSON(uuid.New(), v, "completed", start, start))
+	}
+	r := m.call(http.MethodGet, "/v1/trips/days?from=2026-09-04&to=2026-09-08&tz=America/Santiago", "")
+	var got []string
+	for _, x := range r.json(t)["items"].([]any) {
+		d := x.(map[string]any)
+		got = append(got, fmt.Sprintf("%s=%v", d["date"], d["tripCount"]))
+	}
+	if strings.Join(got, ",") != "2026-09-05=1,2026-09-06=2" {
+		t.Fatalf("Santiago days = %v", got)
 	}
 }
 
