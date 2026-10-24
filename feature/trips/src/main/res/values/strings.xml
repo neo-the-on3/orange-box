@@ -19,4 +19,30 @@
         <item quantity="one">%d event</item>
         <item quantity="other">%d events</item>
     </plurals>
+    <string name="trip_detail_title">Trip</string>
+    <string name="trip_detail_not_found">This trip no longer exists.</string>
+    <string name="trip_detail_gps_points">%1$d GPS points · %2$d speed readings</string>
+    <string name="trip_detail_events">Events</string>
+    <string name="trip_detail_no_events">No harsh driving or overspeed events.</string>
+    <string name="metric_distance">Distance</string>
+    <string name="metric_duration">Duration</string>
+    <string name="metric_avg_speed">Average speed</string>
+    <string name="metric_max_speed">Top speed</string>
+    <string name="metric_fuel">Fuel used</string>
+    <string name="metric_economy">Economy</string>
+    <string name="metric_co2">CO₂</string>
+    <string name="metric_eco_time">Eco driving</string>
+    <string name="metric_idle_time">Idling</string>
+    <string name="metric_overspeed_time">Overspeed</string>
+    <string name="metric_fuel_cut_time">Fuel cut</string>
+    <string name="metric_harsh">Harsh accel. / brake</string>
+    <string name="metric_harsh_value">%1$d / %2$d</string>
+    <string name="unit_kph">%1$s km/h</string>
+    <string name="unit_litres">%1$s L</string>
+    <string name="unit_kg">%1$s kg</string>
+    <string name="unit_mps2">%1$s m/s²</string>
+    <string name="event_harsh_accel">Harsh acceleration</string>
+    <string name="event_harsh_brake">Harsh braking</string>
+    <string name="event_overspeed">Overspeed</string>
+    <string name="event_fuel_cut">Fuel cut</string>
 </resources>
