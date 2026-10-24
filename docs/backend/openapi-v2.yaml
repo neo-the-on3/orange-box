@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Orange Box API
-  version: 1.0.0-draft.5
+  version: 1.0.0-draft.6
   summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
   description: |
     Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
@@ -22,8 +22,12 @@ info:
     * **Media types**: `application/json` (UTF-8) for requests and responses; `application/merge-patch+json`
       (RFC 7396) for PATCH; `application/problem+json` (RFC 9457) for every error.
     * **Compression**: clients may send `Content-Encoding: gzip` on the batch upload operations
-      (`POST /v1/trips/batch`, `POST /v1/telemetry/batches`, `POST /v1/vehicles/{vehicleId}/dtc-reports`). Servers
-      should honour `Accept-Encoding: gzip` on responses.
+      (`POST /v1/trips/batch`, `POST /v1/telemetry/batches`, `POST /v1/vehicles/{vehicleId}/dtc-reports`).
+      `Content-Encoding` is a representation header, not an API parameter, so it is not declared as one: the server
+      decompresses the body before schema validation, enforcing the uncompressed size limit while it inflates. A
+      missing header or `identity` means an uncompressed body; any other value (e.g. `br`, `deflate`), or
+      `Content-Encoding` on any other operation, returns `415` (`code=unsupported_encoding`). Servers should honour
+      `Accept-Encoding: gzip` on responses.
     * **Time**: all timestamps are RFC 3339 / ISO-8601 in UTC with a `Z` suffix (e.g. `2026-10-23T14:05:00Z`).
       Calendar dates (`YYYY-MM-DD`) are interpreted in the IANA time zone passed in the `tz` query parameter where
       one exists, otherwise UTC.
@@ -40,9 +44,19 @@ info:
       can answer `428` itself instead of a generic `400`; handlers must enforce it. Every resource also exposes
       `updatedAt`. Operations that document `304` accept `If-None-Match`.
     * **Idempotency**: `Idempotency-Key` header (UUID) is required on batch uploads and accepted on other POSTs.
-      The server stores the key with a request fingerprint and the response for at least 24 h (proposal). A retry
-      with the same key and body returns the original response; the same key with a different body returns
-      `422`; a retry while the first request is still processing returns `409`.
+      Keys are scoped per **(member, HTTP method, route template)** (e.g. `POST /v1/vehicles/{vehicleId}/dtc-reports`
+      with the path parameters part of the fingerprint): the same UUID sent by another member, or to another route,
+      is a different key and can never replay someone else's stored response. The server stores the key with a
+      request fingerprint (path parameters plus the decompressed body) and the response for at least 24 h
+      (proposal). A retry with the same key and fingerprint returns the original response (same status and body);
+      the same key with a different fingerprint returns `422` (`code=idempotency_key_reused`); a retry while the
+      first request is still processing returns `409` (`code=idempotency_in_flight`). `409` is used for nothing
+      else, so clients can always retry it.
+    * **Deletion tombstones**: deleting a trip (directly, or through `DELETE /v1/vehicles/{vehicleId}?cascade=true`)
+      erases its data and leaves a tombstone holding only the server id, the `clientTripId` and `deletedAt`. Late
+      uploads for a tombstoned `clientTripId` are acknowledged but never recreate the trip, and incremental sync
+      reports the deletion through `GET /v1/trips/deletions`. Tombstones are kept for at least 90 days (proposal;
+      longer than the app's 30-day upload backlog) and are erased with the account.
     * **Rate limits**: every response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds),
       set by middleware (declared explicitly only on a few operations to keep the document readable). Every
       operation documents `429`. `429` and `503` carry `Retry-After`. Clients back off exponentially with jitter.
@@ -356,7 +370,6 @@ paths:
                     instance: /v1/auth/token
                     code: otp_locked
                     requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a12
-        '403': {$ref: '#/components/responses/Forbidden'}
         '422':
           description: |
             Validation failed, or `code=test_address_rejected`: the address is in the reserved test domain
@@ -470,8 +483,9 @@ paths:
         transaction.
 
         Because the caller's tokens are revoked, the call cannot be repeated: a retry gets `401`. An app that lost
-        the `202` and gets `401` on retry treats the deletion as accepted and clears its local session. Signing in
-        again with the same address during the erasure window creates a new, empty member.
+        the `202` and gets `401` on retry treats the deletion as accepted and clears its local session. The deleted
+        member's e-mail address is detached in the same transaction (the unique constraint applies only to live
+        members), so signing in again with the same address during the erasure window creates a new, empty member.
       x-legacy-mapping:
         replaces: ['/smart.json cmd=withdrawMember']
         notes: The legacy client only sent memberNo; the legacy DTO has activeYn/withdrawDate fields. v1 requires real erasure.
@@ -516,6 +530,12 @@ paths:
       tags: [vehicles]
       operationId: createVehicle
       summary: Register a vehicle
+      description: |
+        De-duplicated by `clientVehicleId`. If the caller already has a vehicle (archived or not) with the same
+        `clientVehicleId`, nothing is created or changed and the existing vehicle is returned with `200`, whatever
+        the body says; the app then uses `PATCH` with its `ETag` to change it. This makes a retry safe even under a
+        new `Idempotency-Key`. If that vehicle was deleted, the response is `410` (`code=vehicle_deleted`) and the
+        app must not retry.
       x-legacy-mapping:
         replaces: ['/smart.json cmd=insertCar']
         notes: The legacy OBD adapter Bluetooth MAC (`obdMac`) is not sent; it stays on the device.
@@ -527,6 +547,14 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/VehicleCreate'}
       responses:
+        '200':
+          description: Replay. The caller already has a vehicle with this `clientVehicleId`; it is returned unchanged.
+          headers:
+            Location: {$ref: '#/components/headers/Location'}
+            ETag: {$ref: '#/components/headers/ETag'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Vehicle'}
         '201':
           description: Created
           headers:
@@ -538,6 +566,11 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '410':
+          description: A vehicle with this `clientVehicleId` was deleted (`code=vehicle_deleted`). Do not retry.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         default: {$ref: '#/components/responses/InternalError'}
@@ -561,7 +594,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Vehicle'}
-        '304': {description: 'Not modified (If-None-Match matched)'}
+        '304':
+          description: 'Not modified (If-None-Match matched)'
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -599,7 +635,11 @@ paths:
       tags: [vehicles]
       operationId: deleteVehicle
       summary: Delete a vehicle
-      description: Deletes the vehicle. Its trips stay with the member (keeping `vehicleId` as a dangling reference) unless `?cascade=true`.
+      description: |
+        Deletes the vehicle. Its trips stay with the member (keeping `vehicleId` as a dangling reference) unless
+        `?cascade=true`, which also deletes the vehicle's trips, telemetry and DTC reports and leaves a tombstone for
+        each deleted trip (see Deletion tombstones), so a late upload cannot recreate them. Its `clientVehicleId`
+        is remembered as well: `POST /v1/vehicles` with it returns `410`.
       x-legacy-mapping:
         replaces: ['/smart.json cmd=updateCar with activeYn=N']
         notes: 'Legacy deactivated a car via updateCar(activeYn=N). Archiving (keep, hide) is PATCH with {"archived": true}; DELETE removes it.'
@@ -607,7 +647,7 @@ paths:
         - $ref: '#/components/parameters/IfMatch'
         - name: cascade
           in: query
-          description: Also delete the vehicle's trips, telemetry and DTC reports.
+          description: Also delete the vehicle's trips (leaving tombstones), telemetry and DTC reports.
           schema: {type: boolean, default: false}
       responses:
         '204': {description: 'Deleted'}
@@ -635,12 +675,15 @@ paths:
         '200':
           description: Page of makes
           headers:
-            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            Cache-Control: {$ref: '#/components/headers/CachePrivate'}
             ETag: {$ref: '#/components/headers/ETag'}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/MakePage'}
-        '304': {description: 'Not modified'}
+        '304':
+          description: 'Not modified'
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -666,12 +709,15 @@ paths:
         '200':
           description: Page of models
           headers:
-            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            Cache-Control: {$ref: '#/components/headers/CachePrivate'}
             ETag: {$ref: '#/components/headers/ETag'}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ModelPage'}
-        '304': {description: 'Not modified'}
+        '304':
+          description: 'Not modified'
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '400': {$ref: '#/components/responses/BadRequest'}
@@ -700,12 +746,15 @@ paths:
         '200':
           description: Page of variants
           headers:
-            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            Cache-Control: {$ref: '#/components/headers/CachePrivate'}
             ETag: {$ref: '#/components/headers/ETag'}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/VariantPage'}
-        '304': {description: 'Not modified'}
+        '304':
+          description: 'Not modified'
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -724,7 +773,7 @@ paths:
         '200':
           description: Variant
           headers:
-            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            Cache-Control: {$ref: '#/components/headers/CachePrivate'}
             ETag: {$ref: '#/components/headers/ETag'}
           content:
             application/json:
@@ -748,7 +797,7 @@ paths:
         '200':
           description: Countries (small, unpaginated list)
           headers:
-            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            Cache-Control: {$ref: '#/components/headers/CachePrivate'}
             ETag: {$ref: '#/components/headers/ETag'}
           content:
             application/json:
@@ -757,7 +806,10 @@ paths:
                 required: [items]
                 properties:
                   items: {type: array, items: {$ref: '#/components/schemas/Country'}}
-        '304': {description: 'Not modified'}
+        '304':
+          description: 'Not modified'
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         default: {$ref: '#/components/responses/InternalError'}
@@ -777,7 +829,7 @@ paths:
         '200':
           description: Regions
           headers:
-            Cache-Control: {$ref: '#/components/headers/CachePublic'}
+            Cache-Control: {$ref: '#/components/headers/CachePrivate'}
             ETag: {$ref: '#/components/headers/ETag'}
           content:
             application/json:
@@ -786,7 +838,10 @@ paths:
                 required: [items]
                 properties:
                   items: {type: array, items: {$ref: '#/components/schemas/Region'}}
-        '304': {description: 'Not modified'}
+        '304':
+          description: 'Not modified'
+          headers:
+            ETag: {$ref: '#/components/headers/ETag'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -803,12 +858,15 @@ paths:
         upserts by (member, `clientTripId`) and ignores snapshots older than the stored `snapshotAt`.
         A `completed` trip is immutable except for deletion. Per-item results are returned; the batch as a whole
         succeeds (`200`) even if some items are rejected.
+
+        A trip whose `clientTripId` has a tombstone (it was deleted) is never recreated: its item gets
+        `status=rejected` with `problem.code=trip_deleted`, and the app drops it from its queue. An item whose
+        `vehicleId` is not one of the caller's vehicles gets `status=rejected` with `problem.code=vehicle_not_found`.
       x-legacy-mapping:
         replaces: ['/smart.json cmd=carMessage (msgList[].trip, gathering server)']
         notes: Legacy sent base64(gzip(JSON)) in a form field with memberNo/carNo in the body, and trip states opened/updating/closed. v1 uses JSON with optional gzip Content-Encoding and identity from the token.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/ContentEncoding'
         - $ref: '#/components/parameters/XRequestId'
       requestBody:
         required: true
@@ -839,7 +897,12 @@ paths:
     get:
       tags: [trips]
       operationId: listTrips
-      summary: List trips (newest first)
+      summary: List trips (newest first, or by change time for incremental sync)
+      description: |
+        Without `updatedSince`, trips are ordered by `startedAt` descending, then `id` (history view, restore).
+        With `updatedSince`, trips are ordered by **(`updatedAt`, `id`) ascending** so a cursor walk is stable while
+        trips keep changing; the app stores the last `updatedAt` it saw and passes it as the next `updatedSince`.
+        Deleted trips never appear here; fetch them from `GET /v1/trips/deletions` with the same instant.
       x-legacy-mapping:
         replaces: none
         notes: Legacy had no trip-list JSON API; trip history was shown in server-rendered pages (`/m/view.do`, `/m/chart.do`). Used for restore on a new device.
@@ -849,13 +912,41 @@ paths:
         - {name: vehicleId, in: query, schema: {type: string}}
         - {name: from, in: query, description: 'Trips starting at or after this instant', schema: {type: string, format: date-time}}
         - {name: to, in: query, description: 'Trips starting before this instant', schema: {type: string, format: date-time}}
-        - {name: updatedSince, in: query, description: 'Incremental sync - only trips changed after this instant', schema: {type: string, format: date-time}}
+        - {name: updatedSince, in: query, description: 'Incremental sync - only trips changed after this instant; switches the order to (updatedAt, id) ascending', schema: {type: string, format: date-time}}
       responses:
         '200':
           description: Page of trips
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TripPage'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        default: {$ref: '#/components/responses/InternalError'}
+
+  /v1/trips/deletions:
+    get:
+      tags: [trips]
+      operationId: listTripDeletions
+      summary: Trips deleted since an instant (incremental sync)
+      description: |
+        Returns tombstones of the caller's trips deleted after `since` (directly or through a vehicle cascade),
+        ordered by (`deletedAt`, `id`) ascending. A second device uses it together with
+        `GET /v1/trips?updatedSince=` to remove trips deleted elsewhere. Tombstones are kept for at least 90 days
+        (proposal); if `since` is older than that, the response is `400` with `code=sync_window_expired` and the
+        app does a full resync (`GET /v1/trips` without `updatedSince`).
+      x-legacy-mapping:
+        replaces: none
+      parameters:
+        - {name: since, in: query, required: true, schema: {type: string, format: date-time}}
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Page of trip tombstones
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TripDeletionPage'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -918,6 +1009,10 @@ paths:
       tags: [trips]
       operationId: deleteTrip
       summary: Delete a trip with its telemetry
+      description: |
+        Erases the trip, its samples and events, and leaves a tombstone (see Deletion tombstones). Later snapshots
+        or telemetry for the same `clientTripId` are acknowledged without recreating it, and the deletion shows up
+        in `GET /v1/trips/deletions`. Deleting an already deleted trip returns `404`.
       x-legacy-mapping:
         replaces: none
       responses:
@@ -980,9 +1075,19 @@ paths:
       summary: Upload a batch of telemetry samples and events for one trip
       description: |
         Samples and events are appended to the trip identified by `clientTripId` (the trip summary may arrive
-        before or after its telemetry). De-duplication is by `clientBatchId` (and the `Idempotency-Key` header);
-        individual samples are de-duplicated by (`clientTripId`, `t`). Processing may be asynchronous: `202`
-        means durably stored, not necessarily aggregated.
+        before or after its telemetry, so an unknown `clientTripId` is normal and is **never** a `404`).
+        De-duplication is by `clientBatchId` (and the `Idempotency-Key` header). Individual samples are
+        de-duplicated by (`clientTripId`, `t`) and events by (`clientTripId`, `t`, `type`). Processing may be
+        asynchronous: `202` means durably stored, not necessarily aggregated.
+
+        The counts in the acknowledgement cover **this batch only**: in-batch duplicates and out-of-range values
+        are dropped and counted, but duplicates of samples or events from *earlier* batches are not detected at
+        upload time. They are removed when telemetry is read back or compacted, so `GET /v1/trips/{tripId}/samples`
+        and `/events` never return duplicates.
+
+        If `clientTripId` has a tombstone (the trip was deleted), the batch is discarded and acknowledged with
+        `202` and `status=trip_deleted`, so the app can drop it. Otherwise `vehicleId` must be one of the caller's
+        vehicles; if it is not (unknown, another member's, or deleted), the response is `404`.
 
         Size limits (proposal): at most 5,000 samples + 500 events per batch and 1 MiB compressed / 8 MiB
         uncompressed body; otherwise `413`.
@@ -991,7 +1096,6 @@ paths:
         notes: Legacy SmartRecord PID fields (vss, ect, maf, map, iat, tp, fli, auxBat ...) are renamed to unit-bearing names; `video` references (dashcam) are dropped.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/ContentEncoding'
         - $ref: '#/components/parameters/XRequestId'
       requestBody:
         required: true
@@ -1000,7 +1104,7 @@ paths:
             schema: {$ref: '#/components/schemas/TelemetryBatch'}
       responses:
         '202':
-          description: Accepted and durably stored
+          description: Accepted and durably stored (or discarded because the trip was deleted, `status=trip_deleted`)
           headers:
             RateLimit-Limit: {$ref: '#/components/headers/RateLimit-Limit'}
             RateLimit-Remaining: {$ref: '#/components/headers/RateLimit-Remaining'}
@@ -1010,7 +1114,13 @@ paths:
               schema: {$ref: '#/components/schemas/TelemetryBatchAck'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
-        '404': {$ref: '#/components/responses/NotFound'}
+        '404':
+          description: |
+            `vehicleId` is not one of the caller's vehicles (unknown, another member's, or deleted;
+            `code=vehicle_not_found`). Never returned for an unknown `clientTripId`.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
         '409': {$ref: '#/components/responses/Conflict'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
@@ -1031,7 +1141,6 @@ paths:
         notes: Legacy embedded DTCs as strings inside trip and event messages. v1 makes a DTC read/clear a first-class record.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/ContentEncoding'
         - $ref: '#/components/parameters/XRequestId'
       requestBody:
         required: true
@@ -1263,12 +1372,6 @@ components:
       in: header
       required: false
       schema: {type: string, format: uuid}
-    ContentEncoding:
-      name: Content-Encoding
-      in: header
-      required: false
-      description: '`gzip` allowed; any other value → 415.'
-      schema: {type: string, enum: [gzip, identity]}
     XRequestId:
       name: X-Request-Id
       in: header
@@ -1300,7 +1403,7 @@ components:
       schema: {type: string, format: uri-reference}
     NoStore:
       schema: {type: string, const: no-store}
-    CachePublic:
+    CachePrivate:
       description: |
         Catalogue/reference data is cacheable by the app (proposal - `private, max-age=86400`). These operations
         require auth, so the response is `private`, not `public`: shared caches must not serve it to
@@ -1331,18 +1434,13 @@ components:
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
-    Forbidden:
-      description: Authenticated but not allowed (e.g. account pending deletion or suspended)
-      content:
-        application/problem+json:
-          schema: {$ref: '#/components/schemas/Problem'}
     NotFound:
       description: Resource does not exist or is not owned by the caller
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     Conflict:
-      description: Conflicting state (idempotent request still in progress, duplicate client id)
+      description: An earlier request with the same `Idempotency-Key` is still being processed (`code=idempotency_in_flight`). Safe to retry after a short delay.
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
@@ -1427,7 +1525,7 @@ components:
         instance: {type: string, format: uri-reference}
         code:
           type: string
-          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `test_address_rejected`, `internal_error`, `etag_mismatch`, `batch_too_large`).
+          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `test_address_rejected`, `internal_error`, `etag_mismatch`, `batch_too_large`, `unsupported_encoding`, `idempotency_in_flight`, `vehicle_deleted`, `vehicle_not_found`, `trip_deleted`, `sync_window_expired`).
         requestId: {type: string}
         errors:
           type: array
@@ -1481,7 +1579,7 @@ components:
         code: {type: string, pattern: '^[0-9]{6}$', description: '6-digit one-time code from the e-mail. Sent as a string to keep leading zeros.'}
         device:
           type: object
-          description: Optional, for session listing. No hardware identifiers.
+          description: Optional. Stored with the refresh-token family for support and a possible future session list; no endpoint exposes it in v1. No hardware identifiers.
           additionalProperties: false
           properties:
             appVersion: {type: string, maxLength: 32}
@@ -1640,7 +1738,7 @@ components:
         engineDisplacementCc: {type: [integer, 'null']}
         releaseYear: {type: [integer, 'null']}
         discontinuedYear: {type: [integer, 'null']}
-        officialFuelEconomyKmPerL: {type: [number, 'null'], description: 'Legacy fuelEconomy (unit inferred as km/L)'}
+        officialFuelEconomyKmPerL: {type: [number, 'null'], format: double, description: 'Legacy fuelEconomy (unit inferred as km/L)'}
         imageUrl: {type: [string, 'null'], format: uri, description: 'Absolute HTTPS URL (legacy carImageFile was a path relative to the service base URL)'}
     MakePage:
       allOf:
@@ -1688,7 +1786,7 @@ components:
       properties:
         fromKmh: {type: integer, minimum: 0}
         toKmh: {type: [integer, 'null'], description: 'null means open-ended (legacy timeIn110Over)'}
-        seconds: {type: number, minimum: 0}
+        seconds: {type: number, format: double, minimum: 0}
     DtcCode:
       type: string
       pattern: '^[PCBU][0-9A-F]{4}$'
@@ -1710,30 +1808,30 @@ components:
         endedAt: {type: [string, 'null'], format: date-time}
         snapshotAt: {type: string, format: date-time, description: 'When the app computed this snapshot; older snapshots are ignored'}
         durationS: {type: integer, minimum: 0}
-        distanceKm: {type: number, minimum: 0}
-        engineDistanceKm: {type: [number, 'null']}
-        maxSpeedKmh: {type: number}
-        avgSpeedKmh: {type: number}
+        distanceKm: {type: number, format: double, minimum: 0}
+        engineDistanceKm: {type: [number, 'null'], format: double}
+        maxSpeedKmh: {type: number, format: double}
+        avgSpeedKmh: {type: number, format: double}
         maxRpm: {type: integer}
         harshAccelCount: {type: integer, minimum: 0}
         harshBrakeCount: {type: integer, minimum: 0, description: 'Legacy harshDecelCount'}
         harshStartCount: {type: integer, minimum: 0}
         harshStopCount: {type: integer, minimum: 0}
-        fuelUsedL: {type: [number, 'null'], description: 'Legacy fuelConsumption'}
-        fuelEconomyKmPerL: {type: [number, 'null']}
-        fuelCutTimeS: {type: number}
-        idleTimeS: {type: number}
-        warmUpTimeS: {type: number}
-        accelTimeS: {type: number}
-        ecoSpeedTimeS: {type: number}
-        overSpeedTimeS: {type: number}
+        fuelUsedL: {type: [number, 'null'], format: double, description: 'Legacy fuelConsumption'}
+        fuelEconomyKmPerL: {type: [number, 'null'], format: double}
+        fuelCutTimeS: {type: number, format: double}
+        idleTimeS: {type: number, format: double}
+        warmUpTimeS: {type: number, format: double}
+        accelTimeS: {type: number, format: double}
+        ecoSpeedTimeS: {type: number, format: double}
+        overSpeedTimeS: {type: number, format: double}
         speedBands: {type: array, items: {$ref: '#/components/schemas/SpeedBand'}, description: 'Legacy timeIn0To10 … timeIn110Over'}
-        ecoScore: {type: [number, 'null'], description: 'Client-computed (clean-room formula, see docs/telemetry.md). Legacy ecoSafePoint.'}
-        safetyScore: {type: [number, 'null'], description: 'Legacy safePoint'}
-        batteryMaxV: {type: [number, 'null']}
-        batteryAvgV: {type: [number, 'null']}
-        coolantMaxC: {type: [number, 'null']}
-        coolantAvgC: {type: [number, 'null']}
+        ecoScore: {type: [number, 'null'], format: double, description: 'Client-computed (clean-room formula, see docs/telemetry.md). Legacy ecoSafePoint.'}
+        safetyScore: {type: [number, 'null'], format: double, description: 'Legacy safePoint'}
+        batteryMaxV: {type: [number, 'null'], format: double}
+        batteryAvgV: {type: [number, 'null'], format: double}
+        coolantMaxC: {type: [number, 'null'], format: double}
+        coolantAvgC: {type: [number, 'null'], format: double}
         dtc: {$ref: '#/components/schemas/DtcSet'}
         simulated: {type: boolean, default: false, description: 'True when recorded with the debug simulator; excluded from rankings. Legacy simulatedYn.'}
         app:
@@ -1771,6 +1869,22 @@ components:
               status: {type: string, enum: [created, updated, unchanged, rejected]}
               id: {type: [string, 'null'], description: 'Server id when accepted'}
               problem: {$ref: '#/components/schemas/Problem'}
+    TripDeletion:
+      type: object
+      description: Tombstone of a deleted trip. Holds no trip data.
+      required: [id, clientTripId, deletedAt]
+      properties:
+        id: {type: string, description: Server trip id}
+        clientTripId: {type: string, format: uuid}
+        vehicleId: {type: [string, 'null'], description: 'Vehicle the trip belonged to, if known'}
+        deletedAt: {type: string, format: date-time}
+    TripDeletionPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items: {type: array, items: {$ref: '#/components/schemas/TripDeletion'}}
     TripPage:
       allOf:
         - $ref: '#/components/schemas/PageMeta'
@@ -1785,30 +1899,30 @@ components:
       required: [t]
       properties:
         t: {type: string, format: date-time}
-        lat: {type: [number, 'null'], minimum: -90, maximum: 90}
-        lon: {type: [number, 'null'], minimum: -180, maximum: 180}
-        speedKmh: {type: [number, 'null']}
-        rpm: {type: [number, 'null']}
-        mafGps: {type: [number, 'null'], description: 'g/s'}
-        mapKpa: {type: [number, 'null']}
-        intakeAirC: {type: [number, 'null']}
-        coolantC: {type: [number, 'null']}
-        engineLoadPct: {type: [number, 'null']}
-        throttlePct: {type: [number, 'null']}
-        fuelLevelPct: {type: [number, 'null']}
-        batteryV: {type: [number, 'null']}
+        lat: {type: [number, 'null'], format: double, minimum: -90, maximum: 90}
+        lon: {type: [number, 'null'], format: double, minimum: -180, maximum: 180}
+        speedKmh: {type: [number, 'null'], format: double}
+        rpm: {type: [number, 'null'], format: double}
+        mafGps: {type: [number, 'null'], format: double, description: 'g/s'}
+        mapKpa: {type: [number, 'null'], format: double}
+        intakeAirC: {type: [number, 'null'], format: double}
+        coolantC: {type: [number, 'null'], format: double}
+        engineLoadPct: {type: [number, 'null'], format: double}
+        throttlePct: {type: [number, 'null'], format: double}
+        fuelLevelPct: {type: [number, 'null'], format: double}
+        batteryV: {type: [number, 'null'], format: double}
         mil: {type: [boolean, 'null']}
         accel:
           type: object
           description: m/s² in device frame
           properties:
-            x: {type: number}
-            y: {type: number}
-            z: {type: number}
+            x: {type: number, format: double}
+            y: {type: number, format: double}
+            z: {type: number, format: double}
         pids:
           type: object
           description: Extra SAE J1979 mode 01 values keyed by hex PID (e.g. `"0x0B"`), already scaled to SI units.
-          additionalProperties: {type: number}
+          additionalProperties: {type: number, format: double}
     Event:
       type: object
       required: [t, type]
@@ -1816,10 +1930,10 @@ components:
         t: {type: string, format: date-time}
         type: {$ref: '#/components/schemas/EventType'}
         active: {type: boolean, default: true, description: 'Warning started (true) or cleared (false). Legacy ThreeState Y/N.'}
-        lat: {type: [number, 'null'], minimum: -90, maximum: 90}
-        lon: {type: [number, 'null'], minimum: -180, maximum: 180}
+        lat: {type: [number, 'null'], format: double, minimum: -90, maximum: 90}
+        lon: {type: [number, 'null'], format: double, minimum: -180, maximum: 180}
         dtc: {type: [string, 'null'], pattern: '^[PCBU][0-9A-F]{4}$'}
-        value: {type: [number, 'null'], description: 'Measured value that triggered the event (e.g. g-force, km/h, V)'}
+        value: {type: [number, 'null'], format: double, description: 'Measured value that triggered the event (e.g. g-force, km/h, V)'}
     TelemetryBatch:
       type: object
       required: [clientBatchId, clientTripId, vehicleId]
@@ -1834,10 +1948,11 @@ components:
       required: [clientBatchId, status, acceptedSamples, acceptedEvents]
       properties:
         clientBatchId: {type: string, format: uuid}
-        status: {type: string, enum: [accepted, duplicate]}
-        acceptedSamples: {type: integer}
-        acceptedEvents: {type: integer}
-        droppedSamples: {type: integer, description: 'Duplicates or out-of-range values dropped'}
+        status: {type: string, enum: [accepted, duplicate, trip_deleted], description: '`duplicate`: this `clientBatchId` was already stored (the original counts are returned). `trip_deleted`: the trip has a tombstone; nothing was stored.'}
+        acceptedSamples: {type: integer, minimum: 0, description: 'Samples stored from this batch (0 for `trip_deleted`).'}
+        acceptedEvents: {type: integer, minimum: 0, description: 'Events stored from this batch (0 for `trip_deleted`).'}
+        droppedSamples: {type: integer, minimum: 0, description: 'Samples dropped within this batch (in-batch duplicates or out-of-range values). Duplicates of earlier batches are not counted; they are removed on read-back or compaction.'}
+        droppedEvents: {type: integer, minimum: 0, description: 'Events dropped within this batch, on the same terms as `droppedSamples`.'}
     SamplePage:
       allOf:
         - $ref: '#/components/schemas/PageMeta'
@@ -1895,19 +2010,19 @@ components:
         vehicleId: {type: [string, 'null']}
         tripCount: {type: integer}
         durationS: {type: integer}
-        distanceKm: {type: number}
-        fuelUsedL: {type: [number, 'null']}
-        fuelEconomyKmPerL: {type: [number, 'null']}
+        distanceKm: {type: number, format: double}
+        fuelUsedL: {type: [number, 'null'], format: double}
+        fuelEconomyKmPerL: {type: [number, 'null'], format: double}
         harshAccelCount: {type: integer}
         harshBrakeCount: {type: integer}
-        idleTimeS: {type: number}
-        normalSpeedTimeS: {type: number}
-        ecoSpeedTimeS: {type: number}
-        overSpeedTimeS: {type: number}
-        fuelCutTimeS: {type: number}
-        highLoadTimeS: {type: number}
-        maxSpeedKmh: {type: [number, 'null']}
-        drivingScore: {type: [number, 'null'], minimum: 0, maximum: 100}
+        idleTimeS: {type: number, format: double}
+        normalSpeedTimeS: {type: number, format: double}
+        ecoSpeedTimeS: {type: number, format: double}
+        overSpeedTimeS: {type: number, format: double}
+        fuelCutTimeS: {type: number, format: double}
+        highLoadTimeS: {type: number, format: double}
+        maxSpeedKmh: {type: [number, 'null'], format: double}
+        drivingScore: {type: [number, 'null'], format: double, minimum: 0, maximum: 100}
         level: {type: [integer, 'null']}
         scoreStars:
           type: object
@@ -1923,8 +2038,8 @@ components:
         fuelCost:
           type: [object, 'null']
           properties:
-            amount: {type: number}
-            saved: {type: number}
+            amount: {type: number, format: double}
+            saved: {type: number, format: double}
             currency: {type: string, pattern: '^[A-Z]{3}$'}
     RankingEntry:
       type: object
@@ -1934,7 +2049,7 @@ components:
         displayName: {type: string}
         regionCode: {type: [string, 'null']}
         vehicleLabel: {type: [string, 'null'], description: 'e.g. make and model; never plate or VIN'}
-        value: {type: number}
+        value: {type: number, format: double}
         isMe: {type: boolean}
     RankingPage:
       allOf:
@@ -1954,8 +2069,8 @@ components:
         period: {$ref: '#/components/schemas/Period'}
         rank: {type: integer, minimum: 1}
         participants: {type: integer}
-        value: {type: number}
-        percentile: {type: number, minimum: 0, maximum: 100}
+        value: {type: number, format: double}
+        percentile: {type: number, format: double, minimum: 0, maximum: 100}
     PointsBalance:
       type: object
       required: [earned, used, remaining]
