@@ -173,8 +173,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if v := strings.TrimSpace(getenv("SYNC_TOKEN_KEY")); v != "" {
 		key, err := decodeKey(v)
-		if err != nil || len(key) < 32 {
+		switch {
+		case isHex(v):
+			errs = append(errs, errors.New("SYNC_TOKEN_KEY looks like hex; it must be base64 of at least 32 random bytes (e.g. `openssl rand -base64 32`)"))
+		case err != nil || len(key) < 32:
 			errs = append(errs, errors.New("SYNC_TOKEN_KEY must be base64 of at least 32 bytes (e.g. `openssl rand -base64 32`)"))
+		case weakKey(key):
+			errs = append(errs, errors.New("SYNC_TOKEN_KEY is not random (one repeated byte); generate one with `openssl rand -base64 32`"))
 		}
 		c.SyncTokenKey = key
 	} else if !c.IsDevEnvironment() {
@@ -220,6 +225,28 @@ func ValidateTestCode(code string) error {
 		return errors.New("must not be an ascending or descending run")
 	}
 	return nil
+}
+
+// isHex reports whether v is only hex digits: a hex key decodes as base64
+// too, but to other bytes than meant, so it is rejected to avoid confusion.
+// Random base64 of 32 bytes is all hex digits with negligible probability.
+func isHex(v string) bool {
+	for _, r := range v {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
+}
+
+// weakKey reports a key made of one repeated byte (e.g. 32 zero bytes).
+func weakKey(k []byte) bool {
+	for _, b := range k {
+		if b != k[0] {
+			return false
+		}
+	}
+	return true
 }
 
 // decodeKey accepts standard or URL-safe base64, padded or not.
