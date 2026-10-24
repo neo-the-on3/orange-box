@@ -9,6 +9,7 @@ import io.github.neotheon3.orangebox.core.database.TripEventEntity
 import io.github.neotheon3.orangebox.core.database.TripSampleEntity
 import io.github.neotheon3.orangebox.core.database.TripRepository
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.After
@@ -58,6 +59,58 @@ class DebugExportsTest {
         assertEquals(1, Regex("<trk>").findAll(g).count())
     }
 
+    @Test fun `a large history exports fast in batches with progress (#166)`() = runTest {
+        // 40 trips × 900 samples ≈ the beta tester's 38 trips / 34k samples.
+        val n = 40
+        val perTrip = 900
+        val big = InMemoryTrips(
+            (1..n).map { TripEntity(id = it.toLong(), vehicleId = null, startedAtMillis = t0 + it * 3_600_000L, endedAtMillis = t0 + it * 3_600_000L + perTrip * 1000L, lastSampleAtMillis = t0 + it * 3_600_000L) },
+            samplesByTrip = (1..n).associate { id ->
+                id.toLong() to (0 until perTrip).map { i ->
+                    TripSampleEntity(tripId = id.toLong(), timestampMillis = t0 + id * 3_600_000L + i * 1000L, speedKph = 50.0 + i % 40, rpm = 2000.0, fuelFlowLph = 3.1, coolantC = 90.0,
+                        latitude = if (id % 10 == 0) null else 12.9 + i * 1e-5, longitude = if (id % 10 == 0) null else 77.5 + i * 1e-5, accuracyM = 5f)
+                }
+            },
+            eventsByTrip = (1..n).associate { id -> id.toLong() to listOf(TripEventEntity(tripId = id.toLong(), timestampMillis = t0 + id * 3_600_000L + 5_000, type = "harsh_brake", value = -5.5, durationS = 2.0)) },
+        )
+        val progress = mutableListOf<DebugExports.Progress>()
+        val started = System.nanoTime()
+        val (json, gpx) = DebugExports(app, big).exportTrips { progress += it }
+        val ms = (System.nanoTime() - started) / 1_000_000
+        // Generous for slow CI hosts; it took ~2 minutes per file for this much data before #166.
+        assertTrue("export took $ms ms", ms < 15_000)
+        assertEquals(DebugExports.Progress(0, n), progress.first())
+        assertEquals(DebugExports.Progress(n, n), progress.last())
+        assertTrue(progress.zipWithNext().all { (a, b) -> b.done > a.done })
+        // One samples query and one events query per batch, not per trip (and not again for the GPX).
+        val batches = (n + DebugExports.BATCH - 1) / DebugExports.BATCH
+        assertEquals(batches, big.samplesBatchCalls)
+        assertEquals(batches, big.eventsBatchCalls)
+        val trips = JSONObject(json.readText()).getJSONArray("trips")
+        assertEquals(n, trips.length())
+        assertEquals(perTrip, trips.getJSONObject(n - 1).getJSONArray("samples").length())
+        assertEquals(2.0, trips.getJSONObject(0).getJSONArray("events").getJSONObject(0).getDouble("durationS"), 1e-9)
+        val g = gpx.readText()
+        assertEquals(n - n / 10, Regex("<trk>").findAll(g).count())
+        assertEquals((n - n / 10) * perTrip, Regex("<trkpt ").findAll(g).count())
+        assertTrue(g.trimEnd().endsWith("</gpx>"))
+    }
+
+    @Test fun `a cancelled export leaves no partial files`() = runTest {
+        val before = exports.exportDir().listFiles().orEmpty().map { it.name }.toSet()
+        val job = launch { exports.exportTrips { if (it.done > 0) throw kotlinx.coroutines.CancellationException("cancel") } }
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(before, exports.exportDir().listFiles().orEmpty().map { it.name }.toSet())
+    }
+
+    @Test fun `timestamps match SimpleDateFormat in UTC`() {
+        val f = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        val r = java.util.Random(164)
+        val cases = listOf(0L, 1L, 86_399_999L, 951_782_400_000L /* 2000-02-29 */, 4_102_444_799_999L, t0) + List(2_000) { r.nextLong() % 4_102_444_800_000L }.map { kotlin.math.abs(it) }
+        cases.forEach { assertEquals("at $it", f.format(java.util.Date(it)), IsoUtc.format(it)) }
+    }
+
     @Test fun `connection log export has a header and the buffered lines and the share intent grants read`() = runTest {
         ConnectionLog.enabled = true
         ConnectionLog.record("TX", "010C")
@@ -87,4 +140,8 @@ private class InMemoryTrips(
     override suspend fun trip(id: Long) = trips.value.firstOrNull { it.id == id }
     override suspend fun samples(tripId: Long) = samplesByTrip[tripId].orEmpty()
     override suspend fun events(tripId: Long) = eventsByTrip[tripId].orEmpty()
+    var samplesBatchCalls = 0
+    var eventsBatchCalls = 0
+    override suspend fun samplesOf(tripIds: List<Long>) = tripIds.associateWith { samples(it) }.also { samplesBatchCalls++ }
+    override suspend fun eventsOf(tripIds: List<Long>) = tripIds.associateWith { events(it) }.also { eventsBatchCalls++ }
 }

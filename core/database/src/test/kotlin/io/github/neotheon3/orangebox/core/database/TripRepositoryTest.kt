@@ -55,4 +55,20 @@ class TripRepositoryTest {
         assertEquals(0, repo2.closeOrphans())
         first.close(); second.close()
     }
+
+    @Test fun `batched reads return each trip's rows in time order (#166)`() = runBlocking {
+        val db = open()
+        val repo = RoomTripRepository(db.tripDao())
+        val a = repo.start(TripEntity(vehicleId = null, startedAtMillis = 1_000, lastSampleAtMillis = 1_000))
+        val b = repo.start(TripEntity(vehicleId = null, startedAtMillis = 9_000, lastSampleAtMillis = 9_000))
+        fun s(trip: Long, t: Long) = TripSampleEntity(tripId = trip, timestampMillis = t, speedKph = 1.0, rpm = 1.0, fuelFlowLph = null, coolantC = null)
+        repo.checkpoint(a, listOf(s(a.id, 3_000), s(a.id, 2_000)), listOf(TripEventEntity(tripId = a.id, timestampMillis = 2_500, type = "overspeed")))
+        repo.checkpoint(b, listOf(s(b.id, 9_500)), emptyList())
+        val samples = repo.samplesOf(listOf(a.id, b.id))
+        assertEquals(listOf(2_000L, 3_000L), samples.getValue(a.id).map { it.timestampMillis })
+        assertEquals(1, samples.getValue(b.id).size)
+        assertEquals(1, repo.eventsOf(listOf(a.id, b.id)).getValue(a.id).size)
+        assertNull(repo.eventsOf(listOf(b.id))[b.id])
+        db.close()
+    }
 }
