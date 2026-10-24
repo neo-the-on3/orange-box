@@ -33,13 +33,31 @@ wait_for_regex 'content-desc="Speed [0-9]+ km/h"' dash-landscape-back
 
 rotate 0
 wait_for_regex 'content-desc="End driving"' dash-portrait-back
-# The undo window is 5 s and a CI dump takes 1-2 s: tap Undo from the dump that found it, no re-dump.
+# The undo window is 5 s, and on a loaded CI emulator one uiautomator dump can take 4 s, so dumping for
+# the snackbar is a race. Tap Undo where the snackbar puts it (its action sits at about (88 %, 93 %) of a
+# portrait screen, see dash-ended.xml from a passing run) and confirm from logcat; dump only as a fallback.
+undone() { adb logcat -d -s OrangeBox/App:I 2>/dev/null | grep -c "drive_end_undone" || true; }
+before=$(undone)
+read -r W H < <(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -n1 | tr 'x' ' ')
 tap_attr content-desc "End driving" dash-end
-wait_for_text 'text="Undo"' dash-ended 3
-b=$(grep -o 'text="Undo"[^>]*bounds="[^"]*"' "$OUT/dash-ended.xml" | head -n1 \
-  | sed -E 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/')
-read -r x1 y1 x2 y2 <<< "$b"
-adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))
+ok=0
+for _ in 1 2 3; do
+  sleep 1
+  adb shell input tap $(( W * 88 / 100 )) $(( H * 934 / 1000 ))
+  sleep 0.5
+  [ "$(undone)" -gt "$before" ] && { ok=1; break; }
+done
+if [ "$ok" = 0 ]; then
+  ui_dump dash-ended
+  b=$(grep -o 'text="Undo"[^>]*bounds="[^"]*"' "$OUT/dash-ended.xml" | head -n1 \
+    | sed -E 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/' || true)
+  if [ -n "$b" ]; then
+    read -r x1 y1 x2 y2 <<< "$b"
+    adb shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))
+    sleep 0.5
+  fi
+  [ "$(undone)" -gt "$before" ] || { echo "Undo was not applied within the undo window" >&2; exit 1; }
+fi
 shot 24-drive-ended-undone
 wait_for_regex 'content-desc="End driving"' dash-resumed 10
 sleep 6 # past the 5 s undo window: the link must still be up
