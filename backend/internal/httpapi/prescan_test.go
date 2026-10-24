@@ -70,6 +70,17 @@ func TestPrescan(t *testing.T) {
 		{"duplicate in a large object", nil, `{` + manyKeys(40) + `,"k7":0}`, http.StatusUnprocessableEntity, "/k7"},
 		{"large object without duplicates", nil, `{` + manyKeys(40) + `}`, 0, ""},
 		{"same name in sibling objects", nil, `[{"a":1},{"a":2}]`, 0, ""},
+		// U+0000 in any string, escaped or raw (Postgres text can't hold it).
+		{"escaped NUL in a value", nil, `{"a":{"nickname":"x\u0000y"}}`, http.StatusUnprocessableEntity, "/a/nickname"},
+		{"raw NUL in a value", nil, "{\"a\":\"x\x00y\"}", http.StatusUnprocessableEntity, "/a"},
+		{"NUL in an array item", nil, `{"a":["ok","\u0000"]}`, http.StatusUnprocessableEntity, "/a/1"},
+		{"NUL in a top-level string", nil, `"\u0000"`, http.StatusUnprocessableEntity, ""},
+		{"escaped NUL in a member name", nil, `{"a":{"k\u0000":1}}`, http.StatusUnprocessableEntity, "/a"},
+		{"raw NUL in a member name", nil, "{\"k\x00\":1}", http.StatusUnprocessableEntity, ""},
+		{"NUL in an unknown property", trips, `{"trips":[],"x":"\u0000"}`, http.StatusUnprocessableEntity, "/x"},
+		{"escaped backslash before u0000 is fine", nil, `{"a":"\\u0000"}`, 0, ""},
+		{"other escapes are fine", nil, `{"a":"\u0001\u00e9\n\"\\"}`, 0, ""},
+		{"\\u00000 is NUL then 0", nil, `{"a":"\u00000"}`, http.StatusUnprocessableEntity, "/a"},
 	} {
 		_, p := prescan([]byte(tc.body), tc.schema, MaxJSONValues)
 		switch {

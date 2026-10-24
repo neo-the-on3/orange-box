@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/api"
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
 	"github.com/neo-the-on3/orange-box/backend/internal/db/dbtest"
+	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 )
 
 // newDBTestEnv is a test server on a fresh Postgres database (skipped
@@ -453,5 +455,51 @@ func TestVehiclesWithoutDatabase(t *testing.T) {
 		if r.status != http.StatusNotImplemented || r.problemCode(t) != "not_implemented" {
 			t.Errorf("%s %s: %d %s", c.method, c.path, r.status, r.body)
 		}
+	}
+}
+
+// U+0000 in a vehicle string is a 422 at validation, before the store (a
+// Postgres text column can't hold it, which used to give a 500). With a
+// database when DATABASE_URL is set, so the write path is really exercised.
+func TestVehicleRejectsNUL(t *testing.T) {
+	t.Parallel()
+	for _, withDB := range []bool{false, true} {
+		t.Run(map[bool]string{false: "memory", true: "postgres"}[withDB], func(t *testing.T) {
+			t.Parallel()
+			var e *testEnv
+			if withDB {
+				e = newDBTestEnv(t) // skipped without DATABASE_URL
+			} else {
+				e = newTestEnv(t, true)
+			}
+			m := e.member("nul")
+			id := uuid.NewString()
+			if withDB {
+				r := m.call(http.MethodPost, "/v1/vehicles", i20)
+				if r.status != http.StatusCreated {
+					t.Fatalf("create: %d %s", r.status, r.body)
+				}
+				id, _ = r.json(t)["id"].(string)
+			}
+			for _, c := range []struct{ field, pointer string }{
+				{`"nickname":"x\u0000y"`, "/nickname"},
+				{`"plateNumber":"\u0000"`, "/plateNumber"},
+				{`"variantId":"a\u0000"`, "/variantId"},
+				{`"obdAdapter":{"elmVersion":"1.5\u0000"}`, "/obdAdapter/elmVersion"},
+				{"\"nickname\":\"x\x00y\"", "/nickname"},
+			} {
+				for _, req := range []struct{ method, path, body string }{
+					{http.MethodPost, "/v1/vehicles", `{"make":"a","model":"b","fuelType":"gasoline",` + c.field + `}`},
+					{http.MethodPatch, "/v1/vehicles/" + id, `{` + c.field + `}`},
+				} {
+					r := m.call(req.method, req.path, req.body, "If-Match", "*")
+					var p problem.Problem
+					_ = json.Unmarshal(r.body, &p)
+					if r.status != http.StatusUnprocessableEntity || p.Code != "validation_failed" || len(p.Errors) != 1 || p.Errors[0].Pointer != c.pointer {
+						t.Errorf("%s %s: %d %s", req.method, c.field, r.status, r.body)
+					}
+				}
+			}
+		})
 	}
 }
