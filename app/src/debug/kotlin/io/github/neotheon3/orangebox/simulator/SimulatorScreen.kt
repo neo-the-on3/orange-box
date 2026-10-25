@@ -205,7 +205,15 @@ private fun DtcInjector(actions: SimulatorActions) {
         )
         Button(onClick = { dtcError = !actions.injectDtc(dtc, list) }, modifier = Modifier.padding(top = 8.dp).testTag("sim_dtc_inject")) { Text("Inject") }
     }
+    // The M6 acceptance set: Ignition, Air/Fuel and Network lamps go red on the Diagnostics screen.
+    OutlinedButton(
+        onClick = { DEMO_DTCS.forEach { actions.injectDtc(it, list) } },
+        modifier = Modifier.testTag("sim_dtc_demo"),
+    ) { Text("Inject " + DEMO_DTCS.joinToString(" + ")) }
 }
+
+/** Codes injected by "Inject P0300 + P0420 + U0100". */
+internal val DEMO_DTCS = listOf("P0300", "P0420", "U0100")
 
 @Composable
 private fun VinEditor(current: String, actions: SimulatorActions) {
