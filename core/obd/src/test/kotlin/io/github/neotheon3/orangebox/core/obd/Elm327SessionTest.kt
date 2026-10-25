@@ -18,6 +18,36 @@ class Elm327SessionTest {
         assertEquals(12.6, info.voltage!!, 0.001)
     }
 
+    @Test fun `fast polling on single-ECU CAN - ATAT2 and the response-count hint (#193)`() = runTest {
+        val t = FakeObdTransport(responder = { if (it == "010C1") "410C1AF8" else FakeObdTransport.defaultResponse(it) })
+        val s = Elm327Session(t, fastPolling = true)
+        s.initialize()
+        assertTrue(t.written.contains("ATAT2"))
+        assertTrue(s.usesResponseCount)
+        assertEquals(1726.0, s.read(io.github.neotheon3.orangebox.core.obd.pid.ObdPid.RPM)!!, 0.0)
+        assertEquals("010C1", t.written.last())
+    }
+
+    @Test fun `response-count hint falls back when the adapter answers with a question mark (#193)`() = runTest {
+        val t = FakeObdTransport(responder = { if (it == "010C1") "?" else FakeObdTransport.defaultResponse(it) })
+        val s = Elm327Session(t, fastPolling = true)
+        s.initialize()
+        assertEquals(1726.0, s.read(io.github.neotheon3.orangebox.core.obd.pid.ObdPid.RPM)!!, 0.0)
+        assertTrue(!s.usesResponseCount)
+        s.read(io.github.neotheon3.orangebox.core.obd.pid.ObdPid.RPM)
+        assertEquals(listOf("010C1", "010C", "010C"), t.written.filter { it.startsWith("010C") })
+    }
+
+    @Test fun `no response-count hint with two ECUs, on non-CAN, or without fast polling (#193)`() = runTest {
+        val twoEcus = FakeObdTransport(responder = { if (it == "0100") "4100BE3EB811\r4100983B0011" else FakeObdTransport.defaultResponse(it) })
+        assertTrue(!Elm327Session(twoEcus, fastPolling = true).apply { initialize() }.usesResponseCount)
+        val kwp = FakeObdTransport(responder = { if (it == "ATDPN") "A5" else FakeObdTransport.defaultResponse(it) })
+        assertTrue(!Elm327Session(kwp, fastPolling = true).apply { initialize() }.usesResponseCount)
+        val plain = FakeObdTransport()
+        assertTrue(!Elm327Session(plain).apply { initialize() }.usesResponseCount)
+        assertTrue(!plain.written.contains("ATAT2"))
+    }
+
     @Test fun `garbled or auto ATDPN after the search is retried`() = runTest {
         val replies = ArrayDeque(listOf("A#\u0007", "A0", "A6"))
         val t = FakeObdTransport(responder = { if (it == "ATDPN") replies.removeFirst() else FakeObdTransport.defaultResponse(it) })

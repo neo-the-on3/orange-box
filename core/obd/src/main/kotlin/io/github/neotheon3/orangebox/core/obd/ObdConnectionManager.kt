@@ -31,7 +31,7 @@ class ObdConnectionManager(
     linkEvents: Flow<DongleLinkEvent> = emptyFlow(),
     private val policy: RetryPolicy = RetryPolicy(),
     private val heartbeatMillis: Long = 5_000,
-    private val sessionFactory: (ObdTransport) -> Elm327Session = { Elm327Session(it) },
+    private val sessionFactory: (ObdTransport) -> Elm327Session = { Elm327Session(it, fastPolling = true) },
     /** Settings "connect automatically when the dongle connects" (off by default in the app). */
     private val autoStartEnabled: () -> Boolean = { true },
 ) : ObdConnection {

@@ -67,11 +67,19 @@ from 01 01, A bit 7 / A & 0x7F.
 with 3 leading pad bytes. The VIN must be 17 characters from `A–H J–N P R–Z 0–9`. The ISO 3779 check digit
 (position 9) is reported as `checkDigitValid` but is not enforced, because it is only mandatory in North America.
 
-**Polling.** Fast PIDs are 0C, 0D, 10, 04, 11, 5E and 49 (accelerator pedal, for the Detailed Info grid), every
-500 ms. Slow PIDs are 05, 2F, 42, 0F, 0B, 03, 46, 51 and 5C, plus 33, 06, 07, 0A, 21 and 14 for the Detailed Info
-grid, every 10th tick (5 s). Slow ticks also read 01 01 (MIL + stored DTC count) when the car announces it; it lands
-in `VehicleSample.monitor`. A `VehicleSample` holds the latest value of each PID. Polling stops when the
-connection leaves Connected and restarts, with a fresh bitmap read, after reconnecting.
+**Polling (#193).** Fast PIDs are 0D, 0C (read first), then 10, 04, 11, 5E, 49 (accelerator pedal, for the Detailed
+Info grid) and 03 (fuel system status, for fuel cut, #194). Ticks run on a 500 ms period measured from the start of
+the tick: a dongle slower than that runs ticks back to back, with no extra pause. Each tick reads speed and rpm, emits
+the sample right away (so they are about one request old on screen), then reads the other fast PIDs (they reach the
+next sample) and its share of the slow PIDs. Slow PIDs are 05, 2F, 42, 0F, 0B, 46, 51 and 5C, plus 33, 06, 07, 0A,
+21 and 14 for the Detailed Info grid; slow PID `i` is read on ticks where `tick % 10 == i % 10`, so each is
+refreshed every 10 ticks (≈ 5 s) without a multi-second freeze. Every 10th tick also reads 01 01 (MIL + stored DTC
+count) when the car announces it; it lands in `VehicleSample.monitor`. The first tick reads everything before its
+sample. On real dongles (`Elm327Session(fastPolling = true)`) the session sends `ATAT2` and, on CAN when exactly one
+ECU answered `0100`, appends the response count (`010D1`) so the adapter returns as soon as the reply arrives; a `?`
+reply turns the hint off for the session. Every 30 s the poller logs `polling_stats` (ticks/s, tick time, sample gap
+p50/p95/max, request latency p50/p95) to the connection log. A `VehicleSample` holds the latest value of each PID.
+Polling stops when the connection leaves Connected and restarts, with a fresh bitmap read, after reconnecting.
 
 ## 2. Derived metrics (`TelemetryEngine`)
 
