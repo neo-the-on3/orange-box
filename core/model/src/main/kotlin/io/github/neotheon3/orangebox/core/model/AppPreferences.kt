@@ -16,4 +16,6 @@ data class AppPreferences(
     val mapTilesEnabled: Boolean = true,
     /** Impact detection and the crash prompt (M7). */
     val crash: CrashPreferences = CrashPreferences(),
+    /** Display units (M8). Null until the user picks them: then the device country's defaults apply. */
+    val units: UnitPreferences? = null,
 )

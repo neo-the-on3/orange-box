@@ -64,6 +64,18 @@ class SettingsViewModelTest {
         assertEquals("https://api.example.com", repo.config.first().baseUrl)
     }
 
+    @Test fun `units follow the country until the user picks them (#58)`() = runTest {
+        setSimCountry("us")
+        val prefs = FakeAppPreferencesRepository()
+        val vm = vm(FakeBackendConfigRepository(), prefs)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
+        assertEquals(io.github.neotheon3.orangebox.core.model.UnitPreferences.forCountry("US"), vm.uiState.value.units)
+        val picked = io.github.neotheon3.orangebox.core.model.UnitPreferences()
+        vm.onUnitsChanged(picked)
+        assertEquals(picked, prefs.preferences.first().units)
+        assertEquals(picked, vm.uiState.value.units)
+    }
+
     private fun vm(
         repo: FakeBackendConfigRepository,
         prefs: FakeAppPreferencesRepository = FakeAppPreferencesRepository(),

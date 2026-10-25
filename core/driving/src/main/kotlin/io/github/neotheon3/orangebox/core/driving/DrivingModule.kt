@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import io.github.neotheon3.orangebox.core.telemetry.RecordedTripTotals
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 @Module
@@ -17,6 +18,13 @@ abstract class DrivingModule {
 
     companion object {
         /** The recorder's carried totals, for the dashboard TRIP / FUEL tiles (same source as the notification). */
+        @Provides fun provideDisplayUnits(
+            prefs: io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository,
+            country: DeviceCountry,
+        ): io.github.neotheon3.orangebox.core.datastore.DisplayUnits = io.github.neotheon3.orangebox.core.datastore.DisplayUnits {
+            prefs.preferences.map { country.units(it) }.distinctUntilChanged()
+        }
+
         @Provides fun provideRecordedTripTotals(recorder: TripRecorder): RecordedTripTotals =
             RecordedTripTotals { recorder.active.map { it?.totals } }
     }

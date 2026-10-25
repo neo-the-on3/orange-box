@@ -74,7 +74,7 @@ fun MiniDashboardCard(
                 }
                 LampStrip(dashboard, Modifier.testTag("home_live_lamps"))
                 Text(
-                    stringResource(R.string.live_trip_summary, dashboard.tripKmPerL, dashboard.tripKm, dashboard.tripTime),
+                    stringResource(R.string.live_trip_summary, dashboard.tripKmPerL, dashboard.tripKm, dashboard.tripTime, dashboard.economyUnit, dashboard.distanceUnit),
                     modifier = Modifier.testTag("home_live_trip"),
                 )
                 snapshot?.let { Facts(it) }
@@ -88,8 +88,9 @@ fun MiniDashboardCard(
 private fun Facts(snapshot: TelemetrySnapshot) {
     val i = snapshot.instant
     fun f(v: Double?, format: String) = v?.let { String.format(Locale.US, format, it) } ?: "–"
+    val units = io.github.neotheon3.orangebox.core.designsystem.LocalUnits.current
     FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(stringResource(R.string.live_coolant, f(i.coolantC, "%.0f")), Modifier.testTag("home_live_coolant"), color = DashboardColors.TileTitle)
+        Text(stringResource(R.string.live_coolant, f(i.coolantC?.let(units::temperature), "%.0f"), units.temperatureLabel), Modifier.testTag("home_live_coolant"), color = DashboardColors.TileTitle)
         Text(stringResource(R.string.live_fuel_level, f(i.fuelLevelPercent, "%.0f")), Modifier.testTag("home_live_fuel_level"), color = DashboardColors.TileTitle)
         Text(stringResource(R.string.live_fuel_flow, f(i.fuelFlowLph, "%.2f")), Modifier.testTag("home_live_fuel_flow"), color = DashboardColors.TileTitle)
     }

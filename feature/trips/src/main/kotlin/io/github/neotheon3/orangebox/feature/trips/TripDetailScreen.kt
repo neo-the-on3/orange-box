@@ -86,7 +86,13 @@ fun TripDetailScreen(
     onTilesChanged: (Boolean) -> Unit = {},
     locale: Locale = Locale.getDefault(),
     charts: @Composable (TripDetail) -> Unit = { d ->
-        TripCharts(d.speedZones, d.speedSeries.map { (t, v) -> SeriesPoint(t, v) }, d.economySeries, locale, durationS = d.metrics.durationS)
+        TripCharts(
+            d.speedZones,
+            d.speedSeries.map { (t, v) -> SeriesPoint(t, displayUnits.speed(v)) },
+            d.economySeries.mapNotNull { p -> displayUnits.economy(p.value)?.let { SeriesPoint(p.t, it) } },
+            locale,
+            durationS = d.metrics.durationS,
+        )
     },
     /** System bars and cutouts to keep clear of; in landscape 3-button navigation sits on a side (#188). */
     contentInsets: WindowInsets = WindowInsets.safeDrawing,
@@ -239,12 +245,12 @@ private fun MapCard(detail: TripDetail, tiles: TileStreamProvider?, height: Dp) 
 private fun MetricsGrid(m: TripMetrics, locale: Locale) {
     val dash = "—"
     val tiles = listOf(
-        stringResource(R.string.metric_distance) to stringResource(R.string.trips_distance_km, TripFormat.km(m.distanceKm, locale)),
+        stringResource(R.string.metric_distance) to stringResource(R.string.trips_distance_km, TripFormat.km(displayUnits.distance(m.distanceKm), locale), displayUnits.distanceLabel),
         stringResource(R.string.metric_duration) to TripFormat.elapsed(m.durationS),
-        stringResource(R.string.metric_avg_speed) to (m.avgSpeedKph?.let { stringResource(R.string.unit_kph, TripFormat.decimal(it, locale)) } ?: dash),
-        stringResource(R.string.metric_max_speed) to stringResource(R.string.unit_kph, TripFormat.decimal(m.maxSpeedKph, locale)),
+        stringResource(R.string.metric_avg_speed) to (m.avgSpeedKph?.let { stringResource(R.string.unit_kph, TripFormat.decimal(displayUnits.speed(it), locale), displayUnits.speedLabel) } ?: dash),
+        stringResource(R.string.metric_max_speed) to stringResource(R.string.unit_kph, TripFormat.decimal(displayUnits.speed(m.maxSpeedKph), locale), displayUnits.speedLabel),
         stringResource(R.string.metric_fuel) to stringResource(R.string.unit_litres, String.format(locale, "%.2f", m.fuelLitres)),
-        stringResource(R.string.metric_economy) to (m.economyKmPerL?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale)) } ?: dash),
+        stringResource(R.string.metric_economy) to (m.economyKmPerL?.let(displayUnits::economy)?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale), displayUnits.economyLabel) } ?: dash),
         stringResource(R.string.metric_co2) to stringResource(R.string.unit_kg, String.format(locale, "%.2f", m.co2Kg)),
         stringResource(R.string.metric_eco_time) to TripFormat.elapsed(m.ecoS),
         stringResource(R.string.metric_idle_time) to TripFormat.elapsed(m.idleS),
@@ -276,7 +282,7 @@ private fun EventRow(index: Int, e: TripEventItem, locale: Locale, tag: String =
         when (e.type) {
             TripEventType.HARSH_ACCEL, TripEventType.HARSH_BRAKE ->
                 stringResource(R.string.event_peak, stringResource(R.string.unit_mps2, TripFormat.decimal(kotlin.math.abs(it), locale)))
-            TripEventType.OVERSPEED -> stringResource(R.string.event_peak, stringResource(R.string.unit_kph, TripFormat.decimal(it, locale)))
+            TripEventType.OVERSPEED -> stringResource(R.string.event_peak, stringResource(R.string.unit_kph, TripFormat.decimal(displayUnits.speed(it), locale), displayUnits.speedLabel))
             TripEventType.FUEL_CUT -> null
         }
     }

@@ -23,4 +23,8 @@ class DeviceCountry @Inject constructor(@ApplicationContext private val context:
 
     /** What the hazard prompt dials: the user's number, else the country default. */
     fun emergencyNumber(prefs: DashboardPreferences): String = prefs.emergencyNumber ?: defaultEmergencyNumber()
+
+    /** The display units: the user's choice, else the country's defaults (miles in the US and UK). */
+    fun units(prefs: io.github.neotheon3.orangebox.core.model.AppPreferences): io.github.neotheon3.orangebox.core.model.UnitPreferences =
+        prefs.units ?: io.github.neotheon3.orangebox.core.model.UnitPreferences.forCountry(iso())
 }

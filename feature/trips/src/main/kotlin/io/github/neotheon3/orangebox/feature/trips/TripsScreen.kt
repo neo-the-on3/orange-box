@@ -239,8 +239,9 @@ private fun ListHeader(state: TripsUiState, locale: Locale) {
                 stringResource(
                     R.string.trips_month_summary,
                     pluralStringResource(R.plurals.trips_count, state.summary.trips, state.summary.trips),
-                    TripFormat.km(state.summary.distanceKm, locale),
+                    TripFormat.km(displayUnits.distance(state.summary.distanceKm), locale),
                     TripFormat.elapsed(state.summary.durationS),
+                    displayUnits.distanceLabel,
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -260,9 +261,9 @@ private fun TripRow(trip: TripListItem, locale: Locale, onClick: () -> Unit) {
             supportingContent = {
                 Text(
                     listOfNotNull(
-                        stringResource(R.string.trips_distance_km, TripFormat.km(trip.distanceKm, locale)),
+                        stringResource(R.string.trips_distance_km, TripFormat.km(displayUnits.distance(trip.distanceKm), locale), displayUnits.distanceLabel),
                         TripFormat.elapsed(trip.durationS),
-                        trip.economyKmPerL?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale)) },
+                        trip.economyKmPerL?.let(displayUnits::economy)?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale), displayUnits.economyLabel) },
                         stringResource(R.string.trips_eco_time, TripFormat.elapsed(trip.ecoS)),
                     ).joinToString(" · "),
                 )

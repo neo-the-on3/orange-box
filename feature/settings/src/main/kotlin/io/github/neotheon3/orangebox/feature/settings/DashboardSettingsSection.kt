@@ -71,6 +71,7 @@ fun DashboardSettingsSection(
     state: DashboardSettingsState,
     apps: List<LaunchableApp>?,
     actions: DashboardSettingsActions,
+    units: io.github.neotheon3.orangebox.core.model.UnitPreferences = io.github.neotheon3.orangebox.core.model.UnitPreferences(),
 ) {
     val prefs = state.prefs
     var picking by rememberSaveable { mutableStateOf(false) }
@@ -104,7 +105,7 @@ fun DashboardSettingsSection(
                 modifier = Modifier.clickable(role = Role.Button) { picking = true; actions.onPickApp() }.testTag("settings_launcher_app"),
             )
         }
-        OverspeedSlider(prefs.overspeedKph, actions.onOverspeedChanged)
+        OverspeedSlider(prefs.overspeedKph, actions.onOverspeedChanged, units)
         ListItem(
             headlineContent = { Text(stringResource(R.string.settings_auto_show)) },
             supportingContent = { Text(stringResource(R.string.settings_auto_show_summary)) },
@@ -190,15 +191,20 @@ private fun EmergencyNumberField(state: DashboardSettingsState, onChanged: (Stri
 }
 
 @Composable
-private fun OverspeedSlider(kph: Int, onChanged: (Int) -> Unit) {
+private fun OverspeedSlider(kph: Int, onChanged: (Int) -> Unit, units: io.github.neotheon3.orangebox.core.model.UnitPreferences) {
     var value by remember(kph) { mutableFloatStateOf(kph.toFloat()) }
     val shown = value.roundToInt()
-    val summary = stringResource(R.string.settings_overspeed_summary, shown, shown - DashboardPreferences.OVERSPEED_HYSTERESIS_KPH)
+    // Stored and stepped in km/h (5 km/h steps); shown in the Settings unit (#58).
+    fun shownIn(k: Int) = units.speed(k.toDouble()).roundToInt()
+    val label = units.speedLabel
+    val summary = stringResource(
+        R.string.settings_overspeed_summary, shownIn(shown), shownIn(shown - DashboardPreferences.OVERSPEED_HYSTERESIS_KPH), label,
+    )
     Column {
         ListItem(
             headlineContent = { Text(stringResource(R.string.settings_overspeed)) },
             supportingContent = { Text(summary) },
-            trailingContent = { Text(stringResource(R.string.settings_overspeed_value, shown), style = MaterialTheme.typography.titleMedium) },
+            trailingContent = { Text(stringResource(R.string.settings_overspeed_value, shownIn(shown), label), style = MaterialTheme.typography.titleMedium) },
         )
         val min = DashboardPreferences.MIN_OVERSPEED_KPH
         val max = DashboardPreferences.MAX_OVERSPEED_KPH
@@ -210,7 +216,7 @@ private fun OverspeedSlider(kph: Int, onChanged: (Int) -> Unit) {
             steps = (max - min) / DashboardPreferences.OVERSPEED_STEP_KPH - 1,
             modifier = Modifier
                 .fillMaxWidth()
-                .semantics { contentDescription = summary; stateDescription = "$shown km/h" }
+                .semantics { contentDescription = summary; stateDescription = "${shownIn(shown)} $label" }
                 .testTag("settings_overspeed"),
         )
     }

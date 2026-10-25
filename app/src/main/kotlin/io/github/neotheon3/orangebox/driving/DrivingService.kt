@@ -39,6 +39,7 @@ import javax.inject.Inject
 class DrivingService : Service() {
     @Inject lateinit var connection: ObdConnection
     @Inject lateinit var recorder: TripRecorder
+    @Inject lateinit var displayUnits: io.github.neotheon3.orangebox.core.datastore.DisplayUnits
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var started = false
@@ -106,7 +107,10 @@ class DrivingService : Service() {
             } catch (_: SecurityException) { }
         }
         scope.launch {
-            updater.run(recorder.active.map { DrivingNotifications.ongoingContent(it) }, initial = shownContent)
+            updater.run(
+                kotlinx.coroutines.flow.combine(recorder.active, displayUnits.units()) { trip, units -> DrivingNotifications.ongoingContent(trip, units) },
+                initial = shownContent,
+            )
         }
         scope.launch {
             connection.state.map { it is ObdConnectionState.Connected }.distinctUntilChanged().collectLatest { up ->

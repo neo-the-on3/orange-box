@@ -92,4 +92,29 @@ class SettingsScreenTest {
         compose.onNodeWithTag("settings_auto_show").performScrollTo().assertIsOff().performClick()
         assertEquals(true, autoShow)
     }
+
+    @Test fun `units section reflects and changes the units (#58)`() {
+        val changed = mutableListOf<io.github.neotheon3.orangebox.core.model.UnitPreferences>()
+        val metric = io.github.neotheon3.orangebox.core.model.UnitPreferences()
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(units = metric), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                    actions = SettingsActions(onUnitsChanged = { changed += it }),
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_units_distance_km").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("settings_units_distance_mi").performClick()
+        compose.onNodeWithTag("settings_units_economy_l_per_100km").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_units_temperature_fahrenheit").performScrollTo().performClick()
+        assertEquals(
+            listOf(
+                metric.copy(distance = io.github.neotheon3.orangebox.core.model.DistanceUnit.MI),
+                metric.copy(economy = io.github.neotheon3.orangebox.core.model.EconomyUnit.L_PER_100KM),
+                metric.copy(temperature = io.github.neotheon3.orangebox.core.model.TemperatureUnit.FAHRENHEIT),
+            ),
+            changed,
+        )
+    }
 }

@@ -121,6 +121,18 @@ class DashboardStateMapperTest {
         assertEquals("no trip recording: engine totals", "0:02:53", DashboardStateMapper.map(connected, snapshot).tripTime)
     }
 
+    @Test fun `US units convert speed, distance, economy and temperatures for display only (#58)`() {
+        val us = io.github.neotheon3.orangebox.core.model.UnitPreferences.forCountry("US")
+        val s = DashboardStateMapper.map(connected, snap(values = mapOf(ObdPid.RPM to 1698.0, ObdPid.COOLANT_TEMP to 64.0, ObdPid.SPEED to 59.0)), units = us)
+        assertEquals("mph", s.speedUnit); assertEquals("mi", s.distanceUnit); assertEquals("mpg", s.economyUnit)
+        assertEquals("59 km/h = 36.7 mph", "37", s.speed)
+        assertEquals("2.04 km = 1.27 mi", "1.3", s.tripKm)
+        assertEquals("8.908 km/L = 20.95 mpg US", "21.0", s.tripKmPerL)
+        val tiles = s.detailPages.flatten()
+        assertTrue("64 °C coolant = 147 °F: ${tiles.map { it.value }}", tiles.any { it.value.startsWith("147") })
+        assertEquals("warnings still use the metric values", IndicatorLevel.NORMAL, s.coolant)
+    }
+
     @Test fun `right glow - overspeed beats harsh beats none`() {
         assertEquals(PanelGlow.OVERSPEED, DashboardStateMapper.map(connected, snap(instant(overspeed = true, harshBrake = true))).rightGlow)
         assertEquals(PanelGlow.HARSH, DashboardStateMapper.map(connected, snap(instant(harshAccel = true))).rightGlow)

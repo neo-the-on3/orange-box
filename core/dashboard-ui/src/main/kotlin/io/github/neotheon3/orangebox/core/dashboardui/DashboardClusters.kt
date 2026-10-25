@@ -72,8 +72,8 @@ fun SpeedCluster(state: DashboardUiState, modifier: Modifier = Modifier, meterMa
     Cluster(
         glow = state.rightGlow, tag = "speed", modifier = modifier, compact = compact, meterMax = meterMax,
         header = { HeaderLamp(DashboardIcons.OverspeedGauge, stringResource(R.string.dashboard_overspeed), LampState(state.overspeed, DashboardColors.Overspeed)) },
-        value = state.speed, unit = stringResource(R.string.dashboard_unit_kmh),
-        spoken = stringResource(R.string.dashboard_spoken_speed, state.speed),
+        value = state.speed, unit = state.speedUnit,
+        spoken = stringResource(R.string.dashboard_spoken_speed, state.speed, state.speedUnit),
     ) {
         Lamp(DashboardIcons.AccelCar, stringResource(R.string.dashboard_accel), event(state.harshAccel), Modifier.weight(1f))
         Lamp(DashboardIcons.BrakeCar, stringResource(R.string.dashboard_brake), event(state.harshBrake), Modifier.weight(1f))
@@ -180,8 +180,8 @@ fun FuelCard(state: DashboardUiState, modifier: Modifier = Modifier) {
         val showTicks = maxHeight == Dp.Infinity || maxHeight >= 112.dp * fontScale
         CenterCard(stringResource(R.string.dashboard_fuel), DashboardIcons.FuelPump, Modifier.fillMaxWidth().then(if (maxHeight == Dp.Infinity) Modifier else Modifier.fillMaxHeight())) {
             ValueWithUnit(
-                state.tripKmPerL, stringResource(R.string.dashboard_unit_kml),
-                stringResource(R.string.dashboard_spoken_economy, state.tripKmPerL, state.instantKmPerL),
+                state.tripKmPerL, state.economyUnit,
+                stringResource(R.string.dashboard_spoken_economy, state.tripKmPerL, state.instantKmPerL, state.economyUnit),
                 Modifier.weight(1f),
             )
             FuelBar(state.instantFraction, Modifier.padding(vertical = 2.dp), showTicks = showTicks)
@@ -196,10 +196,10 @@ fun FuelCard(state: DashboardUiState, modifier: Modifier = Modifier) {
 /** TRIP card: distance and elapsed time. */
 @Composable
 fun TripCard(state: DashboardUiState, modifier: Modifier = Modifier) {
-    val spoken = stringResource(R.string.dashboard_spoken_trip, state.tripKm, state.tripTime)
+    val spoken = stringResource(R.string.dashboard_spoken_trip, state.tripKm, state.tripTime, state.distanceUnit)
     CenterCard(stringResource(R.string.dashboard_trip), DashboardIcons.TripDoc, modifier.testTag("card_trip")) {
         Column(Modifier.fillMaxWidth().weight(1f).clearAndSetSemantics { contentDescription = spoken }) {
-            ValueWithUnit(state.tripKm, stringResource(R.string.dashboard_unit_km), spoken, Modifier.weight(1f))
+            ValueWithUnit(state.tripKm, state.distanceUnit, spoken, Modifier.weight(1f))
             ValueWithUnit(state.tripTime, "", spoken, Modifier.weight(1f))
         }
     }

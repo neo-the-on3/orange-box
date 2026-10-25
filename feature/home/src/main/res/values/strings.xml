@@ -35,10 +35,10 @@
 
     <string name="live_title">Live data</string>
     <string name="live_waiting">Reading supported PIDs…</string>
-    <string name="live_coolant">Coolant: %1$s °C</string>
+    <string name="live_coolant">Coolant: %1$s %2$s</string>
     <string name="live_fuel_level">Fuel level: %1$s %%</string>
     <string name="live_fuel_flow">Fuel flow: %1$s L/h</string>
-    <string name="live_trip_summary">Trip %1$s km/L · %2$s km · %3$s</string>
+    <string name="live_trip_summary">Trip %1$s %4$s · %2$s %5$s · %3$s</string>
     <string name="home_open_dashboard">Open dashboard</string>
     <string name="warn_coolant">Engine coolant is overheating</string>
     <string name="warn_low_battery">Battery voltage is low</string>
