@@ -199,7 +199,7 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		idempotency: db.NewIdempotency(pool),
 		classify:    db.Classify,
 		ready: func(ctx context.Context) error {
-			if err := guard.Err(); err != nil {
+			if err := guard.Ready(); err != nil {
 				return err
 			}
 			return pool.Ping(ctx)

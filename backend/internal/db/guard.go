@@ -33,6 +33,18 @@ const (
 	MaxClusterCheckInterval     = 30 * time.Second
 )
 
+// ErrClusterUnchecked means the background cluster check has failed
+// clusterCheckFailuresUnhealthy times in a row (e.g. the endpoint now
+// rejects the server's credentials, or is unreachable): the instance can't
+// tell whether it still reaches its cluster, so readiness fails (503)
+// without latching; the next good check clears it.
+var ErrClusterUnchecked = errors.New("db: the database cluster could not be checked recently")
+
+// clusterCheckFailuresUnhealthy is how many background checks in a row
+// must fail before readiness fails (3: about 45 s at the default
+// interval).
+const clusterCheckFailuresUnhealthy = 3
+
 // clusterProbeTimeout bounds one background check (connect, read, close),
 // so a switch is detected within the interval plus this.
 const clusterProbeTimeout = 5 * time.Second
@@ -65,6 +77,8 @@ type ClusterGuard struct {
 	connCfg  *pgx.ConnConfig
 
 	changed atomic.Bool
+	// failures counts background checks failed in a row.
+	failures atomic.Int32
 }
 
 // ClusterGuardOptions configures NewClusterGuard.
@@ -124,6 +138,19 @@ func (g *ClusterGuard) pinned() (int64, bool) {
 func (g *ClusterGuard) Err() error {
 	if g != nil && g.changed.Load() {
 		return ErrClusterChanged
+	}
+	return nil
+}
+
+// Ready is Err, or ErrClusterUnchecked while the last
+// clusterCheckFailuresUnhealthy background checks all failed: what
+// readiness (GET /v1/health) reports.
+func (g *ClusterGuard) Ready() error {
+	if err := g.Err(); err != nil {
+		return err
+	}
+	if g != nil && g.failures.Load() >= clusterCheckFailuresUnhealthy {
+		return ErrClusterUnchecked
 	}
 	return nil
 }
@@ -222,7 +249,7 @@ func (g *ClusterGuard) probe(ctx context.Context) {
 	conn, err := pgx.ConnectConfig(pctx, cfg.Copy())
 	if err != nil {
 		if ctx.Err() == nil {
-			g.logger.Warn("cluster check: cannot connect; retrying next interval", slog.String("error_class", errorClass(err)))
+			g.failed("cluster check: cannot connect", err)
 		}
 		return
 	}
@@ -231,7 +258,29 @@ func (g *ClusterGuard) probe(ctx context.Context) {
 		defer ccancel()
 		_ = conn.Close(cctx)
 	}()
-	if err := g.check(pctx, conn); err != nil && !errors.Is(err, ErrClusterChanged) && ctx.Err() == nil {
-		g.logger.Warn("cluster check failed; retrying next interval", slog.String("error_class", errorClass(err)))
+	switch err := g.check(pctx, conn); {
+	case err == nil:
+		g.succeeded()
+	case errors.Is(err, ErrClusterChanged):
+	case ctx.Err() == nil:
+		g.failed("cluster check failed", err)
+	}
+}
+
+// failed records a failed background check: a WARN each time, and one
+// ERROR when readiness starts failing.
+func (g *ClusterGuard) failed(msg string, err error) {
+	n := g.failures.Add(1)
+	g.logger.Warn(msg+"; retrying next interval", slog.String("error_class", errorClass(err)), slog.Int("failures_in_a_row", int(n)))
+	if n == clusterCheckFailuresUnhealthy {
+		g.logger.Error("CLUSTER UNCHECKED: the background database cluster check has failed "+strconv.Itoa(int(n))+
+			" times in a row, so a switch to another cluster could go unnoticed; reporting unhealthy (503) until a check succeeds",
+			slog.String("error_class", errorClass(err)))
+	}
+}
+
+func (g *ClusterGuard) succeeded() {
+	if n := g.failures.Swap(0); n >= clusterCheckFailuresUnhealthy {
+		g.logger.Info("cluster check succeeded again; reporting healthy", slog.Int("failed_in_a_row", int(n)))
 	}
 }

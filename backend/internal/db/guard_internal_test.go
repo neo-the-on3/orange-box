@@ -130,8 +130,21 @@ func TestClusterProbeTransient(t *testing.T) {
 	g.connCfg = cfg
 	g.pin(7311001)
 	g.probe(t.Context())
-	if g.Err() != nil {
-		t.Fatal("a connection error tripped the guard")
+	if g.Err() != nil || g.Ready() != nil {
+		t.Fatalf("one failed check: Err %v, Ready %v", g.Err(), g.Ready())
+	}
+	// Three in a row: unhealthy, not latched, one ERROR.
+	g.probe(t.Context())
+	if g.Ready() != nil {
+		t.Fatal("unhealthy after 2 failures")
+	}
+	g.probe(t.Context())
+	if !errors.Is(g.Ready(), ErrClusterUnchecked) || g.Err() != nil || g.BeforeConnect(t.Context(), nil) != nil {
+		t.Fatalf("3 failures: Ready %v, Err %v", g.Ready(), g.Err())
+	}
+	g.probe(t.Context())
+	if n := strings.Count(logs.String(), "CLUSTER UNCHECKED"); n != 1 {
+		t.Errorf("%d CLUSTER UNCHECKED errors", n)
 	}
 	if out := logs.String(); !strings.Contains(out, "cluster check: cannot connect") || strings.Contains(out, "secret") || strings.Contains(out, "127.0.0.1") {
 		t.Errorf("log: %s", out)
