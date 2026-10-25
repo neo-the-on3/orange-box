@@ -5,6 +5,7 @@ import io.github.neotheon3.orangebox.core.database.DtcHistoryRepository
 import io.github.neotheon3.orangebox.core.database.DtcRecordEntity
 import io.github.neotheon3.orangebox.core.database.VehicleRepository
 import io.github.neotheon3.orangebox.core.obd.DtcKind
+import io.github.neotheon3.orangebox.core.obd.DtcRead
 import io.github.neotheon3.orangebox.core.obd.ObdConnection
 import io.github.neotheon3.orangebox.core.obd.ObdError
 import io.github.neotheon3.orangebox.core.obd.VinDecoder
@@ -29,6 +30,8 @@ data class DiagnosticsReport(
     val vin: String?,
     /** Lists the car did not answer readably (shown as "couldn't read" rather than "none"). */
     val unreadable: Set<DtcStatus> = emptySet(),
+    /** Lists the car doesn't support at all, typically permanent codes (mode 0A) on older cars (#196). */
+    val unsupported: Set<DtcStatus> = emptySet(),
 ) {
     /** Codes per group; codes that aren't well-formed SAE codes fall back to Powertrain. */
     val byGroup: Map<DtcGroup, List<TroubleCode>> = codes.groupBy { it.group ?: DtcGroup.POWERTRAIN }
@@ -92,25 +95,36 @@ class ObdDiagnosticsRepository @Inject constructor(
 
     private val mutex = Mutex()
 
+    /**
+     * DTC lists each vehicle (by id; null = no vehicle set up) answered as unsupported, so later scans in
+     * this process skip them (#196). Not persisted: a fresh start probes once more.
+     */
+    private val unsupportedByVehicle = mutableMapOf<Long?, Set<DtcStatus>>()
+
     override suspend fun scan(): ScanResult = mutex.withLock { busy { scanLocked() } }
 
     private suspend fun scanLocked(): ScanResult {
+        val vehicleId = runCatching { vehicles.activeVehicle.first()?.id }.getOrNull()
+        val known = unsupportedByVehicle[vehicleId].orEmpty()
         val read = try {
             connection.withSession { s ->
                 val monitor = s.readMonitorStatus()
-                val lists = DtcStatus.entries.associateWith { s.readDtcs(it.kind) }
+                val results = DtcStatus.entries.associateWith { if (it in known) DtcRead.Unsupported else s.readDtcResult(it.kind) }
                 val vin = (s.readVin() as? VinDecoder.Result.Valid)?.vin
-                Triple(monitor, lists, vin)
+                Triple(monitor, results, vin)
             }
         } catch (e: ObdError) {
             OrangeLog.w(AREA, "scan_failed", "error" to e.describe())
             return ScanResult.Failed(e.describe())
         } ?: return ScanResult.NotConnected
-        val (monitor, lists, vin) = read
-        if (lists.values.all { it == null }) {
+        val (monitor, results, vin) = read
+        val lists: Map<DtcStatus, List<String>?> = results.mapValues { (it.value as? DtcRead.Codes)?.codes }
+        if (results.values.none { it is DtcRead.Codes }) {
             OrangeLog.w(AREA, "scan_unreadable")
             return ScanResult.Failed("The car's trouble-code replies could not be read")
         }
+        val unsupported = results.filterValues { it is DtcRead.Unsupported }.keys
+        if (unsupported != known) unsupportedByVehicle[vehicleId] = unsupported
         val at = clock()
         val codes = lists.flatMap { (status, list) -> list.orEmpty().map { TroubleCode(it.uppercase(), status) } }
         val report = DiagnosticsReport(
@@ -118,7 +132,8 @@ class ObdDiagnosticsRepository @Inject constructor(
             codes = codes,
             milOn = monitor?.milOn,
             vin = vin,
-            unreadable = lists.filterValues { it == null }.keys,
+            unreadable = results.filterValues { it is DtcRead.Unreadable }.keys,
+            unsupported = unsupported,
         )
         val readable = lists.mapNotNull { (status, list) -> list?.let { status.wire to it } }.toMap()
         runCatching { dtcHistory.recordReading(readable, vehicles.activeVehicle.first()?.id, at) }

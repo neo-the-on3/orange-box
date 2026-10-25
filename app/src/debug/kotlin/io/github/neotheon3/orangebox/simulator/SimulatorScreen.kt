@@ -137,6 +137,7 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
                 modifier = Modifier.testTag("sim_dtc_other_lists"),
             )
             ToggleRow("MIL (check engine) on", sim.milOn, "sim_mil") { v -> actions.update { it.copy(milOn = v) } }
+            ToggleRow("Permanent codes (0A) unsupported", sim.permanentUnsupported, "sim_0a_unsupported") { v -> actions.update { it.copy(permanentUnsupported = v) } }
             OutlinedButton(onClick = actions::clearDtcs, modifier = Modifier.testTag("sim_dtc_clear")) { Text("Clear DTCs (mode 04)") }
             VinEditor(sim.vin, actions)
 

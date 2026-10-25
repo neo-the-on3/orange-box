@@ -72,6 +72,25 @@ class DiagnosticsScreenTest {
         compose.shoot("diagnostics-port-ok")
     }
 
+    @Test fun `unsupported permanent codes show a quiet note, not an error (#196)`() {
+        show(
+            DiagnosticsUiState(
+                connected = true,
+                report = DiagnosticsReport(1_761_370_000_000, emptyList(), false, null, unsupported = setOf(DtcStatus.PERMANENT)),
+            ),
+        )
+        compose.onNodeWithTag("diagnostics_message").assertTextContains("Car status is good.")
+        compose.onNodeWithTag("diagnostics_unsupported").assertTextContains("This car doesn't report permanent codes.")
+        compose.onNodeWithTag("diagnostics_unreadable").assertDoesNotExist()
+        compose.onNodeWithText("didn't answer", substring = true).assertDoesNotExist()
+        compose.shoot("diagnostics-0a-unsupported")
+    }
+
+    @Test fun `a list that couldn't be read asks for a refresh (#196)`() {
+        show(DiagnosticsUiState(connected = true, report = DiagnosticsReport(0, emptyList(), false, null, unreadable = setOf(DtcStatus.PENDING))))
+        compose.onNodeWithTag("diagnostics_unreadable").assertTextContains("Couldn't read pending codes. Tap Refresh to try again.")
+    }
+
     @Test fun `group sheet lists codes with descriptions and earlier codes`() {
         show(faulted)
         compose.onNodeWithTag("dtc_lamp_ignition").performClick()

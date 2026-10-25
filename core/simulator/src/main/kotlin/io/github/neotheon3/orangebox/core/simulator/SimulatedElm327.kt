@@ -26,6 +26,7 @@ class SimulatedElm327(private val controller: SimulatorController) {
             s.unsupportedProtocol -> "SEARCHING...\nUNABLE TO CONNECT"
             cmd == "03" -> dtcResponse(0x43, s.dtcs)
             cmd == "07" -> dtcResponse(0x47, s.pendingDtcs)
+            cmd == "0A" && s.permanentUnsupported -> "7F 0A 11"
             cmd == "0A" -> dtcResponse(0x4A, s.permanentDtcs)
             cmd == "04" -> { controller.clearDtcs(); "44" }
             cmd == "0902" -> if (s.vin.isEmpty()) "NO DATA" else vinResponse(s.vin)
