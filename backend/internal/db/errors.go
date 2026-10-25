@@ -14,7 +14,8 @@ import (
 // statement timeouts (55P03, 57014), deadlocks and serialization failures
 // (40P01, 40001), idle session timeouts (25P03, 57P05) and context deadlines (a pool acquire or query that
 // outlived the request) are FailureBusy; connection failures and server
-// shutdowns, and ErrClusterChanged, are FailureUnavailable.
+// shutdowns, a read-only cluster (25006) and ErrClusterChanged are
+// FailureUnavailable.
 func Classify(err error) store.Failure {
 	if errors.Is(err, ErrClusterChanged) {
 		return store.FailureUnavailable
@@ -29,7 +30,10 @@ func Classify(err error) store.Failure {
 			// The pool drops the connection; a retry gets a fresh one.
 			pg.Code == "25P03", pg.Code == "57P05":
 			return store.FailureBusy
-		case strings.HasPrefix(pg.Code, "08"), pg.Code == "57P01", pg.Code == "57P02", pg.Code == "57P03":
+		case strings.HasPrefix(pg.Code, "08"), pg.Code == "57P01", pg.Code == "57P02", pg.Code == "57P03",
+			// read_only_sql_transaction: the cluster is read-only (e.g. the
+			// old side of a blue/green switchover, or a standby).
+			pg.Code == "25006":
 			return store.FailureUnavailable
 		}
 		return store.FailureOther

@@ -292,8 +292,8 @@ func TestIdentityCommand(t *testing.T) {
 	url := dbtest.NewDatabase(t)
 	env := map[string]string{"ENV": "ci", "DATABASE_URL": url, "SYNC_DEPLOYMENT_ID": "prod-check-1"}
 	getenv := func(k string) string { return env[k] }
-	var out bytes.Buffer
-	if code := identityCommand(nil, getenv, &out); code != 0 {
+	var out, errOut bytes.Buffer
+	if code := identityCommand(nil, getenv, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 	got := strings.TrimSpace(out.String())
@@ -309,13 +309,16 @@ func TestIdentityCommand(t *testing.T) {
 	}
 	env["SYNC_IDENTITY_SOURCE"] = "deployment_id_only"
 	out.Reset()
-	if code := identityCommand(nil, getenv, &out); code != 0 || strings.Contains(out.String(), digest) || !strings.Contains(out.String(), "source=deployment_id_only") {
+	if code := identityCommand(nil, getenv, &out, &errOut); code != 0 || strings.Contains(out.String(), digest) || !strings.Contains(out.String(), "source=deployment_id_only") {
 		t.Errorf("deployment_id_only: %d %q", code, out.String())
 	}
-	if code := identityCommand([]string{"x"}, getenv, &out); code != 2 {
-		t.Errorf("usage: exit %d", code)
+	out.Reset()
+	errOut.Reset()
+	if code := identityCommand([]string{"x"}, getenv, &out, &errOut); code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "usage: server identity") {
+		t.Errorf("usage: exit %d, stdout %q, stderr %q", code, out.String(), errOut.String())
 	}
-	if code := identityCommand(nil, func(k string) string { return map[string]string{"ENV": "ci"}[k] }, &out); code != 1 {
-		t.Errorf("no DATABASE_URL: exit %d", code)
+	errOut.Reset()
+	if code := identityCommand(nil, func(k string) string { return map[string]string{"ENV": "ci"}[k] }, &out, &errOut); code != 1 || out.Len() != 0 || !strings.Contains(errOut.String(), "DATABASE_URL is not set") {
+		t.Errorf("no DATABASE_URL: exit %d, stdout %q, stderr %q", code, out.String(), errOut.String())
 	}
 }

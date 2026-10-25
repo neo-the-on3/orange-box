@@ -27,7 +27,7 @@ func main() {
 		os.Exit(migrateCommand(os.Args[2:], os.Getenv, os.Stdout))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "identity" {
-		os.Exit(identityCommand(os.Args[2:], os.Getenv, os.Stdout))
+		os.Exit(identityCommand(os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
 	}
 	os.Exit(serve())
 }
@@ -119,6 +119,11 @@ func run(ctx context.Context, ln net.Listener, cfg config.Config, logger *slog.L
 	return nil
 }
 
+// poolCloseTimeout bounds closing the database pool, at shutdown (after
+// the HTTP drain, within SHUTDOWN_TIMEOUT + 1 s < Docker's 10 s grace) and
+// when startup fails: a hung database otherwise holds each close ~15 s.
+const poolCloseTimeout = time.Second
+
 // store is the storage the handlers use.
 type store struct {
 	members     auth.MemberStore
@@ -152,18 +157,18 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		// Its own pool without the statement timeout (#178).
 		mpool, err := db.Open(ctx, db.Options{URL: cfg.DatabaseURL, MaxConns: 2, ForMigrations: true})
 		if err != nil {
-			pool.Close()
+			db.CloseWithin(pool, poolCloseTimeout)
 			return store{}, err
 		}
 		err = migrateUp(ctx, mpool, logger)
-		mpool.Close()
+		db.CloseWithin(mpool, poolCloseTimeout)
 		if err != nil {
-			pool.Close()
+			db.CloseWithin(pool, poolCloseTimeout)
 			return store{}, err
 		}
 	}
 	if err := db.CheckMigrated(ctx, pool); err != nil {
-		pool.Close()
+		db.CloseWithin(pool, poolCloseTimeout)
 		return store{}, err
 	}
 	trips, err := db.NewTripsWith(ctx, pool, db.TripsOptions{
@@ -171,7 +176,7 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		Guard: guard, Logger: logger,
 	})
 	if err != nil {
-		pool.Close()
+		db.CloseWithin(pool, poolCloseTimeout)
 		return store{}, err
 	}
 	// The digest only (no system_identifier or deployment id): every
@@ -180,6 +185,11 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 	if cfg.SyncDeploymentIDDefaulted {
 		logger.Warn("SYNC_DEPLOYMENT_ID is unset: using the dev-only default, which never changes; " +
 			"set a new SYNC_DEPLOYMENT_ID after restoring this database, or old sync tokens stay valid")
+	}
+	guardCtx, stopGuard := context.WithCancel(context.WithoutCancel(ctx))
+	if guard != nil {
+		go guard.Run(guardCtx, cfg.SyncClusterCheckInterval)
+		logger.Info("checking the database cluster", slog.String("interval", cfg.SyncClusterCheckInterval.String()))
 	}
 	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
 	return store{
@@ -194,7 +204,12 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 			}
 			return pool.Ping(ctx)
 		},
-		close: pool.Close,
+		close: func() {
+			stopGuard()
+			if !db.CloseWithin(pool, poolCloseTimeout) {
+				logger.Warn("database pool did not close in time; exiting anyway", slog.String("timeout", poolCloseTimeout.String()))
+			}
+		},
 	}, nil
 }
 
