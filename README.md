@@ -10,6 +10,7 @@ Orange Box is a clean-room re-implementation of the OBD-II features of the Apach
 ## Docs
 - [`docs/FEASIBILITY.md`](docs/FEASIBILITY.md): analysis of the legacy app
 - [`docs/PLAN.md`](docs/PLAN.md): architecture, decisions and milestones
+- [`docs/diagnostics.md`](docs/diagnostics.md): trouble codes, clearing, history and the drive-start prompt (M6)
 - [`docs/openapi.yaml`](docs/openapi.yaml): OpenAPI 3.1 description of the legacy backend, derived from the client code
 
 ## Build
@@ -63,7 +64,7 @@ See [docs/REAL_DEVICE_CHECKLIST.md](docs/REAL_DEVICE_CHECKLIST.md) for the check
 
 ## Debug diagnostics (Simulator screen)
 
-- Inject stored, pending or permanent DTCs (mode 04 doesn't clear permanent ones, like a real ECU) and set the VIN the simulated car reports.
+- Inject stored, pending or permanent DTCs (mode 04 doesn't clear permanent ones, like a real ECU), or the M6 acceptance set with **Inject P0300 + P0420 + U0100**, and set the VIN the simulated car reports. The app's Diagnostics screen (Home toolbar, or the dashboard's Diagnostics button) then shows them.
 - **App readout** shows what the app computed: harsh accel/brake and overspeed flags and counters, plus "Read DTCs + VIN from car", which reads 03/07/0A and 09 02 over the live session.
 - **BT disconnected** drops the link and the app stays in "Adapter disconnected" until **BT connected** or **Connect**. A real Bluetooth ACL disconnect goes through the same path.
 - Stopping a drive script, or reaching its end, lets the car coast to 0 km/h and idle RPM.

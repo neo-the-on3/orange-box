@@ -71,6 +71,7 @@ orange-box/
 │  ├─ data/                  # repositories (Offline/Fake/Remote)
 │  ├─ network/               # Retrofit (Remote mode), from M9
 │  ├─ database/              # Room, from M3/M4
+│  ├─ diagnostics/           # DTC groups, descriptions, scan/clear, drive-start prompt (M6)
 │  └─ testing/               # fakes, test dispatchers
 ├─ feature/
 │  ├─ home/  ├─ settings/  ├─ simulator/ (debug-only consumer)  ├─ onboarding/  ├─ vehicle/
