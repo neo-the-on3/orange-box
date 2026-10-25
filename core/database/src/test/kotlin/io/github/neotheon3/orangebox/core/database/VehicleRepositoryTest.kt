@@ -59,6 +59,25 @@ class VehicleRepositoryTest {
         assertNull(repo.activeVehicle.first())
     }
 
+    @Test fun `several vehicles keep their order and data, and the active one can change (#61)`() = runTest {
+        val a = repo.save(Vehicle(name = "A", fuel = VehicleFuel.PETROL, displacementCc = 1200))
+        val b = repo.save(Vehicle(name = "B", fuel = VehicleFuel.DIESEL, odometerKm = 5))
+        val c = repo.save(Vehicle(name = "C", fuel = VehicleFuel.CNG))
+        assertEquals(listOf("A", "B", "C"), repo.vehicles.first().map { it.name })
+        repo.setActive(b)
+        assertEquals("B", repo.activeVehicle.first()?.name)
+        // Editing keeps the creation order and the id.
+        repo.save(repo.vehicles.first().first { it.id == a }.copy(name = "A2", fuel = VehicleFuel.LPG))
+        assertEquals(listOf(a to "A2", b to "B", c to "C"), repo.vehicles.first().map { it.id to it.name })
+        assertEquals(VehicleFuel.LPG, db.vehicleDao().get(a)?.toModel()?.fuel)
+        assertEquals(3, db.vehicleDao().count())
+        // Deleting a non-active vehicle leaves the active one alone.
+        repo.delete(c)
+        assertEquals(b, prefs.state.value.activeVehicleId)
+        repo.setActive(a)
+        assertEquals("A2", repo.activeVehicle.first()?.name)
+    }
+
     @Test fun `unknown stored fuel reads back as petrol`() {
         val e = VehicleEntity(1, "X", null, null, "PLUTONIUM", null, null, 0)
         assertEquals(VehicleFuel.PETROL, e.toModel().fuel)

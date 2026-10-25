@@ -42,7 +42,6 @@ import io.github.neotheon3.orangebox.feature.settings.settingsScreen
 import io.github.neotheon3.orangebox.feature.setup.DongleSetupDestination
 import io.github.neotheon3.orangebox.feature.setup.OnboardingDestination
 import io.github.neotheon3.orangebox.feature.setup.PermissionsDestination
-import io.github.neotheon3.orangebox.feature.setup.VehicleSetupDestination
 import io.github.neotheon3.orangebox.feature.setup.setupScreens
 import io.github.neotheon3.orangebox.feature.trips.StatsDestination
 import io.github.neotheon3.orangebox.feature.trips.TripDetailDestination
@@ -78,6 +77,9 @@ fun OrangeBoxNavHost(
                     }
                 },
                 onBack = { navController.popBackStack() },
+                onEditVehicle = { id ->
+                    navController.navigate(io.github.neotheon3.orangebox.feature.setup.VehicleEditDestination(id)) { launchSingleTop = true }
+                },
             )
             homeScreen(
                 onOpenSettings = { navController.navigate(SettingsDestination) { launchSingleTop = true } },
@@ -99,7 +101,7 @@ fun OrangeBoxNavHost(
             diagnosticsScreen(onBack = { navController.popBackStack() })
             settingsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenVehicle = { navController.navigate(VehicleSetupDestination) { launchSingleTop = true } },
+                onOpenVehicle = { navController.navigate(io.github.neotheon3.orangebox.feature.setup.VehicleListDestination) { launchSingleTop = true } },
                 onOpenDongle = { navController.navigate(DongleSetupDestination) { launchSingleTop = true } },
                 onOpenPermissions = { navController.navigate(PermissionsDestination) { launchSingleTop = true } },
             )
