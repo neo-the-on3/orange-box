@@ -14,7 +14,7 @@
     <string name="settings_url_malformed">Not a valid URL</string>
     <string name="settings_url_cleared">URL cleared</string>
     <string name="settings_setup_section">Car and dongle</string>
-    <string name="settings_vehicle">Vehicle</string>
+    <string name="settings_vehicle">Vehicles</string>
     <string name="settings_dongle">OBD dongle</string>
     <string name="settings_not_set">Not set up</string>
     <string name="settings_permissions">Permissions</string>

@@ -172,11 +172,18 @@ class VehicleSetupViewModel @Inject constructor(
     private val _state = MutableStateFlow(VehicleSetupUiState(form = VehicleFormState.read(saved) ?: VehicleForm()))
     val state: StateFlow<VehicleSetupUiState> = _state.asStateFlow()
 
+    /**
+     * Set when opened from Settings → Vehicles (#61): 0 adds a new car, any other id edits that car.
+     * Null (onboarding, the setup shortcut) edits the active vehicle.
+     */
+    val editId: Long? = saved.get<Long>(VehicleEditDestination.ARG)
+
     init {
         // A restored, half-typed form wins over the stored vehicle.
-        if (VehicleFormState.read(saved) == null) {
+        if (VehicleFormState.read(saved) == null && editId != 0L) {
             viewModelScope.launch {
-                vehicles.activeVehicle.first()?.let { v -> _state.update { it.copy(form = VehicleFormValidator.fromVehicle(v)) } }
+                val v = if (editId == null) vehicles.activeVehicle.first() else vehicles.vehicles.first().firstOrNull { it.id == editId }
+                v?.let { _state.update { s -> s.copy(form = VehicleFormValidator.fromVehicle(it)) } }
             }
         }
     }
@@ -186,13 +193,15 @@ class VehicleSetupViewModel @Inject constructor(
         _state.update { it.copy(form = form, errors = emptySet(), saved = false) }
     }
 
-    /** Validates, stores and activates the vehicle. */
+    /** Validates and stores the vehicle; activates it when editing the active one or there is none yet. */
     fun save() {
         val (vehicle, errors) = VehicleFormValidator.validate(_state.value.form)
         if (vehicle == null) { _state.update { it.copy(errors = errors) }; return }
         viewModelScope.launch {
+            // From the Vehicles list, saving a car doesn't switch the active one, unless there was none.
+            val activate = editId == null || vehicles.activeVehicle.first() == null
             val id = vehicles.save(vehicle)
-            vehicles.setActive(id)
+            if (activate) vehicles.setActive(id)
             _state.update { it.copy(form = it.form.copy(id = id), saved = true) }
         }
     }

@@ -80,4 +80,19 @@
     <string name="dongle_other_help">Check the dongle is plugged in, the ignition is on and no other app is connected to it.</string>
     <string name="auto_start_title">Start when the dongle connects</string>
     <string name="auto_start_summary">Connect automatically when the paired dongle comes in range.</string>
+
+    <string name="vehicles_title">Vehicles</string>
+    <string name="vehicles_add">Add vehicle</string>
+    <string name="vehicles_empty">No vehicles yet. Add your car so trips and the fuel estimate use its fuel type and engine size.</string>
+    <string name="vehicles_active">Active · %1$s</string>
+    <string name="vehicles_cc">%1$d cc</string>
+    <string name="vehicles_odometer">%1$d %2$s</string>
+    <string name="vehicles_edit">Edit %1$s</string>
+    <string name="vehicles_delete_named">Delete %1$s</string>
+    <string name="vehicles_delete">Delete</string>
+    <string name="vehicles_cancel">Cancel</string>
+    <string name="vehicles_delete_title">Delete %1$s?</string>
+    <string name="vehicles_delete_body">Trips recorded with it are kept.</string>
+    <string name="vehicle_add_title">Add vehicle</string>
+    <string name="vehicle_edit_title">Edit vehicle</string>
 </resources>

@@ -42,9 +42,11 @@ import javax.inject.Inject
 @Serializable data object DongleSetupDestination
 @Serializable data object PermissionsDestination
 
-fun NavGraphBuilder.setupScreens(onOnboardingFinished: () -> Unit, onBack: () -> Unit) {
+fun NavGraphBuilder.setupScreens(onOnboardingFinished: () -> Unit, onBack: () -> Unit, onEditVehicle: (Long) -> Unit = {}) {
     composable<OnboardingDestination> { OnboardingRoute(onFinished = onOnboardingFinished) }
     composable<VehicleSetupDestination> { VehicleSetupRoute(onBack) }
+    composable<VehicleListDestination> { VehicleListRoute(onBack, onEditVehicle) }
+    composable<VehicleEditDestination> { VehicleSetupRoute(onBack) }
     composable<DongleSetupDestination> { DongleSetupRoute(onBack) }
     composable<PermissionsDestination> { PermissionsRoute(onBack) }
 }
@@ -58,7 +60,14 @@ class PermissionsViewModel @Inject constructor(private val prefs: AppPreferences
 @Composable
 fun VehicleSetupRoute(onBack: () -> Unit, vm: VehicleSetupViewModel = hiltViewModel()) {
     val s by vm.state.collectAsStateWithLifecycle()
-    SetupScaffold(stringResource(R.string.vehicle_title), onBack, "vehicle_screen") {
+    val title = when (vm.editId) {
+        null -> R.string.vehicle_title
+        0L -> R.string.vehicle_add_title
+        else -> R.string.vehicle_edit_title
+    }
+    // Opened from the Vehicles list: back to it once saved.
+    androidx.compose.runtime.LaunchedEffect(s.saved) { if (s.saved && vm.editId != null) onBack() }
+    SetupScaffold(stringResource(title), onBack, "vehicle_screen") {
         VehicleSetupContent(s, vm::onFormChange)
         Button(onClick = vm::save, modifier = Modifier.testTag("vehicle_save")) { Text(stringResource(R.string.vehicle_save)) }
     }
