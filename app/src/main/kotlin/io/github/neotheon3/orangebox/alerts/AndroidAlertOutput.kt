@@ -20,7 +20,8 @@ import javax.inject.Singleton
 /**
  * Plays driving alerts (M8 #59) with Orange Box's own tones (synthesized by tools/gen_alert_sounds.py)
  * as navigation-guidance audio (mixed over music; no audio focus is taken). With voice on, it also speaks the
- * alert through the device's text-to-speech engine, which is created only once voice is first used.
+ * alert through the platform [TextToSpeech] with the phone's default engine (none is forced; no TTS SDK or
+ * cloud voice), created only once voice is first used. Without an engine, voice stays silent.
  */
 @Singleton
 class AndroidAlertOutput @Inject constructor(@ApplicationContext private val context: Context) : AlertOutput {

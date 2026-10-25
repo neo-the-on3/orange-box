@@ -35,7 +35,11 @@ the metric values.
 - check-engine lamp: once per connection.
 
 `AndroidAlertOutput` plays the tones with `SoundPool` as navigation-guidance audio, and speaks the
-alert with the device's `TextToSpeech` engine when voice is on (created on first use). The tones in
+alert with the platform `android.speech.tts.TextToSpeech` when voice is on (created on first use). It uses
+whichever text-to-speech engine is already the phone's default (no engine package is forced, and there is no
+TTS SDK, cloud voice or Play Services dependency); the manifest's `<queries>` entry for
+`android.intent.action.TTS_SERVICE` is what lets Android 11+ see that engine. With no engine on the phone,
+voice stays silent and the tones still play. The tones in
 `app/src/main/res/raw/alert_*.wav` are synthesized by `tools/gen_alert_sounds.py` (sine waves); no
 CarooLive/Pokevian sound is used.
 
