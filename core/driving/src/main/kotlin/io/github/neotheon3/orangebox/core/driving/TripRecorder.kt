@@ -85,6 +85,9 @@ class TripRecorder(
     private var locationJob: Job? = null
     @Volatile private var fix: GeoFix? = null
 
+    /** The latest position fix of this or the last drive (the crash SMS's location), null if none yet. */
+    val lastFix: GeoFix? get() = fix
+
     private var trip: TripEntity? = null
     private var orphansClosed = false
     private var beganAtSample = 0L
