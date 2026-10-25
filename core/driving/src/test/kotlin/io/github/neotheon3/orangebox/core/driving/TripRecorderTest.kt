@@ -191,6 +191,23 @@ class TripRecorderTest {
         assertEquals(TripRecorder.END_ENGINE_OFF, r.trips.rows.values.single().endReason)
     }
 
+    @Test fun `ignition off with the dongle still powered - empty samples end the trip and add no fuel (RDF1 drive 2)`() = runTest {
+        val r = rig()
+        r.drive(60, 30.0, 1800.0)
+        r.drive(10, 0.0, 750.0, maf = 3.5) // idle, then the key is turned
+        val fuelAtKeyOff = r.source.latest.value!!.trip.fuelLitres
+        // The poller drops the values once the ECU goes silent and keeps emitting empty samples every ~2.5 s.
+        repeat(40) {
+            r.scope.advanceTimeBy(2_500)
+            r.source.feed(VehicleSample(r.scope.testScheduler.currentTime, emptyMap()))
+        }
+        r.scope.runCurrent()
+        val trip = r.trips.rows.values.single()
+        assertEquals(TripRecorder.END_ENGINE_OFF, trip.endReason)
+        // Only the one interval into the first empty sample (idle flow for 2.5 s, < 1 mL); build 95 kept billing ~1 L/h.
+        assertEquals(fuelAtKeyOff, r.source.latest.value!!.trip.fuelLitres, 0.001)
+    }
+
     @Test fun `link lost for longer than the grace ends the trip as disconnected`() = runTest {
         val r = rig()
         r.drive(10, 72.0, 2000.0)
