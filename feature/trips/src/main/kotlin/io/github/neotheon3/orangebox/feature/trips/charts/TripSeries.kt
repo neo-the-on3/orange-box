@@ -16,7 +16,8 @@ data class SeriesPoint(val t: Double, val value: Double)
 /**
  * Chart data derived from a trip's ~1 Hz samples. Each sample's reading holds until the next sample, but
  * a gap longer than [MAX_GAP_S] (link loss, poll stall) counts only [MAX_GAP_S], like the telemetry engine,
- * which never integrates across gaps.
+ * which never integrates across gaps. Time series run on that same drive time (not wall-clock time), so
+ * every chart shares one axis that ends near the trip's Duration (#189).
  */
 object TripSeries {
     /** Below this the car is stationary (TelemetryConfig.stationaryKph). */
@@ -40,34 +41,59 @@ object TripSeries {
 
     fun speedZones(samples: List<TripSampleEntity>): SpeedZones {
         val seconds = DoubleArray(SPEED_ZONE_BOUNDS.size + 2)
-        forEachInterval(samples) { s, dt -> s.speedKph?.let { seconds[zoneOf(it)] += dt } }
+        forEachInterval(samples) { s, _, dt -> s.speedKph?.let { seconds[zoneOf(it)] += dt } }
         return SpeedZones(SPEED_ZONE_BOUNDS, seconds.toList())
+    }
+
+    /** Speed over drive time: seconds since the trip start with each gap capped at [MAX_GAP_S] (#189). */
+    fun speed(samples: List<TripSampleEntity>, startMillis: Long): List<SeriesPoint> {
+        val sorted = samples.sortedBy { it.timestampMillis }
+        val t = driveTimes(sorted, startMillis)
+        return sorted.indices.mapNotNull { i -> sorted[i].speedKph?.let { SeriesPoint(t[i], it) } }
+    }
+
+    /** Drive time of each of the [sorted] samples: wall-clock offsets with every gap capped at [MAX_GAP_S]. */
+    private fun driveTimes(sorted: List<TripSampleEntity>, startMillis: Long): DoubleArray {
+        val t = DoubleArray(sorted.size)
+        for (i in sorted.indices) {
+            val prevMillis = if (i == 0) startMillis else sorted[i - 1].timestampMillis
+            val dt = ((sorted[i].timestampMillis - prevMillis) / 1000.0).coerceIn(0.0, MAX_GAP_S)
+            t[i] = (if (i == 0) 0.0 else t[i - 1]) + dt
+        }
+        return t
     }
 
     /**
      * km/L per [ECONOMY_BUCKET_S] bucket (distance from speed, fuel from fuel flow), plotted at each bucket's
-     * middle. Idle or coasting buckets with almost no fuel or distance are skipped, so the line doesn't spike.
+     * covered middle. Idle or coasting buckets with almost no fuel or distance are skipped, so the line doesn't spike.
      */
     fun economy(samples: List<TripSampleEntity>, startMillis: Long): List<SeriesPoint> {
         val km = sortedMapOf<Int, Double>()
         val litres = sortedMapOf<Int, Double>()
-        forEachInterval(samples) { s, dt ->
-            val bucket = (((s.timestampMillis - startMillis) / 1000.0) / ECONOMY_BUCKET_S).toInt().coerceAtLeast(0)
+        val from = mutableMapOf<Int, Double>()
+        val to = mutableMapOf<Int, Double>()
+        forEachInterval(samples, startMillis) { s, t, dt ->
+            val bucket = (t / ECONOMY_BUCKET_S).toInt().coerceAtLeast(0)
+            from[bucket] = minOf(from[bucket] ?: t, t)
+            to[bucket] = maxOf(to[bucket] ?: (t + dt), t + dt)
             s.speedKph?.let { km[bucket] = (km[bucket] ?: 0.0) + it * dt / 3600.0 }
             s.fuelFlowLph?.let { litres[bucket] = (litres[bucket] ?: 0.0) + it * dt / 3600.0 }
         }
         return km.mapNotNull { (b, d) ->
             val l = litres[b] ?: return@mapNotNull null
             if (l < MIN_BUCKET_FUEL_L || d < MIN_BUCKET_KM) null
-            else SeriesPoint((b + 0.5) * ECONOMY_BUCKET_S, (d / l).coerceAtMost(MAX_ECONOMY))
+            // At the middle of the time the bucket actually covers, so a partial last bucket never plots past the data.
+            else SeriesPoint((from.getValue(b) + to.getValue(b)) / 2, (d / l).coerceAtMost(MAX_ECONOMY))
         }
     }
 
-    private inline fun forEachInterval(samples: List<TripSampleEntity>, block: (TripSampleEntity, Double) -> Unit) {
+    /** Each sample with its drive time and the (capped) time its reading holds until the next sample. */
+    private inline fun forEachInterval(samples: List<TripSampleEntity>, startMillis: Long? = null, block: (TripSampleEntity, Double, Double) -> Unit) {
         val sorted = samples.sortedBy { it.timestampMillis }
+        val t = driveTimes(sorted, startMillis ?: sorted.firstOrNull()?.timestampMillis ?: 0L)
         for (i in 0 until sorted.size - 1) {
-            val dt = ((sorted[i + 1].timestampMillis - sorted[i].timestampMillis) / 1000.0).coerceIn(0.0, MAX_GAP_S)
-            if (dt > 0) block(sorted[i], dt)
+            val dt = t[i + 1] - t[i]
+            if (dt > 0) block(sorted[i], t[i], dt)
         }
     }
 }

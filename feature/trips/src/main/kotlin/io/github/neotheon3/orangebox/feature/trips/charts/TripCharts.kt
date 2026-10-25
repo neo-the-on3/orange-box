@@ -42,9 +42,11 @@ fun TripCharts(
     economy: List<SeriesPoint>,
     locale: Locale,
     modifier: Modifier = Modifier,
-    /** Shared time axis end, so both line charts line up; defaults to the last speed point. */
-    durationS: Double = speed.lastOrNull()?.t ?: economy.lastOrNull()?.t ?: 0.0,
+    /** The trip's duration: both line charts end at the same time, at least this (#189). */
+    durationS: Double = 0.0,
 ) {
+    // One axis for both charts, wide enough for either series, so they line up when stacked (#189).
+    val axisEndS = maxOf(durationS, speed.lastOrNull()?.t ?: 0.0, economy.lastOrNull()?.t ?: 0.0, 1.0)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (zones.totalS > 0) SpeedZoneCard(zones, locale)
         if (speed.size >= 2) {
@@ -55,7 +57,7 @@ fun TripCharts(
                 color = MaterialTheme.colorScheme.primary,
                 locale = locale,
                 tag = "chart_speed",
-                endS = durationS,
+                endS = axisEndS,
             )
         }
         if (economy.size >= 2) {
@@ -66,7 +68,7 @@ fun TripCharts(
                 color = MaterialTheme.colorScheme.tertiary,
                 locale = locale,
                 tag = "chart_economy",
-                endS = durationS,
+                endS = axisEndS,
             )
         }
     }
@@ -126,7 +128,7 @@ private fun zoneColors(n: Int): List<Color> {
 @Composable
 private fun LineChartCard(title: String, unit: String, points: List<SeriesPoint>, color: Color, locale: Locale, tag: String, endS: Double) {
     val maxV = niceMax(points.maxOf { it.value })
-    val endT = maxOf(endS, points.last().t, 1.0)
+    val endT = endS
     val description = stringResource(R.string.chart_line_description, title, TripFormat.decimal(points.maxOf { it.value }, locale), unit)
     OutlinedCard(Modifier.fillMaxWidth().testTag(tag)) {
         Column(Modifier.padding(16.dp)) {
@@ -160,7 +162,7 @@ private fun LineChartCard(title: String, unit: String, points: List<SeriesPoint>
             }
             Row(Modifier.fillMaxWidth().padding(start = 28.dp, top = 4.dp)) {
                 Text("0:00", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                Text(TripFormat.elapsedShort(endT), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(TripFormat.elapsedShort(endT), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("${tag}_end"))
             }
         }
     }
