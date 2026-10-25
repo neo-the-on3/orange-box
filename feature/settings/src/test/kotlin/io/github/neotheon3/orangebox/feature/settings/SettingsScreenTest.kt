@@ -146,7 +146,7 @@ class SettingsScreenTest {
             onSaveContact = { events += "save" }, onClearContact = { events += "clear" },
         )
         var state by androidx.compose.runtime.mutableStateOf(
-            CrashSettingsState(io.github.neotheon3.orangebox.core.model.CrashPreferences(contactNumber = "+919876543210", contactName = "Asha")),
+            CrashSettingsState(io.github.neotheon3.orangebox.core.model.CrashPreferences(detectionEnabled = true, contactNumber = "+919876543210", contactName = "Asha")),
         )
         compose.setContent {
             OrangeBoxTheme {

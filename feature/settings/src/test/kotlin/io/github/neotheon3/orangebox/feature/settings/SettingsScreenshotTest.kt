@@ -44,7 +44,7 @@ class SettingsScreenshotTest {
 
     @Test fun crash() = shot("settings_crash") {
         CrashSettingsSection(
-            CrashSettingsState(io.github.neotheon3.orangebox.core.model.CrashPreferences(contactNumber = "+919876543210", contactName = "Asha")),
+            CrashSettingsState(io.github.neotheon3.orangebox.core.model.CrashPreferences(detectionEnabled = true, contactNumber = "+919876543210", contactName = "Asha")),
             CrashSettingsActions(),
         )
     }

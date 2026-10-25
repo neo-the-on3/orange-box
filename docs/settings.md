@@ -13,7 +13,7 @@ Top to bottom:
 | Driving dashboard | bottom-left button (hazard with emergency number, or quick launcher), overspeed warning, show dashboard automatically | hazard, country number, 120 km/h, off |
 | Units (#58) | distance and speed, fuel economy, temperature | from the device country |
 | Driving alerts (#59) | overspeed, harsh accel/brake, long idling, check-engine; tone; voice | on, on, off, on; tone on; voice off |
-| Crash detection (M7 + #60) | detection on/off, impact threshold, countdown, emergency contact | on, 4.0 g, 30 s, none |
+| Crash detection (M7 + #60) | detection on/off, impact threshold, countdown, emergency contact | off, 4.0 g, 30 s, none |
 | Server (advanced) (#62) | backend mode Off / Fake / Remote, https base URL | Off |
 | About | version, commit, CI run | |
 

@@ -12,6 +12,8 @@ Things CI and the simulator cannot prove. Tick them on a real phone + ELM327 don
 - [ ] Ignition off / no vehicle: probe reports an error, no crash.
 
 ## Crash prompt (M7)
+- [ ] Fresh install: Settings → Crash detection is off; with it off, a hard knock while driving raises no prompt.
+- [ ] Turn Crash detection on for the checks below that need the sensor.
 - [ ] Knock the phone on a table while connected and parked: no prompt (not moving).
 - [ ] Drop the phone onto a cushion while driving (passenger): no prompt (free fall is rejected).
 - [ ] Simulator → "Inject impact": the countdown shows over every screen; with the app in the background a full-screen notification appears.

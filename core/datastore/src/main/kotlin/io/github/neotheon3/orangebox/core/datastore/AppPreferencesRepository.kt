@@ -65,7 +65,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
             ),
             mapTilesEnabled = p[MAP_TILES] ?: true,
             crash = CrashPreferences(
-                detectionEnabled = p[CRASH_ENABLED] ?: true,
+                detectionEnabled = p[CRASH_ENABLED] ?: CrashPreferences().detectionEnabled,
                 thresholdG = CrashPreferences.clampThreshold(p[CRASH_THRESHOLD] ?: CrashPreferences.DEFAULT_THRESHOLD_G),
                 countdownSeconds = CrashPreferences.clampCountdown(p[CRASH_COUNTDOWN] ?: CrashPreferences.DEFAULT_COUNTDOWN_S),
                 contactNumber = p[CRASH_CONTACT_NUMBER],
