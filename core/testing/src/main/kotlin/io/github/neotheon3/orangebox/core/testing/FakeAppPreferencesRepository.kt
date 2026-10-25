@@ -24,6 +24,14 @@ class FakeAppPreferencesRepository(initial: AppPreferences = AppPreferences()) :
         )
     }
     override suspend fun setMapTilesEnabled(enabled: Boolean) { state.value = state.value.copy(mapTilesEnabled = enabled) }
+    override suspend fun setCrash(crash: io.github.neotheon3.orangebox.core.model.CrashPreferences) {
+        state.value = state.value.copy(
+            crash = crash.copy(
+                thresholdG = io.github.neotheon3.orangebox.core.model.CrashPreferences.clampThreshold(crash.thresholdG),
+                countdownSeconds = io.github.neotheon3.orangebox.core.model.CrashPreferences.clampCountdown(crash.countdownSeconds),
+            ),
+        )
+    }
     override suspend fun markPermissionsAsked(permissions: Collection<String>) {
         state.value = state.value.copy(askedPermissions = state.value.askedPermissions + permissions)
     }

@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.map
 abstract class DrivingModule {
     @Binds abstract fun bindLocationSource(impl: AndroidLocationSource): LocationSource
 
+    @Binds abstract fun bindMotionSource(impl: io.github.neotheon3.orangebox.core.driving.crash.AndroidMotionSource): io.github.neotheon3.orangebox.core.driving.crash.MotionSource
+
     companion object {
         /** The recorder's carried totals, for the dashboard TRIP / FUEL tiles (same source as the notification). */
         @Provides fun provideRecordedTripTotals(recorder: TripRecorder): RecordedTripTotals =
