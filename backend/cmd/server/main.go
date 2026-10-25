@@ -134,7 +134,14 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle and trip operations answer 501")
 		return store{members: auth.NewMemoryMembers(), close: func() {}}, nil
 	}
-	pool, err := db.Open(ctx, db.Options{URL: cfg.DatabaseURL, MaxConns: cfg.DBMaxConns})
+	// Pins the pool to the cluster the sync identity binds (blue/green or
+	// failover behind the same address); not possible without
+	// system_identifier (deployment_id_only).
+	var guard *db.ClusterGuard
+	if db.IdentitySource(cfg.SyncIdentitySource) == db.IdentityClusterAndDeploymentID {
+		guard = db.NewClusterGuard(db.ClusterGuardOptions{Logger: logger, DeploymentID: cfg.SyncDeploymentID})
+	}
+	pool, err := db.Open(ctx, db.Options{URL: cfg.DatabaseURL, MaxConns: cfg.DBMaxConns, Guard: guard})
 	if err != nil {
 		return store{}, err
 	}
@@ -158,6 +165,7 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 	}
 	trips, err := db.NewTripsWith(ctx, pool, db.TripsOptions{
 		DeploymentID: cfg.SyncDeploymentID, IdentitySource: db.IdentitySource(cfg.SyncIdentitySource),
+		Guard: guard, Logger: logger,
 	})
 	if err != nil {
 		pool.Close()
@@ -177,8 +185,13 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		vehicles:    db.NewVehicles(pool),
 		idempotency: db.NewIdempotency(pool),
 		classify:    db.Classify,
-		ready:       pool.Ping,
-		close:       pool.Close,
+		ready: func(ctx context.Context) error {
+			if err := guard.Err(); err != nil {
+				return err
+			}
+			return pool.Ping(ctx)
+		},
+		close: pool.Close,
 	}, nil
 }
 

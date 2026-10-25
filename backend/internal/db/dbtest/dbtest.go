@@ -71,7 +71,7 @@ func NewDatabase(t testing.TB) string {
 			return
 		}
 		defer func() { _ = admin.Close(ctx) }()
-		if err := dropDatabase(ctx, admin, name); err != nil {
+		if err := dropDatabase(ctx, t, admin, name); err != nil {
 			t.Errorf("dbtest: drop database %s: %v", name, err)
 		}
 	})
@@ -79,20 +79,27 @@ func NewDatabase(t testing.TB) string {
 	return u.String()
 }
 
+// dropAttempts bounds dropDatabase: each plain DROP waits up to 5 s for
+// other sessions (Postgres's own wait), so three attempts stay well inside
+// the 30 s cleanup deadline.
+const dropAttempts = 3
+
 // dropDatabase drops name. The test's pool is closed by now (cleanups run
 // last-in first-out), so a plain DROP usually succeeds: Postgres itself
 // waits for (and stops) an autovacuum worker on the database. If another
 // session is still connected, it falls back to WITH (FORCE), which a
 // non-superuser role can't use on another role's backend ("permission
 // denied to terminate process", 42501): that, like "is being accessed by
-// other users" (55006), is retried for a few seconds.
-func dropDatabase(ctx context.Context, admin *pgx.Conn, name string) error {
+// other users" (55006), is retried, logging the cause each time; the
+// final error names the last Postgres error.
+func dropDatabase(ctx context.Context, t testing.TB, admin *pgx.Conn, name string) error {
 	plain := "DROP DATABASE IF EXISTS " + pgx.Identifier{name}.Sanitize()
 	var err error
-	for attempt := range 10 {
+	for attempt := 1; ; attempt++ {
 		if _, err = admin.Exec(ctx, plain); err == nil {
 			return nil
 		}
+		t.Logf("dbtest: drop database %s (attempt %d/%d): %v; trying WITH (FORCE)", name, attempt, dropAttempts, err)
 		if _, err = admin.Exec(ctx, plain+" WITH (FORCE)"); err == nil {
 			return nil
 		}
@@ -100,19 +107,31 @@ func dropDatabase(ctx context.Context, admin *pgx.Conn, name string) error {
 		if !errors.As(err, &pg) || (pg.Code != "42501" && pg.Code != "55006") {
 			return err
 		}
+		if attempt == dropAttempts {
+			return fmt.Errorf("%d attempts, last: %w", attempt, err)
+		}
+		t.Logf("dbtest: drop database %s WITH (FORCE) (attempt %d/%d): %v; retrying", name, attempt, dropAttempts, err)
 		select {
-		case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+		case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
 		case <-ctx.Done():
 			return fmt.Errorf("%w (last error: %w)", ctx.Err(), err)
 		}
 	}
-	return err
 }
 
 // Open returns a pool on url, closed when the test ends.
 func Open(t testing.TB, url string) *pgxpool.Pool {
 	t.Helper()
-	pool, err := db.Open(t.Context(), db.Options{URL: url, MaxConns: 8})
+	return OpenWith(t, db.Options{URL: url})
+}
+
+// OpenWith is Open with opts (MaxConns defaults to 8).
+func OpenWith(t testing.TB, opts db.Options) *pgxpool.Pool {
+	t.Helper()
+	if opts.MaxConns == 0 {
+		opts.MaxConns = 8
+	}
+	pool, err := db.Open(t.Context(), opts)
 	if err != nil {
 		t.Fatalf("dbtest: open: %v", err)
 	}
@@ -123,7 +142,14 @@ func Open(t testing.TB, url string) *pgxpool.Pool {
 // New returns a pool on a fresh database with every migration applied.
 func New(t testing.TB) *pgxpool.Pool {
 	t.Helper()
-	pool := Open(t, NewDatabase(t))
+	return NewWith(t, db.Options{})
+}
+
+// NewWith is New with opts (URL is set to the fresh database).
+func NewWith(t testing.TB, opts db.Options) *pgxpool.Pool {
+	t.Helper()
+	opts.URL = NewDatabase(t)
+	pool := OpenWith(t, opts)
 	m, err := db.NewMigrator(pool)
 	if err != nil {
 		t.Fatalf("dbtest: migrator: %v", err)

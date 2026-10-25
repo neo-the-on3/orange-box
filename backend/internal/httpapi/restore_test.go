@@ -1,12 +1,16 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
@@ -266,5 +270,90 @@ func TestTripWalkAcrossInstances(t *testing.T) {
 	}
 	if n, _ := walk("/v1/trips?limit=1&since=" + url.QueryEscape(since)); n < 3 {
 		t.Errorf("changes walk: %d, want at least 3", n)
+	}
+}
+
+// TestTripSyncClusterSwitch reproduces a database endpoint switched to
+// another cluster under a running instance (blue/green, failover behind
+// the same address): the pool reconnects, and before the guard a sync walk
+// with an old token answered 200 with 0 items, silently skipping writes.
+// Now the first connection to the other cluster trips the guard: every
+// request that needs the database, sync walks included, gets 503
+// service_unavailable and health is 503, until a restart.
+func TestTripSyncClusterSwitch(t *testing.T) {
+	t.Parallel()
+	var switched atomic.Bool
+	guard := db.NewClusterGuard(db.ClusterGuardOptions{
+		DeploymentID: "prod-1",
+		Read: func(ctx context.Context, conn *pgx.Conn) (int64, error) {
+			var id int64
+			if err := conn.QueryRow(ctx, "SELECT system_identifier FROM pg_control_system()").Scan(&id); err != nil {
+				return 0, err
+			}
+			if switched.Load() {
+				id ^= 1 // the other cluster
+			}
+			return id, nil
+		},
+	})
+	pool := dbtest.NewWith(t, db.Options{Guard: guard})
+	trips, err := db.NewTripsWith(t.Context(), pool, db.TripsOptions{DeploymentID: "prod-1", Guard: guard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newTestEnvWith(t, true, func(d *Deps) {
+		d.Members = db.NewMembers(pool)
+		d.Vehicles = db.NewVehicles(pool)
+		d.Trips = trips
+		d.Idempotency = db.NewIdempotency(pool)
+		d.ClassifyError = db.Classify
+		d.Ready = func(ctx context.Context) error {
+			if err := guard.Err(); err != nil {
+				return err
+			}
+			return pool.Ping(ctx)
+		}
+	})
+	m := e.member("switch")
+	v := m.vehicle()
+	m.upload(tripJSON(uuid.New(), v, "completed", "2026-10-01T08:00:00Z", "2026-10-01T09:00:00Z"))
+	_, since := m.walk("/v1/trips")
+	pool.Reset() // new connections from here (any check before is fine)
+	if r := m.call(http.MethodGet, "/v1/trips?since="+url.QueryEscape(since.(string)), ""); r.status != http.StatusOK {
+		t.Fatalf("same cluster: %d %s", r.status, r.body)
+	}
+
+	// The switch: existing connections break, the pool reconnects.
+	switched.Store(true)
+	pool.Reset()
+	for name, req := range map[string][2]string{
+		"upload":    {http.MethodPost, "/v1/trips/batch"},
+		"sync walk": {http.MethodGet, "/v1/trips?since=" + url.QueryEscape(since.(string))},
+		"deletions": {http.MethodGet, "/v1/trips/deletions?since=" + url.QueryEscape(since.(string))},
+		"full walk": {http.MethodGet, "/v1/trips"},
+		"vehicles":  {http.MethodGet, "/v1/vehicles"},
+	} {
+		body, headers := "", []string{}
+		if req[0] == http.MethodPost {
+			body = batch(tripJSON(uuid.New(), v, "completed", "2026-10-02T08:00:00Z", "2026-10-02T09:00:00Z"))
+			headers = []string{"Idempotency-Key", uuid.NewString()}
+		}
+		r := m.call(req[0], req[1], body, headers...)
+		if r.status != http.StatusServiceUnavailable || r.problemCode(t) != "service_unavailable" {
+			t.Errorf("%s after the switch: %d %s, want 503 service_unavailable", name, r.status, r.body)
+		}
+	}
+	if r := e.do(http.MethodGet, "/v1/health", nil); r.status != http.StatusServiceUnavailable {
+		t.Errorf("health after the switch: %d %s", r.status, r.body)
+	}
+	if !errors.Is(guard.Err(), db.ErrClusterChanged) {
+		t.Errorf("guard: %v", guard.Err())
+	}
+	// Even if the endpoint switches back, the instance stays down until
+	// restarted (it may have mixed both clusters meanwhile).
+	switched.Store(false)
+	pool.Reset()
+	if r := m.call(http.MethodGet, "/v1/trips?since="+url.QueryEscape(since.(string)), ""); r.status != http.StatusServiceUnavailable {
+		t.Errorf("switched back: %d %s", r.status, r.body)
 	}
 }

@@ -140,7 +140,7 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members and `501` for vehicles (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
 | `SYNC_TOKEN_KEY`   | none         | Base64 secret (at least 32 bytes) that signs trip sync tokens and page cursors. Required unless `ENV` is `local`/`ci`/`sandbox`, where a missing one is generated at startup (tokens then die with the process). Rotating it expires every client's token: they do one full walk. |
 | `SYNC_DEPLOYMENT_ID` | `dev-<ENV>` in `local`/`ci`/`sandbox` | Names this deployment of the database in sync tokens and cursors, together with the cluster's `system_identifier` (`[A-Za-z0-9._:-]`, up to 64, e.g. `prod-2026-10-25`). Required unless `ENV` is `local`/`ci`/`sandbox`. **Change it after every restore, PITR or branch reset**, with a full restart (see "Restoring the database"). The `dev-<ENV>` default is for dev environments only and never changes, so a restore of a dev database onto the same cluster goes undetected unless you set one (the server warns at startup when it uses the default). |
-| `SYNC_IDENTITY_SOURCE` | `cluster_and_deployment_id` | What sync tokens bind. `cluster_and_deployment_id`: the cluster's `system_identifier` and `SYNC_DEPLOYMENT_ID`; the role must be allowed to run `pg_control_system()`, or the server doesn't start. `deployment_id_only`: `SYNC_DEPLOYMENT_ID` only, for roles that can't (`system_identifier` isn't read). Every instance must use the same value. |
+| `SYNC_IDENTITY_SOURCE` | `cluster_and_deployment_id` | What sync tokens bind. `cluster_and_deployment_id`: the cluster's `system_identifier` and `SYNC_DEPLOYMENT_ID`; the role must be allowed to run `pg_control_system()`, or the server doesn't start, and the server refuses to serve if the endpoint starts reaching another cluster. `deployment_id_only`: `SYNC_DEPLOYMENT_ID` only, for roles that can't (`system_identifier` isn't read, and cluster switches go unnoticed: change `SYNC_DEPLOYMENT_ID` and restart on any cluster change). Every instance must use the same value. |
 | `DB_MAX_CONNS`     | `10`         | Postgres pool size (1–200). |
 | `MIGRATE_ON_START` | `false`      | `true` applies pending migrations at startup (an advisory lock serialises instances). Otherwise run `server migrate up` as a release step. |
 
@@ -324,14 +324,52 @@ combines the cluster's `system_identifier` from `pg_control_system()`
 with `SYNC_DEPLOYMENT_ID`. Tokens and page cursors carry it; a mismatch in
 either part answers `sync_window_expired` with `reason=deployment_changed`.
 It is computed once at startup (`db.NewTripsWith`) and cached, so walks
-don't query it. A transient error reading `system_identifier` is retried
-for about 6 s, then the server refuses to start; `42501`
+don't query it. A transient error reading `system_identifier` is retried:
+7 attempts of at most 2 s each with 6.3 s of backoff between them, so at
+most about 20 s, each failed attempt logged as a WARN with its SQLSTATE
+or error class; then the server refuses to start. `42501`
 (insufficient privilege) refuses at once, with a hint to `GRANT EXECUTE ON
 FUNCTION pg_control_system() TO <role>` or set
 `SYNC_IDENTITY_SOURCE=deployment_id_only` on every instance. It never
-falls back on its own, so all instances compute the same identity: check
-that every instance logs the same `sync identity` line (the digest only,
-not the raw values).
+falls back on its own, so all instances compute the same identity.
+
+Checking that instances agree: every instance logs a `sync identity` line
+at startup with the digest and source (never `system_identifier` or
+`SYNC_DEPLOYMENT_ID`), and `server identity`, run with an instance's
+environment (e.g. `docker exec <container> /server identity` or
+`kubectl exec`), prints the same `identity=d1:... source=...` for deploy
+checks to compare. The digest is deliberately not in the public
+`GET /v1/health` body: that endpoint is anonymous, and the digest would
+let anyone watch for restores and deployment changes. (It is also inside
+every sync token, but only members see those.) There is no metrics
+endpoint yet; when one is added, export it there as a label.
+
+Cluster switches under a running instance (`db.ClusterGuard`): with the
+default `cluster_and_deployment_id`, every new pool connection reads
+`system_identifier` once (`AfterConnect`; still no per-request query) and
+is refused if it isn't the cluster the identity was computed for, e.g.
+after a blue/green switchover or a failover to another cluster behind the
+same address or pooler. The first such connection trips the guard: an
+ERROR `DATABASE CLUSTER CHANGED` (with the old and new identity digests
+only), the pool is reset so connections to the old cluster close too,
+and from then on every database request answers `503
+service_unavailable` and `GET /v1/health` answers `503`, so the
+orchestrator restarts the instance, which recomputes the identity (clients
+then get `deployment_changed`). It stays down even if the endpoint
+switches back, because it may have mixed both clusters meanwhile.
+Connections opened before a switch still reach the old cluster, which is
+consistent with the cached identity; they are replaced within 5 min idle
+or a 15 min (±10%) lifetime (`connMaxLifetime`), and the first
+replacement that reaches the new cluster trips the guard. A per-acquire
+health check would catch it sooner but costs a query per request, so it
+isn't used. A `42501` in the hook (privilege revoked after startup) is
+logged once as a WARN and the connection allowed: serving continues, but
+switches go unnoticed until it is granted again.
+
+**`deployment_id_only` can't detect any of this.** With it, change
+`SYNC_DEPLOYMENT_ID` and restart every instance at once on *any* change
+of the cluster behind `DATABASE_URL`: restores, switchovers, failovers to
+another cluster, re-pointed poolers.
 
 ### Restoring the database
 

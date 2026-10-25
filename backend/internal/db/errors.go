@@ -14,8 +14,11 @@ import (
 // statement timeouts (55P03, 57014), deadlocks and serialization failures
 // (40P01, 40001), idle session timeouts (25P03, 57P05) and context deadlines (a pool acquire or query that
 // outlived the request) are FailureBusy; connection failures and server
-// shutdowns are FailureUnavailable.
+// shutdowns, and ErrClusterChanged, are FailureUnavailable.
 func Classify(err error) store.Failure {
+	if errors.Is(err, ErrClusterChanged) {
+		return store.FailureUnavailable
+	}
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) {
 		switch {

@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math"
 	"slices"
 	"strconv"
@@ -36,6 +38,8 @@ type Trips struct {
 	// fixed at startup (NewTrips).
 	identity string
 	source   IdentitySource
+	// guard, if set, has tripped when the pool reaches another cluster.
+	guard *ClusterGuard
 	// hook, if set (tests), runs at named points inside a walk.
 	hook func(stage string)
 }
@@ -68,19 +72,27 @@ type TripsOptions struct {
 	// nil means DefaultIdentityBackoff.
 	Backoff []time.Duration
 
+	// Guard, if set (with IdentityClusterAndDeploymentID), is pinned to the
+	// system_identifier read here, so the pool refuses connections to
+	// another cluster; see ClusterGuard.
+	Guard *ClusterGuard
+	// Logger logs failed attempts; nil means slog.Default().
+	Logger *slog.Logger
+
 	// readSystemID replaces the system_identifier query (tests).
 	readSystemID func(context.Context) (int64, error)
 }
 
 // DefaultIdentityBackoff bounds the startup read of system_identifier:
-// seven attempts over about 6 s, then NewTrips fails.
+// seven attempts of at most identityAttemptTimeout each, with 6.3 s of
+// waits between them, so NewTrips fails after at most about 20 s.
 var DefaultIdentityBackoff = []time.Duration{
 	100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond,
 	800 * time.Millisecond, 1600 * time.Millisecond, 3200 * time.Millisecond,
 }
 
 // identityAttemptTimeout bounds one attempt to read system_identifier.
-const identityAttemptTimeout = 5 * time.Second
+const identityAttemptTimeout = 2 * time.Second
 
 // NewTrips is NewTripsWith with the default identity source.
 func NewTrips(ctx context.Context, pool *pgxpool.Pool, deploymentID string) (*Trips, error) {
@@ -119,16 +131,27 @@ func NewTripsWith(ctx context.Context, pool *pgxpool.Pool, opts TripsOptions) (*
 		if opts.readSystemID != nil {
 			read = opts.readSystemID
 		}
-		id, err := readSystemIdentifier(ctx, read, opts.Backoff)
+		logger := opts.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		id, err := readSystemIdentifier(ctx, read, opts.Backoff, logger)
 		if err != nil {
 			return nil, err
 		}
 		sysID = strconv.FormatInt(id, 10)
+		if opts.Guard != nil {
+			opts.Guard.pin(id)
+		}
 	case IdentityDeploymentIDOnly:
 	default:
 		return nil, fmt.Errorf("trips: unknown identity source %q", opts.IdentitySource)
 	}
-	return &Trips{pool: pool, q: q, identity: DeploymentIdentity(sysID, opts.DeploymentID), source: opts.IdentitySource}, nil
+	t := &Trips{pool: pool, q: q, identity: DeploymentIdentity(sysID, opts.DeploymentID), source: opts.IdentitySource}
+	if opts.IdentitySource == IdentityClusterAndDeploymentID {
+		t.guard = opts.Guard
+	}
+	return t, nil
 }
 
 // ErrSystemIdentifierForbidden is returned when the database role may not
@@ -139,7 +162,7 @@ var ErrSystemIdentifierForbidden = errors.New("trips: the database role may not 
 
 // readSystemIdentifier runs read until it succeeds, waiting backoff[i]
 // after the i-th failure; 42501 fails at once.
-func readSystemIdentifier(ctx context.Context, read func(context.Context) (int64, error), backoff []time.Duration) (int64, error) {
+func readSystemIdentifier(ctx context.Context, read func(context.Context) (int64, error), backoff []time.Duration, logger *slog.Logger) (int64, error) {
 	for attempt := 0; ; attempt++ {
 		actx, cancel := context.WithTimeout(ctx, identityAttemptTimeout)
 		id, err := read(actx)
@@ -154,12 +177,33 @@ func readSystemIdentifier(ctx context.Context, read func(context.Context) (int64
 		if attempt >= len(backoff) || ctx.Err() != nil {
 			return 0, fmt.Errorf("trips: read system_identifier (pg_control_system()), %d attempts: %w", attempt+1, err)
 		}
+		logger.Warn("reading system_identifier for the sync identity failed; retrying",
+			slog.Int("attempt", attempt+1), slog.Int("attempts", len(backoff)+1),
+			slog.String("error_class", errorClass(err)), slog.String("retry_in", backoff[attempt].String()))
 		select {
 		case <-time.After(backoff[attempt]):
 		case <-ctx.Done():
 			return 0, fmt.Errorf("trips: read system_identifier (pg_control_system()): %w (then %w)", err, ctx.Err())
 		}
 	}
+}
+
+// errorClass names err for a log line without its text (which may hold
+// addresses): the SQLSTATE, or the kind of failure.
+func errorClass(err error) string {
+	var pg *pgconn.PgError
+	var ce *pgconn.ConnectError
+	switch {
+	case errors.As(err, &pg):
+		return "sqlstate " + pg.Code
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.As(err, &ce):
+		return "connect"
+	case pgconn.SafeToRetry(err), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		return "connection lost"
+	}
+	return "other"
 }
 
 // Identity is the deployment identity digest tokens and cursors carry
@@ -208,6 +252,9 @@ func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoi
 		}
 		s.at("snapshot")
 		identity = s.identity
+		if err := s.guard.Err(); err != nil {
+			return err
+		}
 		if since != nil && since.Identity != identity || cursor != "" && cursor != identity {
 			return store.ErrDeploymentChanged
 		}
