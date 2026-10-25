@@ -26,30 +26,35 @@ data class Vehicle(
     }
 }
 
-/** One entry of the small bundled catalogue; generic public figures, not a vendor database. */
-data class CatalogueModel(val maker: String, val model: String, val fuel: VehicleFuel, val displacementCc: Int) {
+/**
+ * One entry of the small bundled catalogue; generic public figures, not a vendor database. The optional
+ * fields are informational (setup hints, future range/fuel features) and aren't stored with the vehicle.
+ */
+data class CatalogueModel(
+    val maker: String,
+    val model: String,
+    val fuel: VehicleFuel,
+    val displacementCc: Int,
+    val engineCode: String? = null,
+    /** Model years sold; [toYear] null = still on sale. */
+    val fromYear: Int? = null,
+    val toYear: Int? = null,
+    /** Liquid-fuel (petrol/diesel) tank, litres. */
+    val tankLitres: Int? = null,
+    /** CNG cylinder, litres water-equivalent (bi-fuel CNG models). */
+    val cngLitresWaterEquivalent: Int? = null,
+) {
     fun toVehicle(odometerKm: Int? = null) =
         Vehicle(name = "$maker $model", maker = maker, model = model, fuel = fuel, displacementCc = displacementCc, odometerKm = odometerKm)
 }
 
-/** A deliberately small starter list; anything else is entered manually. */
+/**
+ * A deliberately small starter list; anything else is entered manually. Entries live in
+ * [VehicleCatalogueData] (data only). Within a maker, models keep their listed order, so the most common
+ * variant of a car comes first.
+ */
 object VehicleCatalogue {
-    val models: List<CatalogueModel> = listOf(
-        CatalogueModel("Ford", "Focus 1.6", VehicleFuel.PETROL, 1596),
-        CatalogueModel("Honda", "City 1.5", VehicleFuel.PETROL, 1498),
-        CatalogueModel("Honda", "Civic 1.8", VehicleFuel.PETROL, 1799),
-        CatalogueModel("Hyundai", "Creta 1.5 diesel", VehicleFuel.DIESEL, 1493),
-        CatalogueModel("Hyundai", "i20 1.2", VehicleFuel.PETROL, 1197),
-        CatalogueModel("Kia", "Seltos 1.5", VehicleFuel.PETROL, 1497),
-        CatalogueModel("Mahindra", "XUV700 2.2 diesel", VehicleFuel.DIESEL, 2184),
-        CatalogueModel("Maruti Suzuki", "Swift 1.2", VehicleFuel.PETROL, 1197),
-        CatalogueModel("Maruti Suzuki", "Ertiga 1.5 CNG", VehicleFuel.CNG, 1462),
-        CatalogueModel("Tata", "Nexon 1.2", VehicleFuel.PETROL, 1199),
-        CatalogueModel("Toyota", "Corolla 1.8", VehicleFuel.PETROL, 1798),
-        CatalogueModel("Toyota", "Innova 2.4 diesel", VehicleFuel.DIESEL, 2393),
-        CatalogueModel("Volkswagen", "Golf 2.0 TDI", VehicleFuel.DIESEL, 1968),
-        CatalogueModel("Volkswagen", "Polo 1.0", VehicleFuel.PETROL, 999),
-    )
+    val models: List<CatalogueModel> = VehicleCatalogueData.entries
 
     val makers: List<String> get() = models.map { it.maker }.distinct().sorted()
 
