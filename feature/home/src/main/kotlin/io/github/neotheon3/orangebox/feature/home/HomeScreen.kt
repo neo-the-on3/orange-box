@@ -120,10 +120,14 @@ fun HomeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            StatusPill(
-                text = stringResource(R.string.home_backend_mode, backendModeLabel(state.backend.mode)),
-                modifier = Modifier.testTag("home_backend_mode"),
-            )
+            DriveButton(state.obd, onConnect = onObdConnect, onOpenDashboard = onOpenDashboard)
+            // The backend is an advanced, optional feature: only say so when it is on (#192).
+            if (state.showBackendPill) {
+                StatusPill(
+                    text = stringResource(R.string.home_backend_mode, backendModeLabel(state.backend.mode)),
+                    modifier = Modifier.testTag("home_backend_mode"),
+                )
+            }
             if (state.showRemoteWarning) {
                 Text(
                     stringResource(R.string.home_remote_not_configured),

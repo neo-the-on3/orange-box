@@ -47,4 +47,8 @@
     <string name="obd_link_lost">Adapter disconnected. Waiting for it to come back.</string>
     <string name="home_open_trips">Trips</string>
     <string name="home_open_diagnostics">Diagnostics</string>
+    <string name="home_drive_start">Start driving</string>
+    <string name="home_drive_hint_connect">Connects to the adapter and opens the dashboard</string>
+    <string name="home_drive_hint_connecting">Connecting to the adapter…</string>
+    <string name="home_drive_hint_connected">Live data is coming in</string>
 </resources>

@@ -29,4 +29,6 @@
     <string name="alert_voice_harsh_accel">Harsh acceleration.</string>
     <string name="alert_voice_harsh_brake">Harsh braking.</string>
     <string name="alert_voice_mil">Check engine light is on.</string>
+    <string name="shortcut_drive_short">Drive</string>
+    <string name="shortcut_drive_long">Open the driving dashboard</string>
 </resources>

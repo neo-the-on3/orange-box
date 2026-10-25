@@ -37,14 +37,16 @@ shot 00-onboarding-permissions
 tap_until text "Continue" "Your car" onboarding-vehicle || fail "Vehicle step missing"
 tap_until text "Skip for now" "Pair the ELM327" onboarding-dongle || fail "Dongle step missing"
 tap_until text "Skip for now" "Start using Orange Box" onboarding-finish-step || fail "Finish step missing"
-tap_until text "Start using Orange Box" "Backend:" onboarding-home || fail "Onboarding did not end on Home"
+tap_until text "Start using Orange Box" "Start driving" onboarding-home || fail "Onboarding did not end on Home"
 adb logcat -d | grep -q "onboarding_complete" || fail "onboarding_complete log line missing"
 adb shell am force-stop "$PKG"
 
 # 1) Launch with backend_mode=off; units pinned to metric, since units follow the emulator's US SIM (#58)
 #    and the smoke steps read km/h, °C and km/L.
 adb shell am start -W -n "$PKG/$ACTIVITY" --es backend_mode off --es units metric
-wait_for_text "Backend: Off" home-off || fail "Home did not show 'Backend: Off'"
+# Home hides the backend pill while Off (#192), so wait for the Drive button and check the pill is gone.
+wait_for_text "Start driving" home-off || fail "Home did not show the Drive button"
+! grep -Fq "Backend:" "$OUT/home-off.xml" || fail "Backend pill shown while Off"
 shot 01-home-backend-off
 adb logcat -d | grep -q "backend_mode override applied: off" || fail "override log line missing"
 adb logcat -d | grep -q "units override applied: metric" || fail "units override log line missing"
@@ -64,7 +66,8 @@ shot 03-home-invalid-extra
 # 4) Back to off for subsequent checks
 adb shell am force-stop "$PKG"
 adb shell am start -W -n "$PKG/$ACTIVITY" --es backend_mode off
-wait_for_text "Backend: Off" home-off-2 || fail "Could not return to Off"
+wait_for_text "Start driving" home-off-2 || fail "Could not return to Off"
+! grep -Fq "Backend:" "$OUT/home-off-2.xml" || fail "Backend pill still shown after returning to Off"
 shot 04-home-off-again
 
 # 5) Home -> Settings, light then dark theme (Server is the last section since #62, so check the first one)
@@ -76,7 +79,7 @@ sleep 2
 wait_for_text "Car and dongle" settings-dark || fail "Settings did not survive dark-mode switch"
 shot 06-settings-dark
 adb shell input keyevent KEYCODE_BACK
-wait_for_text "Backend: Off" home-dark || fail "Back from Settings did not return to Home"
+wait_for_text "Start driving" home-dark || fail "Back from Settings did not return to Home"
 shot 07-home-dark
 adb shell cmd uimode night no > /dev/null 2>&1 || true
 

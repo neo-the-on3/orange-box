@@ -18,6 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.neotheon3.orangebox.core.dashboardui.DashboardColors
@@ -46,7 +48,11 @@ fun MiniDashboardCard(
 ) {
     val openLabel = stringResource(R.string.home_open_dashboard)
     Card(
-        modifier.fillMaxWidth().testTag("home_live_card"),
+        // Tapping anywhere on the card opens the dashboard (#192). A plain tap detector rather than
+        // `clickable`, which would merge the clusters' semantics into one node; TalkBack users get the
+        // "Open dashboard" button below and the Drive button at the top of Home.
+        modifier = modifier.fillMaxWidth().testTag("home_live_card")
+            .pointerInput(onOpenDashboard) { detectTapGestures { onOpenDashboard() } },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardColors.Background, contentColor = DashboardColors.Text),
     ) {

@@ -80,6 +80,8 @@ class MiniDashboardCardTest {
         show(onOpen = { opened++ })
         compose.onNodeWithTag("home_open_dashboard").performClick()
         assertEquals(1, opened)
+        compose.onNodeWithTag("home_live_card").performClick() // the whole card, #192
+        assertEquals(2, opened)
     }
 
     @Test fun `waiting for the first sample`() {

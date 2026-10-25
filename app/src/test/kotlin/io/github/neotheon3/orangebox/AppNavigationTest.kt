@@ -41,7 +41,7 @@ class AppNavigationTest {
         compose.onNodeWithTag("onboarding_skip").performClick() // vehicle
         compose.onNodeWithTag("onboarding_skip").performClick() // dongle
         compose.onNodeWithTag("onboarding_finish").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithTextCount("Backend: Off") > 0 }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTextCount("Start driving") > 0 }
     }
 
     @Test fun `first launch walks onboarding, then home opens settings and setup rows`() {
@@ -71,12 +71,12 @@ class AppNavigationTest {
         }
         compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasTestTag("dashboard_end_driving")).fetchSemanticsNodes().isNotEmpty() }
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        compose.waitUntil(10_000) { compose.onAllNodesWithTextCount("Backend: Off") > 0 }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTextCount("Start driving") > 0 }
     }
 
     @Test fun `home opens settings and back`() {
         walkOnboarding()
-        compose.onNodeWithText("Backend: Off").assertIsDisplayed()
+        compose.onNodeWithText("Start driving").assertIsDisplayed()
         compose.onNodeWithTag("home_settings").performClick()
         compose.onNodeWithText("Server (advanced)").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("settings_mode_fake").performScrollTo().performClick()
