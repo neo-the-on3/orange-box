@@ -55,4 +55,22 @@ class SettingsScreenshotTest {
             CrashSettingsActions(),
         )
     }
+
+    @Test fun server() = shot("settings_server_remote_not_https") {
+        ServerSettingsSection(
+            SettingsUiState(
+                config = io.github.neotheon3.orangebox.core.model.BackendConfig(io.github.neotheon3.orangebox.core.model.BackendMode.REMOTE),
+                urlDraft = "http://14.63.216.111:9801",
+                urlResult = io.github.neotheon3.orangebox.core.model.BaseUrlValidator.Result.NotHttps,
+            ),
+            {}, {}, {},
+        )
+    }
+
+    @Test fun drivingSection() = shot("settings_dashboard_and_drive_start") {
+        androidx.compose.foundation.layout.Column {
+            DashboardSettingsSection(DashboardSettingsState(), null, DashboardSettingsActions(), UnitPreferences.forCountry("US"))
+            SwitchRow(R.string.settings_diagnostics_prompt, R.string.settings_diagnostics_prompt_summary, true, "d") {}
+        }
+    }
 }

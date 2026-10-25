@@ -31,9 +31,9 @@ class SettingsScreenTest {
         compose.setContent {
             SettingsScreen(SettingsUiState(config = BackendConfig(BackendMode.OFF)), onBack = {}, onModeSelected = { selected = it }, onUrlChanged = {}, onSaveUrl = {})
         }
-        compose.onNodeWithTag("settings_mode_off").assertIsSelected()
+        compose.onNodeWithTag("settings_mode_off").performScrollTo().assertIsSelected()
         compose.onNodeWithTag("settings_base_url").assertDoesNotExist()
-        compose.onNodeWithTag("settings_mode_remote").performClick()
+        compose.onNodeWithTag("settings_mode_remote").performScrollTo().performClick()
         assertEquals(BackendMode.REMOTE, selected)
     }
 
@@ -46,7 +46,7 @@ class SettingsScreenTest {
                 )
             }
         }
-        compose.onNodeWithTag("settings_base_url").assertIsDisplayed()
+        compose.onNodeWithTag("settings_base_url").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun `about shows version and build`() {
@@ -180,5 +180,32 @@ class SettingsScreenTest {
         }
         compose.onNodeWithTag("settings_diagnostics_prompt").performScrollTo().assertIsOn().performClick()
         assertEquals(false, enabled)
+    }
+
+    @Test fun `server is an advanced section after the driving settings, off by default, and shows the https error (#62)`() {
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(SettingsUiState(), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {})
+            }
+        }
+        compose.onNodeWithTag("settings_mode_off").performScrollTo().assertIsSelected()
+        val crashTop = compose.onNodeWithTag("settings_crash_detection").fetchSemanticsNode().positionInRoot.y
+        val serverTop = compose.onNodeWithTag("settings_mode_off").fetchSemanticsNode().positionInRoot.y
+        org.junit.Assert.assertTrue("server below crash detection", serverTop > crashTop)
+    }
+
+    @Test fun `cleartext url shows the https-only error (#62)`() {
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(
+                        config = BackendConfig(BackendMode.REMOTE), urlDraft = "http://14.63.216.111:9801",
+                        urlResult = io.github.neotheon3.orangebox.core.model.BaseUrlValidator.Result.NotHttps,
+                    ),
+                    onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_url_result", useUnmergedTree = true).performScrollTo().assertTextContains("Only https:// URLs are allowed")
     }
 }
