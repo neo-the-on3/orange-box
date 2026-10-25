@@ -23,10 +23,12 @@ digest and source, never system_identifier or SYNC_DEPLOYMENT_ID.
 `
 
 // identityCommand implements `server identity`.
-func identityCommand(args []string, getenv func(string) string, stdout io.Writer) int {
-	logger := logging.New(os.Stderr, slog.LevelWarn)
+// Only the result goes to stdout; usage and errors go to stderr, so a
+// deploy script parsing stdout can't mistake them for it.
+func identityCommand(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	logger := logging.New(stderr, slog.LevelWarn)
 	if len(args) != 0 {
-		_, _ = fmt.Fprint(stdout, identityUsage)
+		_, _ = fmt.Fprint(stderr, identityUsage)
 		return 2
 	}
 	cfg, err := config.Load(getenv)
@@ -45,7 +47,7 @@ func identityCommand(args []string, getenv func(string) string, stdout io.Writer
 		logger.Error("identity: cannot connect", slog.Any("err", err))
 		return 1
 	}
-	defer pool.Close()
+	defer db.CloseWithin(pool, poolCloseTimeout)
 	trips, err := db.NewTripsWith(ctx, pool, db.TripsOptions{
 		DeploymentID: cfg.SyncDeploymentID, IdentitySource: db.IdentitySource(cfg.SyncIdentitySource), Logger: logger,
 	})

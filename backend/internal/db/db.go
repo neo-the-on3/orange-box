@@ -41,10 +41,10 @@ type Options struct {
 	Guard *ClusterGuard
 }
 
-// connMaxLifetime bounds how long a connection lives (with 10% jitter),
-// so after the endpoint is switched to another cluster, connections that
-// still reach the old one are replaced, and the guard notices the switch,
-// within it.
+// connMaxLifetime bounds how long a connection lives (with 10% jitter).
+// Detecting a switch to another cluster doesn't rely on it
+// (ClusterGuard.Run does), but it bounds how long connections to an old
+// cluster linger.
 const connMaxLifetime = 15 * time.Minute
 
 // Open connects a pool, applies the session defaults and pings the server.
@@ -71,6 +71,7 @@ func Open(ctx context.Context, opts Options) (*pgxpool.Pool, error) {
 	cfg.MaxConnLifetime = connMaxLifetime
 	cfg.MaxConnLifetimeJitter = connMaxLifetime / 10
 	if opts.Guard != nil {
+		cfg.BeforeConnect = opts.Guard.BeforeConnect
 		cfg.AfterConnect = opts.Guard.AfterConnect
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -111,4 +112,22 @@ func CheckServerVersion(num int) error {
 			num/10000, num%10000, num, MinServerVersion)
 	}
 	return nil
+}
+
+// CloseWithin closes pool, waiting at most d: with a hung database, pgx
+// may wait about 15 s per connection to close it. It reports whether the
+// close finished; if not, it goes on in the background (the process is
+// usually exiting).
+func CloseWithin(pool *pgxpool.Pool, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		pool.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
 }

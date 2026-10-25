@@ -63,17 +63,6 @@ func TestClusterGuard(t *testing.T) {
 	if err := g.AfterConnect(ctx, nil); !errors.Is(err, transient) || g.Err() != nil {
 		t.Fatalf("transient: %v, guard %v", err, g.Err())
 	}
-	// 42501 after startup: allowed, warned once.
-	forbidden := error(&pgconn.PgError{Code: "42501"})
-	readErr.Store(&forbidden)
-	for range 3 {
-		if err := g.AfterConnect(ctx, nil); err != nil || g.Err() != nil {
-			t.Fatalf("42501: %v", err)
-		}
-	}
-	if n := strings.Count(logs.String(), "no longer permitted"); n != 1 {
-		t.Errorf("42501 warned %d times", n)
-	}
 	readErr.Store(nil)
 	// Another cluster: refused, tripped for good, logged with digests only.
 	current.Store(7999002)
@@ -95,9 +84,57 @@ func TestClusterGuard(t *testing.T) {
 			t.Errorf("log leaks %q: %s", raw, out)
 		}
 	}
+	if err := g.BeforeConnect(ctx, nil); !errors.Is(err, ErrClusterChanged) {
+		t.Errorf("BeforeConnect after tripping: %v", err)
+	}
 	var nilGuard *ClusterGuard
 	if nilGuard.Err() != nil {
 		t.Error("nil guard reports an error")
+	}
+}
+
+// TestClusterGuard42501FailsClosed: pg_control_system() refused on a new
+// connection (e.g. the endpoint now reaches a cluster where it is
+// revoked) can't be checked, so it trips the guard like a mismatch.
+func TestClusterGuard42501FailsClosed(t *testing.T) {
+	t.Parallel()
+	var logs lockedBuffer
+	g := NewClusterGuard(ClusterGuardOptions{
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)), DeploymentID: "prod-1",
+		Read: func(context.Context, *pgx.Conn) (int64, error) { return 0, &pgconn.PgError{Code: "42501"} },
+	})
+	if err := g.BeforeConnect(t.Context(), nil); err != nil {
+		t.Fatalf("BeforeConnect before tripping: %v", err)
+	}
+	g.pin(7311001)
+	if err := g.AfterConnect(t.Context(), nil); !errors.Is(err, ErrClusterChanged) || !errors.Is(g.Err(), ErrClusterChanged) {
+		t.Fatalf("42501: %v, guard %v", err, g.Err())
+	}
+	out := logs.String()
+	if !strings.Contains(out, "DATABASE CLUSTER CHANGED") || !strings.Contains(out, "GRANT EXECUTE ON FUNCTION pg_control_system()") ||
+		!strings.Contains(out, DeploymentIdentity("7311001", "prod-1")) || strings.Contains(out, "7311001\"") {
+		t.Errorf("log: %s", out)
+	}
+}
+
+// TestClusterProbeTransient: a background check that can't connect logs
+// and doesn't trip the guard.
+func TestClusterProbeTransient(t *testing.T) {
+	t.Parallel()
+	var logs lockedBuffer
+	g := NewClusterGuard(ClusterGuardOptions{Logger: slog.New(slog.NewJSONHandler(&logs, nil)), DeploymentID: "prod-1"})
+	cfg, err := pgx.ParseConfig("postgres://nobody:secret@127.0.0.1:1/none?connect_timeout=1&sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.connCfg = cfg
+	g.pin(7311001)
+	g.probe(t.Context())
+	if g.Err() != nil {
+		t.Fatal("a connection error tripped the guard")
+	}
+	if out := logs.String(); !strings.Contains(out, "cluster check: cannot connect") || strings.Contains(out, "secret") || strings.Contains(out, "127.0.0.1") {
+		t.Errorf("log: %s", out)
 	}
 }
 

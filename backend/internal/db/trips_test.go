@@ -7,10 +7,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
@@ -463,5 +466,132 @@ func TestClusterGuardDefaultRead(t *testing.T) {
 	}
 	if db.Classify(fmt.Errorf("acquire: %w", db.ErrClusterChanged)) != store.FailureUnavailable {
 		t.Error("ErrClusterChanged is not FailureUnavailable")
+	}
+}
+
+// switchableGuard is a guard whose connections reach "another cluster"
+// (system_identifier XOR 1) once switched is set; reads counts its reads.
+func switchableGuard(switched *atomic.Bool, reads *atomic.Int32) *db.ClusterGuard {
+	return db.NewClusterGuard(db.ClusterGuardOptions{
+		DeploymentID: "test-deployment",
+		Read: func(ctx context.Context, conn *pgx.Conn) (int64, error) {
+			reads.Add(1)
+			var id int64
+			if err := conn.QueryRow(ctx, "SELECT system_identifier FROM pg_control_system()").Scan(&id); err != nil {
+				return 0, err
+			}
+			if switched.Load() {
+				id ^= 1
+			}
+			return id, nil
+		},
+	})
+}
+
+// TestClusterSwitchDetectedUnderBusyPool: the pool is full and every
+// connection is busy (and still reaches the old cluster), so no new pool
+// connection is made; the background check on a fresh connection still
+// notices the switch within interval + probe timeout, and from then on
+// no connection is even dialled.
+func TestClusterSwitchDetectedUnderBusyPool(t *testing.T) {
+	t.Parallel()
+	var switched atomic.Bool
+	var reads atomic.Int32
+	guard := switchableGuard(&switched, &reads)
+	pool := dbtest.NewWith(t, db.Options{Guard: guard, MaxConns: 2})
+	trips, err := db.NewTripsWith(t.Context(), pool, db.TripsOptions{DeploymentID: "test-deployment", Guard: guard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fill the pool with busy connections.
+	var held []*pgxpool.Conn
+	for range 2 {
+		c, err := pool.Acquire(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, c)
+	}
+	busy, cancelBusy := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	for _, c := range held {
+		wg.Go(func() {
+			for busy.Err() == nil {
+				_, _ = c.Exec(busy, "SELECT pg_sleep(0.05)")
+			}
+		})
+	}
+	const interval = 200 * time.Millisecond
+	runCtx, stop := context.WithCancel(t.Context())
+	defer stop()
+	go guard.Run(runCtx, interval)
+
+	switched.Store(true)
+	start := time.Now()
+	for guard.Err() == nil {
+		if time.Since(start) > interval+6*time.Second { // the bound: interval + clusterProbeTimeout (5 s), plus slack
+			t.Fatal("switch not detected under a busy pool")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Logf("detected after %v (interval %v)", time.Since(start).Round(time.Millisecond), interval)
+	cancelBusy()
+	wg.Wait()
+	for _, c := range held {
+		c.Release()
+	}
+	q := dbgen.New(pool)
+	if _, err := trips.ListTripChanges(t.Context(), newID(), store.TripChangesQuery{Since: store.SyncPoint{Identity: trips.Identity(), Watermark: 1}, Limit: 1}); !errors.Is(err, db.ErrClusterChanged) {
+		t.Errorf("walk after detection: %v", err)
+	}
+	before := reads.Load()
+	for range 20 {
+		if _, err := q.SystemIdentifier(t.Context()); db.Classify(err) != store.FailureUnavailable {
+			t.Fatalf("query after detection: %v", err)
+		}
+	}
+	if reads.Load() != before {
+		t.Errorf("%d connections dialled and checked after tripping", reads.Load()-before)
+	}
+}
+
+// TestClusterGuardPinReplacesUncheckedConnections: connections opened
+// before the identity was pinned weren't checked; pinning resets the
+// pool, so every connection used afterwards went through the check.
+func TestClusterGuardPinReplacesUncheckedConnections(t *testing.T) {
+	t.Parallel()
+	var switched atomic.Bool
+	var reads atomic.Int32
+	guard := switchableGuard(&switched, &reads)
+	pool := dbtest.NewWith(t, db.Options{Guard: guard, MaxConns: 2})
+	var pid int
+	if err := pool.QueryRow(t.Context(), "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if reads.Load() != 0 {
+		t.Fatal("checked before pinning")
+	}
+	if _, err := db.NewTripsWith(t.Context(), pool, db.TripsOptions{DeploymentID: "test-deployment", Guard: guard}); err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	if err := pool.QueryRow(t.Context(), "SELECT pg_backend_pid()").Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after == pid || reads.Load() == 0 {
+		t.Errorf("connection from before the pin still in use (pid %d → %d, %d checks)", pid, after, reads.Load())
+	}
+}
+
+func TestClassifyReadOnly(t *testing.T) {
+	t.Parallel()
+	pool := dbtest.New(t)
+	_, err := pool.Exec(t.Context(), "BEGIN READ ONLY; CREATE TEMP TABLE ro_probe (x int); COMMIT")
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) || pg.Code != "25006" {
+		t.Fatalf("want 25006, got %v", err)
+	}
+	if db.Classify(err) != store.FailureUnavailable {
+		t.Errorf("25006 classified as %v", db.Classify(err))
 	}
 }

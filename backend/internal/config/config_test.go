@@ -249,3 +249,18 @@ func TestLoadSyncIdentitySource(t *testing.T) {
 		t.Errorf("sandbox default id not flagged: %v, %v", c.SyncDeploymentIDDefaulted, err)
 	}
 }
+
+func TestLoadSyncClusterCheckInterval(t *testing.T) {
+	t.Parallel()
+	for v, want := range map[string]time.Duration{"": 15 * time.Second, "10s": 10 * time.Second, "30s": 30 * time.Second, "20s": 20 * time.Second} {
+		c, err := Load(env(map[string]string{"ENV": "local", "SYNC_CLUSTER_CHECK_INTERVAL": v}))
+		if err != nil || c.SyncClusterCheckInterval != want {
+			t.Errorf("%q: %v, %v", v, c.SyncClusterCheckInterval, err)
+		}
+	}
+	for _, bad := range []string{"9s", "31s", "1m", "0", "-15s", "fast"} {
+		if _, err := Load(env(map[string]string{"ENV": "local", "SYNC_CLUSTER_CHECK_INTERVAL": bad})); err == nil || !strings.Contains(err.Error(), "SYNC_CLUSTER_CHECK_INTERVAL must be") {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+}

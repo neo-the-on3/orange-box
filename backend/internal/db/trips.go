@@ -241,6 +241,9 @@ func (s *Trips) at(stage string) {
 func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoint, cursor string, snapshot bool, read func(q *dbgen.Queries) error) (*store.SyncPoint, string, error) {
 	var out *store.SyncPoint
 	var identity string
+	if err := s.guard.Err(); err != nil {
+		return nil, "", err // before acquiring a connection
+	}
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		var snap dbgen.SyncSnapshotRow
@@ -252,9 +255,6 @@ func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoi
 		}
 		s.at("snapshot")
 		identity = s.identity
-		if err := s.guard.Err(); err != nil {
-			return err
-		}
 		if since != nil && since.Identity != identity || cursor != "" && cursor != identity {
 			return store.ErrDeploymentChanged
 		}

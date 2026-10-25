@@ -128,7 +128,8 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `JWT_KEY_ID`       | none         | `kid` header for `JWT_PRIVATE_KEY`. Required with it. |
 | `JWT_ISSUER`       | `orange-box` | `iss` claim. `aud` is always `orange-box-api`. |
 | `REQUEST_TIMEOUT`  | `30s`        | Per-request context deadline. |
-| `SHUTDOWN_TIMEOUT` | `8s`         | Graceful shutdown budget (inside Docker's 10 s stop grace). |
+| `SHUTDOWN_TIMEOUT` | `8s`         | Graceful shutdown budget for draining requests; closing the database pool then takes at most 1 s more, even if the database hangs (pgx alone waits ~15 s per connection), so the default stays inside Docker's 10 s stop grace. |
+| `SYNC_CLUSTER_CHECK_INTERVAL` | `15s` | How often a running instance checks, on a fresh connection, that the database endpoint still reaches the cluster its sync identity was computed for (`10s`–`30s`; `cluster_and_deployment_id` only). A switch is detected within this plus 5 s. |
 | `LOG_LEVEL`        | `info`       | `debug`, `info`, `warn` or `error`. |
 | `UPLOAD_CONCURRENCY` | `2`        | Upload bodies processed at once (1–256). Sized for a 512 MB host; see below. |
 | `UPLOAD_QUEUE_WAIT`  | `2s`       | How long an upload waits for a slot before `503 uploads_busy`. |
@@ -327,7 +328,8 @@ It is computed once at startup (`db.NewTripsWith`) and cached, so walks
 don't query it. A transient error reading `system_identifier` is retried:
 7 attempts of at most 2 s each with 6.3 s of backoff between them, so at
 most about 20 s, each failed attempt logged as a WARN with its SQLSTATE
-or error class; then the server refuses to start. `42501`
+or error class; then the server refuses to start (closing the pool takes
+at most 1 s more, even if the database hangs). `42501`
 (insufficient privilege) refuses at once, with a hint to `GRANT EXECUTE ON
 FUNCTION pg_control_system() TO <role>` or set
 `SYNC_IDENTITY_SOURCE=deployment_id_only` on every instance. It never
@@ -344,27 +346,38 @@ let anyone watch for restores and deployment changes. (It is also inside
 every sync token, but only members see those.) There is no metrics
 endpoint yet; when one is added, export it there as a label.
 
-Cluster switches under a running instance (`db.ClusterGuard`): with the
-default `cluster_and_deployment_id`, every new pool connection reads
-`system_identifier` once (`AfterConnect`; still no per-request query) and
-is refused if it isn't the cluster the identity was computed for, e.g.
-after a blue/green switchover or a failover to another cluster behind the
-same address or pooler. The first such connection trips the guard: an
-ERROR `DATABASE CLUSTER CHANGED` (with the old and new identity digests
-only), the pool is reset so connections to the old cluster close too,
-and from then on every database request answers `503
-service_unavailable` and `GET /v1/health` answers `503`, so the
-orchestrator restarts the instance, which recomputes the identity (clients
-then get `deployment_changed`). It stays down even if the endpoint
-switches back, because it may have mixed both clusters meanwhile.
-Connections opened before a switch still reach the old cluster, which is
-consistent with the cached identity; they are replaced within 5 min idle
-or a 15 min (±10%) lifetime (`connMaxLifetime`), and the first
-replacement that reaches the new cluster trips the guard. A per-acquire
-health check would catch it sooner but costs a query per request, so it
-isn't used. A `42501` in the hook (privilege revoked after startup) is
-logged once as a WARN and the connection allowed: serving continues, but
-switches go unnoticed until it is granted again.
+Cluster switches under a running instance (`db.ClusterGuard`, default
+`cluster_and_deployment_id` only), e.g. a blue/green switchover or a
+failover to another cluster behind the same address or pooler:
+
+- **Detection bound: within `SYNC_CLUSTER_CHECK_INTERVAL` + 5 s (20 s by
+  default; at most 35 s), however busy the pool is.** Every interval
+  (10–30 s, default 15 s) a background check opens a fresh connection
+  outside the pool, with the pool's settings, reads `system_identifier`,
+  and closes it. That is what catches a switch while every pooled
+  connection is busy and still reaches the old cluster (a check on those
+  can't see it). Every new pool connection is also checked once
+  (`AfterConnect`), so a switch seen by a reconnect is caught at once.
+  There is still no per-request query.
+- **Fails closed.** Another `system_identifier`, or `42501`
+  (`pg_control_system()` refused, so the cluster can't be checked: e.g.
+  the new cluster revokes it), on a new connection or the background
+  check trips the guard for good: one ERROR `DATABASE CLUSTER CHANGED`
+  (identity digests only; for 42501, the grant to restore), the pool is
+  reset so connections to the old cluster close, and from then on no
+  connection is even dialled (`BeforeConnect`): every database request
+  answers `503 service_unavailable` (`Retry-After: 5`) and
+  `GET /v1/health` answers `503`, so the orchestrator restarts the
+  instance, which recomputes the identity (clients then get
+  `deployment_changed`). It stays down even if the endpoint switches back,
+  because it may have mixed both clusters meanwhile.
+- A transient error (can't connect, timeout) never trips it: the
+  background check logs a WARN with the error class and tries again next
+  interval.
+- Connections opened before the identity is pinned at startup weren't
+  checked, so pinning resets the pool. Connections also live at most
+  15 min (±10%) (`connMaxLifetime`), which bounds how long connections to
+  an old cluster linger; detection doesn't depend on it.
 
 **`deployment_id_only` can't detect any of this.** With it, change
 `SYNC_DEPLOYMENT_ID` and restart every instance at once on *any* change
@@ -415,8 +428,9 @@ migration stuck behind a lock still fails.
 Database errors: a lock or statement timeout (`55P03`, `57014`), a deadlock
 or serialization failure, or a pool or query wait that outlives the request
 answers `503` (`server_busy`, `Retry-After: 1`) instead of `500`; an
-unreachable database answers `503` (`service_unavailable`,
-`Retry-After: 5`). See `db.Classify`.
+unreachable or read-only database (`25006 read_only_sql_transaction`, e.g.
+the old side of a blue/green switchover, or a standby) answers `503`
+(`service_unavailable`, `Retry-After: 5`). See `db.Classify`.
 
 ## CI
 

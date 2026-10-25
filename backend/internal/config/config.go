@@ -96,6 +96,11 @@ type Config struct {
 	// can't read pg_control_system()) or "deployment_id_only". Every
 	// instance must use the same value.
 	SyncIdentitySource string
+	// SyncClusterCheckInterval (SYNC_CLUSTER_CHECK_INTERVAL, 10s to 30s,
+	// default 15s) is how often a running instance checks, on a fresh
+	// connection, that the database endpoint still reaches the cluster
+	// its sync identity was computed for (cluster_and_deployment_id only).
+	SyncClusterCheckInterval time.Duration
 }
 
 // IsDevEnvironment reports whether Env is one of local, ci or sandbox.
@@ -212,6 +217,11 @@ func Load(getenv func(string) string) (Config, error) {
 	case "cluster_and_deployment_id", "deployment_id_only":
 	default:
 		errs = append(errs, errors.New(`SYNC_IDENTITY_SOURCE must be "cluster_and_deployment_id" (default) or "deployment_id_only"`))
+	}
+	// Bounds as db.MinClusterCheckInterval / db.MaxClusterCheckInterval.
+	if c.SyncClusterCheckInterval, err = duration(getenv, "SYNC_CLUSTER_CHECK_INTERVAL", 15*time.Second); err != nil ||
+		c.SyncClusterCheckInterval < 10*time.Second || c.SyncClusterCheckInterval > 30*time.Second {
+		errs = append(errs, errors.New("SYNC_CLUSTER_CHECK_INTERVAL must be a duration from 10s to 30s (default 15s)"))
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))
