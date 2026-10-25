@@ -288,7 +288,7 @@ func TestArrayBombUnbounded(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"batch_too_large"`) {
 		t.Fatalf("over budget: status %d %s", rec.Code, rec.Body)
 	}
-	if alloc > 40<<20 || elapsed > 2*time.Second {
+	if alloc > 40<<20 || elapsed > bombTimeLimit {
 		t.Errorf("over budget: allocated %d MiB in %v", alloc>>20, elapsed)
 	}
 
@@ -298,7 +298,7 @@ func TestArrayBombUnbounded(t *testing.T) {
 		t.Fatalf("under budget: status %d %s", rec.Code, rec.Body)
 	}
 	// Decoding 500k empty objects into map[string]any is ~100 B each.
-	if alloc > 160<<20 || elapsed > 3*time.Second {
+	if alloc > 160<<20 || elapsed > bombTimeLimit {
 		t.Errorf("under budget: allocated %d MiB in %v", alloc>>20, elapsed)
 	}
 }
@@ -320,7 +320,7 @@ func TestArrayBombDtcCodes(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `{"pointer":"/trips/0/dtc/stored","detail":"must have at most 128 items"}`) {
 		t.Fatalf("status %d %s", rec.Code, rec.Body)
 	}
-	if alloc > 40<<20 || elapsed > 2*time.Second {
+	if alloc > 40<<20 || elapsed > bombTimeLimit {
 		t.Errorf("allocated %d MiB in %v", alloc>>20, elapsed)
 	}
 }
@@ -408,3 +408,9 @@ func TestUploadReadDeadline(t *testing.T) {
 		t.Errorf("upload after timeout: %d %s", r.status, r.body)
 	}
 }
+
+// bombTimeLimit only catches a pathological (e.g. quadratic) slowdown:
+// the allocation bounds are what these tests check. Wall-clock time
+// varies too much on a loaded runner under -race (4.7 s seen for ~1.5 s
+// of work) to be a budget.
+const bombTimeLimit = 30 * time.Second
