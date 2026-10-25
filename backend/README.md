@@ -39,8 +39,9 @@ and validated. Implemented so far:
   unfiltered walk carries `nextSince`. A token that a tombstone purge has
   overtaken, or one from another member or deployment, gets `400
   sync_window_expired` (do a full walk) with a `reason`: `purged`,
-  `invalid`, or `deployment_changed` for a token or cursor from before a
-  database restore (see "Restoring the database"). `updatedAt` only moves forward
+  `invalid` (also any cursor that doesn't verify or doesn't belong to the
+  request: restart the walk), or `deployment_changed` for a token or cursor
+  from before a database restore (see "Restoring the database"). `updatedAt` only moves forward
   (wall clock at write time, milliseconds, at least 1 ms past the previous
   value). `/v1/trips/days` computes local days with the Go time zone
   database embedded in the binary, so aliases such as `Asia/Calcutta` work.
@@ -138,7 +139,8 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
 | `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members and `501` for vehicles (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
 | `SYNC_TOKEN_KEY`   | none         | Base64 secret (at least 32 bytes) that signs trip sync tokens and page cursors. Required unless `ENV` is `local`/`ci`/`sandbox`, where a missing one is generated at startup (tokens then die with the process). Rotating it expires every client's token: they do one full walk. |
-| `SYNC_DEPLOYMENT_ID` | `dev-<ENV>` in `local`/`ci`/`sandbox` | Names this deployment of the database in sync tokens and cursors, together with the cluster's `system_identifier` (`[A-Za-z0-9._:-]`, up to 64, e.g. `prod-2026-10-25`). Required unless `ENV` is `local`/`ci`/`sandbox`. **Change it after every restore, PITR or branch reset** (see "Restoring the database"). |
+| `SYNC_DEPLOYMENT_ID` | `dev-<ENV>` in `local`/`ci`/`sandbox` | Names this deployment of the database in sync tokens and cursors, together with the cluster's `system_identifier` (`[A-Za-z0-9._:-]`, up to 64, e.g. `prod-2026-10-25`). Required unless `ENV` is `local`/`ci`/`sandbox`. **Change it after every restore, PITR or branch reset**, with a full restart (see "Restoring the database"). The `dev-<ENV>` default is for dev environments only and never changes, so a restore of a dev database onto the same cluster goes undetected unless you set one (the server warns at startup when it uses the default). |
+| `SYNC_IDENTITY_SOURCE` | `cluster_and_deployment_id` | What sync tokens bind. `cluster_and_deployment_id`: the cluster's `system_identifier` and `SYNC_DEPLOYMENT_ID`; the role must be allowed to run `pg_control_system()`, or the server doesn't start. `deployment_id_only`: `SYNC_DEPLOYMENT_ID` only, for roles that can't (`system_identifier` isn't read). Every instance must use the same value. |
 | `DB_MAX_CONNS`     | `10`         | Postgres pool size (1–200). |
 | `MIGRATE_ON_START` | `false`      | `true` applies pending migrations at startup (an advisory lock serialises instances). Otherwise run `server migrate up` as a release step. |
 
@@ -318,10 +320,18 @@ page or walk answers `sync_window_expired`.
 Transaction ids are cluster-wide, so busy neighbours only cause repeats.
 The deployment identity (`db.DeploymentIdentity`, a 25-character digest)
 combines the cluster's `system_identifier` from `pg_control_system()`
-(`SystemIdentifier`, left out where the role can't read it; the server
-then logs a warning) with `SYNC_DEPLOYMENT_ID`. Tokens and page cursors
-carry it; a mismatch in either part answers `sync_window_expired` with
-`reason=deployment_changed`.
+(`SystemIdentifier`; not read with `SYNC_IDENTITY_SOURCE=deployment_id_only`)
+with `SYNC_DEPLOYMENT_ID`. Tokens and page cursors carry it; a mismatch in
+either part answers `sync_window_expired` with `reason=deployment_changed`.
+It is computed once at startup (`db.NewTripsWith`) and cached, so walks
+don't query it. A transient error reading `system_identifier` is retried
+for about 6 s, then the server refuses to start; `42501`
+(insufficient privilege) refuses at once, with a hint to `GRANT EXECUTE ON
+FUNCTION pg_control_system() TO <role>` or set
+`SYNC_IDENTITY_SOURCE=deployment_id_only` on every instance. It never
+falls back on its own, so all instances compute the same identity: check
+that every instance logs the same `sync identity` line (the digest only,
+not the raw values).
 
 ### Restoring the database
 
@@ -333,12 +343,20 @@ it may not with a Neon branch reset or restore. So, whenever you restore:
 
 1. Set a new `SYNC_DEPLOYMENT_ID` (e.g. `prod-2026-10-25-restore1`) before
    the server takes traffic again. Never reuse an old value.
-2. Restart. Every client's next sync gets `400 sync_window_expired`,
-   `reason=deployment_changed`: it does a full walk, re-creates vehicles
-   the server lost, and re-uploads its local trips the walk didn't return
-   (spec: Incremental sync, "Recovery after `deployment_changed`").
-   Deletions made after the restore point are lost with it, so a trip
-   deleted on another device in that window can come back.
+2. Restart **every instance at once** (stop all, then start), not with a
+   rolling deploy: while old and new instances serve side by side, their
+   tokens and cursors reject each other, so clients' walks fail with
+   `deployment_changed` until the rollout ends (and restart their
+   recovery each time). Check every instance logs the same new
+   `sync identity`. The same applies to changing `SYNC_IDENTITY_SOURCE`.
+   After the restart, every client's next sync gets `400
+   sync_window_expired`, `reason=deployment_changed`: it does a full walk,
+   re-creates vehicles the server lost, and re-uploads its local trips the
+   walk didn't return (spec: Incremental sync, "Recovery after
+   `deployment_changed`"). Deletions made after the restore point are lost
+   with it, so a trip deleted on another device in that window can come
+   back, and so can a trip deleted elsewhere whose tombstone was purged,
+   from a device offline for longer than the retention.
 3. Leave `SYNC_TOKEN_KEY` alone: rotating it makes every token `invalid`
    instead, and clients then won't re-upload.
 

@@ -77,9 +77,10 @@ info:
         (`issuedAt`) and the watermark below. The deployment identity combines the Postgres cluster's
         `system_identifier` (from `pg_control_system()`; left out where the database role can't read it) with a
         configured deployment id that operators change after every database restore, point-in-time recovery or
-        branch reset. Page cursors carry the same identity. A token or cursor with a different version or
-        deployment identity, or one that fails the integrity check, is rejected with `400`
-        (`code=sync_window_expired`). That way a restore from backup, dump/restore or migration to a new cluster,
+        branch reset. Page cursors of `GET /v1/trips` and `GET /v1/trips/deletions` carry the same identity. A
+        token or cursor with a different version or deployment identity, or one that fails the integrity check,
+        is rejected with `400` (`code=sync_window_expired`); so is a cursor sent to another endpoint, walk or
+        filter than the one it came from. That way a restore from backup, dump/restore or migration to a new cluster,
         where transaction ids mean something else, can never silently skip writes. Tokens are issued and read on
         the **primary** only, never on a read replica.
       - **Why a token was rejected (`reason`).** A `sync_window_expired` problem carries a machine-readable
@@ -87,20 +88,33 @@ info:
         database was restored or replaced since, and may have lost writes made after its restore point),
         `purged` when tombstones it depends on were purged (see window expiry below), and `invalid` when it
         fails to decode or verify (e.g. it was edited, belongs to another member, or the signing key was
-        rotated). Every reason means the same first step: a full `GET /v1/trips` walk without `since`. Clients
-        must treat an unknown or missing `reason` like `invalid`.
-      - **Recovery after `deployment_changed`.** Only for this reason, the app (1) does the full walk of
-        `GET /v1/trips` and stores its `nextSince`; (2) re-creates any local vehicle the server no longer
-        returns (`POST /v1/vehicles` with its `clientVehicleId`, which gives it a new server id) and points its
-        local trips at the new ids; (3) re-uploads, through `POST /v1/trips/batch` with fresh
-        `Idempotency-Key`s, every local trip whose `clientTripId` the full walk didn't return, except trips the
-        user deleted on this device; and (4) updates the local server `id` of each re-uploaded trip from the
-        batch result (a re-created trip gets a new server id). Re-uploading is safe: trips are keyed by
-        (member, `clientTripId`), so a trip the server still has comes back `unchanged` (or `updated` if the
-        local snapshot is newer), and a tombstone the server still has answers `trip_deleted`. Deletions
-        made after the restore point are lost with it: a trip deleted on another device in that window can
-        come back. For `purged` and `invalid` the app must not re-upload: it drops local trips the server no
-        longer returns, because they may have been deleted elsewhere.
+        rotated, or a cursor is used with another endpoint, walk or filter). Every reason means the same first
+        step: a full `GET /v1/trips` walk without `since`. Clients must treat an unknown or missing `reason` like
+        `invalid`. A `sync_window_expired` on a **cursor**, i.e. in the middle of any walk (a full one
+        included), means: discard what the walk collected and restart it from its first page, without `since`.
+      - **Recovery after `deployment_changed`.** Only for this reason, the app:
+        1. Does the full walk of `GET /v1/trips` and keeps its `nextSince`.
+        2. Re-creates every local vehicle the server no longer returns (`POST /v1/vehicles` with its
+           `clientVehicleId`; it gets a new server id) and points its local trips at the new id. A `410`
+           (`code=vehicle_deleted`) means the vehicle was deleted before the restore point and its tombstone
+           survived: the app deletes the vehicle locally, with its local trips that the walk didn't return
+           (they were deleted with it, or belong to a deleted vehicle), and doesn't upload them.
+        3. Re-uploads, through `POST /v1/trips/batch` with fresh `Idempotency-Key`s, every local trip whose
+           `clientTripId` the full walk didn't return, except trips the user deleted on this device.
+        4. Updates the local server `id` of each re-uploaded trip from the batch result, matching by
+           `clientTripId` (a re-created trip gets a new server id).
+
+        Re-uploading is safe: trips are keyed by (member, `clientTripId`), so a trip the server still has comes
+        back `unchanged` (or `updated` if the local snapshot is newer), and a tombstone the server still has
+        answers `trip_deleted` (the app then deletes the trip locally). If a step gets `deployment_changed`
+        again (e.g. during the server's rollout), the app starts the recovery over; repeating it is harmless.
+        Limits, inherent to restoring: deletions made after the restore point are lost with it, so a trip
+        deleted on another device in that window can come back; and `deployment_changed` wins over `purged`, so
+        a device offline for longer than the tombstone retention can bring back trips deleted elsewhere whose
+        tombstones were purged.
+      - **Recovery after `purged` or `invalid`** (and unknown reasons): the app must not re-upload. After the
+        full walk it drops the local trips the server no longer returns that it had uploaded before (they may
+        have been deleted elsewhere); trips it has never uploaded stay and are uploaded as usual.
       - The token is a **commit-ordered watermark**, captured when the walk's first page is served and carried in
         the cursor. Reference implementation (Postgres): every trip row and tombstone stores the id of the
         transaction that last wrote it (`pg_current_xact_id()`), and the token holds
@@ -126,7 +140,7 @@ info:
         `issuedAt` is after the boundary's `deletedAt` **and** its watermark is above the boundary's transaction
         id, i.e. no tombstone the app might not have seen yet has been purged. Otherwise both endpoints answer
         `400` (`code=sync_window_expired`, `reason=purged`). The app then does a full `GET /v1/trips` without
-        `since` and drops local trips the server no longer returns. A token never expires just because of its age while nothing
+        `since` and drops the local trips it had uploaded that the server no longer returns. A token never expires just because of its age while nothing
         it depends on has been purged.
     * **Rate limits**: every response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds),
       set by middleware (declared explicitly only on a few operations to keep the document readable). Every
@@ -977,7 +991,10 @@ paths:
         With `since` (a sync token from an earlier walk's `nextSince`), only trips written at or after the token's
         watermark are returned, in server change order, and the last page carries the next token. See
         Conventions → Incremental sync for the inclusive/exclusive rules and the call order with
-        `GET /v1/trips/deletions`. Deleted trips never appear here.
+        `GET /v1/trips/deletions`. Deleted trips never appear here. A `since` token or a `cursor` that can no
+        longer be used gets `400` with `code=sync_window_expired` and a `reason` (`deployment_changed`, `purged`
+        or `invalid`); on a cursor, restart the walk from its first page, and after `deployment_changed` follow
+        the recovery in Conventions → Incremental sync.
       x-legacy-mapping:
         replaces: none
         notes: Legacy had no trip-list JSON API; trip history was shown in server-rendered pages (`/m/view.do`, `/m/chart.do`). Used for restore on a new device.
@@ -1008,8 +1025,11 @@ paths:
         Returns the caller's trip tombstones (per member) written at or after the watermark of `since`, from a
         direct delete or a vehicle cascade, in server change order. Run it after the `GET /v1/trips?since=` walk
         with the **same** `since` value and keep the trips walk's `nextSince` (Conventions → Incremental sync).
-        Delivery is at least once. Tombstones are kept for at least 90 days (proposal). An older token gets `400`
-        with `code=sync_window_expired`, and the app does a full resync (`GET /v1/trips` without `since`).
+        Delivery is at least once. Tombstones are kept for at least 90 days (proposal). An older token, or a token
+        or cursor that can no longer be used, gets `400` with `code=sync_window_expired` and a `reason`:
+        `purged` (an older token), `deployment_changed` (a token or cursor from before a database restore; follow
+        the recovery in Conventions → Incremental sync) or `invalid`. The app then does a full resync
+        (`GET /v1/trips` without `since`).
       x-legacy-mapping:
         replaces: none
       parameters:
@@ -1623,8 +1643,9 @@ components:
               detail: {type: string}
         reason:
           type: string
-          description: 'Why the request failed, where `code` alone is not enough. With `code=sync_window_expired`: `deployment_changed` (the database was restored or replaced; full sync, then re-upload local trips the server lost, see Incremental sync), `purged` (tombstones the token needed were purged) or `invalid` (the token or cursor does not verify). New values may be added; treat unknown ones like `invalid`.'
-          examples: [deployment_changed, purged, invalid]
+          enum: [deployment_changed, purged, invalid]
+          description: 'Why the request failed, where `code` alone is not enough; only sent with `code=sync_window_expired`. `deployment_changed`: the token or cursor is from before a database restore or replacement (full sync, then re-upload local trips the server lost; see Conventions → Incremental sync). `purged`: tombstones the token needed were purged. `invalid`: the token or cursor does not verify or belongs to another endpoint, walk or filter. Adding a value is a spec change; clients should still treat an unknown one like `invalid`.'
+
     Health:
       type: object
       required: [status, apiVersion, time]
