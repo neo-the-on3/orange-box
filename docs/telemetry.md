@@ -67,18 +67,28 @@ from 01 01, A bit 7 / A & 0x7F.
 with 3 leading pad bytes. The VIN must be 17 characters from `A–H J–N P R–Z 0–9`. The ISO 3779 check digit
 (position 9) is reported as `checkDigitValid` but is not enforced, because it is only mandatory in North America.
 
-**Polling (#193).** Fast PIDs are 0D, 0C (read first), then 10, 04, 11, 5E, 49 (accelerator pedal, for the Detailed
-Info grid) and 03 (fuel system status, for fuel cut, #194). Ticks run on a 500 ms period measured from the start of
-the tick: a dongle slower than that runs ticks back to back, with no extra pause. Each tick reads speed and rpm, emits
-the sample right away (so they are about one request old on screen), then reads the other fast PIDs (they reach the
-next sample) and its share of the slow PIDs. Slow PIDs are 05, 2F, 42, 0F, 0B, 46, 51 and 5C, plus 33, 06, 07, 0A,
-21 and 14 for the Detailed Info grid; slow PID `i` is read on ticks where `tick % 10 == i % 10`, so each is
-refreshed every 10 ticks (≈ 5 s) without a multi-second freeze. Every 10th tick also reads 01 01 (MIL + stored DTC
-count) when the car announces it; it lands in `VehicleSample.monitor`. The first tick reads everything before its
-sample. On real dongles (`Elm327Session(fastPolling = true)`) the session sends `ATAT2` and, on CAN when exactly one
-ECU answered `0100`, appends the response count (`010D1`) so the adapter returns as soon as the reply arrives; a `?`
-reply turns the hint off for the session. Every 30 s the poller logs `polling_stats` (ticks/s, tick time, sample gap
-p50/p95/max, request latency p50/p95) to the connection log. A `VehicleSample` holds the latest value of each PID.
+**Polling (#193).** Fast PIDs are 0D, 0C (read first), then 10, 04, 11, 5E, 49 (accelerator pedal, for fuel cut and
+the Detailed Info grid) and 03 (fuel system status, for fuel cut, #194). Ticks run on a 500 ms period measured from
+the start of the tick. Each tick reads speed and rpm, emits the sample right away (so they are about one request old
+on screen), then makes as many *secondary* reads as fit in the rest of the period (at least one), and sleeps for what
+is left. Secondary reads take turns through a *round*: the other fast PIDs, then that round's share of the slow PIDs
+(slow PID `i` in rounds where `round % 10 == i % 10`), then 01 01 (MIL + stored DTC count, into
+`VehicleSample.monitor`) every 10th round. A quick dongle finishes a round per tick; a slow one spreads it over a few
+ticks, so speed and rpm keep their 500 ms period. Kiran's SX4 (drive 2, build 95) answered in ~125 ms per request and
+~280 ms for NO DATA: build 95 read all seven fast PIDs per tick plus a fixed 500 ms pause, so speed refreshed every
+1.3 s, and 2.8 s on slow ticks. Now: speed and rpm every 500 ms, the other fast PIDs about every 1.5 s, each slow PID
+about every 15–25 s. Slow PIDs are 05, 2F, 42, 0F, 0B, 46, 51 and 5C, plus 33, 06, 07, 0A, 21 and 14 for the Detailed
+Info grid. The first tick reads a whole round before its sample. On real dongles (`Elm327Session(fastPolling = true)`)
+the session sends `ATAT2` and, on CAN when exactly one ECU answered `0100`, appends the response count (`010D1`) so
+the adapter returns as soon as the reply arrives; a `?` reply turns the hint off for the session. Every 30 s the
+poller logs `polling_stats` (ticks/s, tick time, sample gap p50/p95/max, request latency p50/p95) to the connection log.
+
+**Stale values and ignition off.** A `VehicleSample` holds the latest value of each PID, but a PID that answers NO
+DATA twice in a row is dropped from it. When every read fails for 3 ticks the ECU is treated as silent (ignition off
+with the dongle still powered): the values are cleared, `ecu_silent` is logged, and only speed and rpm are tried every
+2 s until one answers (`ecu_awake`). Without this, build 95 repeated the last idle rpm and MAF for 3.6 h of parking:
+the trip never ended and billed ~1 L/h of phantom idle fuel (4.1 L for a 2.8 km drive). With no rpm the trip
+recorder now ends the trip after its engine-off grace. `ATRV` readings below 5 V are adapter glitches and ignored.
 Polling stops when the connection leaves Connected and restarts, with a fresh bitmap read, after reconnecting.
 
 ## 2. Derived metrics (`TelemetryEngine`)

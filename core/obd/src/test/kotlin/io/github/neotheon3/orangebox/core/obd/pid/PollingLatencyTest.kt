@@ -58,7 +58,7 @@ class PollingLatencyTest {
 
     @After fun restore() { OrangeLog.sink = previousSink }
 
-    @Test fun `100 ms per request - speed refreshes at least every 700 ms with no slow-tick freeze`() = runTest {
+    @Test fun `100 ms per request - speed refreshes every 500 ms with no slow-tick freeze`() = runTest {
         val t = transport(100)
         val conn = Conn(Elm327Session(t))
         val poller = PidPoller(conn, clock = { currentTime })
@@ -71,14 +71,14 @@ class PollingLatencyTest {
 
         val gaps = samples.zipWithNext { a, b -> b.timestampMillis - a.timestampMillis }.drop(1) // after the full first tick
         assertTrue("got ${samples.size}", samples.size > 80)
-        assertTrue("p95 ${PollingStats.percentile(gaps, 95)}", PollingStats.percentile(gaps, 95) <= 700)
-        assertTrue("max gap ${gaps.max()}", gaps.max() <= 800)
+        assertTrue("p95 ${PollingStats.percentile(gaps, 95)}", PollingStats.percentile(gaps, 95) <= 500)
+        assertTrue("max gap ${gaps.max()}", gaps.max() <= 600)
         // Published right after speed and rpm: speed is at most two requests old when the sample arrives.
         val ages = samples.indices.drop(1).map { emittedAt[it] - samples[it].timestampMillis }
         assertTrue("speed age ${ages.max()}", ages.max() <= 200)
-        // Every slow PID is still refreshed (once every 10 ticks).
+        // Every slow PID is still refreshed: once every 10 rounds, a round taking ~2 ticks at 100 ms per request.
         listOf("0105", "0106", "0107", "010A", "010B", "010F", "0114").forEach { cmd ->
-            assertTrue(cmd, t.written.count { it == cmd } >= samples.size / 10 - 1)
+            assertTrue(cmd, t.written.count { it == cmd } >= samples.size / 20 - 1)
         }
     }
 
