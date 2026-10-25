@@ -11,6 +11,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
@@ -68,12 +71,42 @@ func NewDatabase(t testing.TB) string {
 			return
 		}
 		defer func() { _ = admin.Close(ctx) }()
-		if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {
+		if err := dropDatabase(ctx, admin, name); err != nil {
 			t.Errorf("dbtest: drop database %s: %v", name, err)
 		}
 	})
 	u.Path = "/" + name
 	return u.String()
+}
+
+// dropDatabase drops name. The test's pool is closed by now (cleanups run
+// last-in first-out), so a plain DROP usually succeeds: Postgres itself
+// waits for (and stops) an autovacuum worker on the database. If another
+// session is still connected, it falls back to WITH (FORCE), which a
+// non-superuser role can't use on another role's backend ("permission
+// denied to terminate process", 42501): that, like "is being accessed by
+// other users" (55006), is retried for a few seconds.
+func dropDatabase(ctx context.Context, admin *pgx.Conn, name string) error {
+	plain := "DROP DATABASE IF EXISTS " + pgx.Identifier{name}.Sanitize()
+	var err error
+	for attempt := range 10 {
+		if _, err = admin.Exec(ctx, plain); err == nil {
+			return nil
+		}
+		if _, err = admin.Exec(ctx, plain+" WITH (FORCE)"); err == nil {
+			return nil
+		}
+		var pg *pgconn.PgError
+		if !errors.As(err, &pg) || (pg.Code != "42501" && pg.Code != "55006") {
+			return err
+		}
+		select {
+		case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+		case <-ctx.Done():
+			return fmt.Errorf("%w (last error: %w)", ctx.Err(), err)
+		}
+	}
+	return err
 }
 
 // Open returns a pool on url, closed when the test ends.
