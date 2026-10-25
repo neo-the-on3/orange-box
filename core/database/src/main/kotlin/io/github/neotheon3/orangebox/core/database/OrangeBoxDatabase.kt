@@ -6,18 +6,20 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 @Database(
-    entities = [VehicleEntity::class, TripEntity::class, TripSampleEntity::class, TripEventEntity::class],
+    entities = [VehicleEntity::class, TripEntity::class, TripSampleEntity::class, TripEventEntity::class, DtcRecordEntity::class],
     version = OrangeBoxDatabase.VERSION,
     exportSchema = true,
-    // 1 -> 2 only adds the trip tables (M4); 2 -> 3 adds trip_events.durationS (#164). Room generates both.
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    // 1 -> 2 only adds the trip tables (M4); 2 -> 3 adds trip_events.durationS (#164); 3 -> 4 adds
+    // dtc_records (#51). Room generates all three.
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
 )
 abstract class OrangeBoxDatabase : RoomDatabase() {
     abstract fun vehicleDao(): VehicleDao
     abstract fun tripDao(): TripDao
+    abstract fun dtcRecordDao(): DtcRecordDao
 
     companion object {
-        const val VERSION = 3
+        const val VERSION = 4
         const val NAME = "orangebox.db"
     }
 }

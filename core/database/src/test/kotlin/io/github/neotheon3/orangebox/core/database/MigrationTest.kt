@@ -49,6 +49,19 @@ class MigrationTest {
         }
     }
 
+    @Test fun `3 to 4 keeps trips and adds dtc_records (#51)`() {
+        helper.createDatabase(DB, 3).use { db ->
+            db.execSQL("INSERT INTO trips (vehicleId, startedAtMillis, lastSampleAtMillis, durationS, distanceKm, fuelLitres, co2Grams, idleS, fuelCutS, ecoS, overspeedS, harshAccelCount, harshBrakeCount, overspeedCount, maxSpeedKph) VALUES (NULL, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)")
+        }
+        helper.runMigrationsAndValidate(DB, 4, true).use { db ->
+            db.query("SELECT COUNT(*) FROM trips").use { c -> c.moveToFirst(); assertEquals(1, c.getInt(0)) }
+            db.execSQL("INSERT INTO dtc_records (code, kind, vehicleId, firstSeenAtMillis, lastSeenAtMillis) VALUES ('P0300', 'stored', NULL, 1, 1)")
+            db.query("SELECT code, endedAtMillis FROM dtc_records").use { c ->
+                c.moveToFirst(); assertEquals("P0300", c.getString(0)); assertEquals(true, c.isNull(1))
+            }
+        }
+    }
+
     @Test fun `all migrations reach the current version`() {
         helper.createDatabase(DB, 1).close()
         helper.runMigrationsAndValidate(DB, OrangeBoxDatabase.VERSION, true, *Migrations.ALL).close()
