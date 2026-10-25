@@ -5,7 +5,7 @@ set -euo pipefail
 source "${SMOKE_LIB:-scripts/ci/smoke-lib.sh}"
 
 tap_attr content-desc "Settings" dash-settings-home
-wait_for_text "Server (advanced)" dash-settings
+wait_for_text "Car and dongle" dash-settings
 # Compose merges a row's texts into one node ("Hazard, Opens ..."), so match by prefix.
 tap_attr text 'Hazard[^"]*' dash-settings-hazard
 wait_for_regex 'text="Default for your country \(([A-Z]{2}|unknown)\): [0-9]+"' dash-settings-number 10 || true
