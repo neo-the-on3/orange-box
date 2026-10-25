@@ -3,6 +3,8 @@ package db
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -29,26 +31,49 @@ import (
 type Trips struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
-	// deploymentID is the configured identity, used only when the role
-	// can't read pg_control_system().
+	// deploymentID is SYNC_DEPLOYMENT_ID, part of the deployment identity.
 	deploymentID string
-	systemID     bool
+	// systemID is whether the role may read pg_control_system(); without
+	// it the identity binds deploymentID only.
+	systemID bool
 	// hook, if set (tests), runs at named points inside a walk.
 	hook func(stage string)
 }
 
 // NewTrips returns a trip store on pool. The deployment identity sync
-// tokens carry is the cluster's system_identifier when the role may read
-// pg_control_system(), else deploymentID (SYNC_DEPLOYMENT_ID); with
-// neither, it fails.
+// tokens and cursors carry combines the cluster's system_identifier (read
+// in every walk's transaction) with deploymentID (SYNC_DEPLOYMENT_ID,
+// required): a change of either expires them all (ErrDeploymentChanged).
+// system_identifier catches a new cluster (dump/restore, migration);
+// deploymentID, which operators change after any restore, PITR or branch
+// reset, catches restores that keep the cluster's identifier. If the role
+// can't read pg_control_system(), the identity binds deploymentID only
+// (and NewTrips logs nothing: the caller should warn).
 func NewTrips(ctx context.Context, pool *pgxpool.Pool, deploymentID string) (*Trips, error) {
+	if deploymentID == "" {
+		return nil, errors.New("trips: a deployment id (SYNC_DEPLOYMENT_ID) is required")
+	}
 	s := &Trips{pool: pool, q: dbgen.New(pool), deploymentID: deploymentID}
 	if _, err := s.q.SystemIdentifier(ctx); err == nil {
 		s.systemID = true
-	} else if deploymentID == "" {
-		return nil, fmt.Errorf("trips: pg_control_system() is not readable (%w); set SYNC_DEPLOYMENT_ID", err)
 	}
 	return s, nil
+}
+
+// ReadsSystemIdentifier reports whether the identity includes the
+// cluster's system_identifier.
+func (s *Trips) ReadsSystemIdentifier() bool { return s.systemID }
+
+// DeploymentIdentity is the identity sync tokens carry for
+// system_identifier sysID (empty when unreadable) and deploymentID: a
+// 25-character digest of both, so tokens and cursors stay short.
+func DeploymentIdentity(sysID, deploymentID string) string {
+	h := sha256.New()
+	h.Write([]byte("orange-box deployment identity\x00"))
+	h.Write([]byte(sysID))
+	h.Write([]byte{0})
+	h.Write([]byte(deploymentID))
+	return "d1:" + base64.RawURLEncoding.EncodeToString(h.Sum(nil)[:16])
 }
 
 func (s *Trips) at(stage string) {
@@ -60,21 +85,25 @@ func (s *Trips) at(stage string) {
 // identity returns the deployment identity, read in q's transaction.
 func (s *Trips) identity(ctx context.Context, q *dbgen.Queries) (string, error) {
 	if !s.systemID {
-		return "id:" + s.deploymentID, nil
+		return DeploymentIdentity("", s.deploymentID), nil
 	}
 	id, err := q.SystemIdentifier(ctx)
 	if err != nil {
 		return "", fmt.Errorf("read system identifier: %w", err)
 	}
-	return "pg:" + strconv.FormatInt(id, 10), nil
+	return DeploymentIdentity(strconv.FormatInt(id, 10), s.deploymentID), nil
 }
 
 // walk runs read in a read-only REPEATABLE READ transaction. With snapshot
 // set it first takes the new SyncPoint, as the transaction's first
-// statement (#176). since, if not nil, must belong to this deployment and
-// be above the member's purge boundary (#177), else ErrSyncWindowExpired.
-func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoint, snapshot bool, read func(q *dbgen.Queries) error) (*store.SyncPoint, error) {
+// statement (#176). since, if not nil, and cursor (a cursor's identity, if
+// not empty) must belong to this deployment, else ErrDeploymentChanged,
+// and since must be above the member's purge boundary (#177), else
+// ErrSyncWindowExpired. It returns the new SyncPoint (if asked) and the
+// identity the page was read under.
+func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoint, cursor string, snapshot bool, read func(q *dbgen.Queries) error) (*store.SyncPoint, string, error) {
 	var out *store.SyncPoint
+	var identity string
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		var snap dbgen.SyncSnapshotRow
@@ -85,34 +114,32 @@ func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoi
 			}
 		}
 		s.at("snapshot")
-		if snapshot || since != nil {
-			identity, err := s.identity(ctx, q)
-			if err != nil {
+		var err error
+		if identity, err = s.identity(ctx, q); err != nil {
+			return err
+		}
+		if since != nil && since.Identity != identity || cursor != "" && cursor != identity {
+			return store.ErrDeploymentChanged
+		}
+		if since != nil {
+			// In the same snapshot as the page (#177): a purge that
+			// commits after this check is invisible to the page read
+			// too, so the page still has every tombstone the token
+			// needs, and the next page or walk sees the new boundary.
+			if err := checkPurgeBoundary(ctx, q, member, *since); err != nil {
 				return err
 			}
-			if since != nil && since.Identity != identity {
-				return store.ErrSyncWindowExpired
-			}
-			if since != nil {
-				// In the same snapshot as the page (#177): a purge that
-				// commits after this check is invisible to the page read
-				// too, so the page still has every tombstone the token
-				// needs, and the next page or walk sees the new boundary.
-				if err := checkPurgeBoundary(ctx, q, member, *since); err != nil {
-					return err
-				}
-			}
-			if snapshot {
-				out = &store.SyncPoint{Identity: identity, IssuedAt: snap.IssuedAt.UTC(), Watermark: snap.Watermark}
-			}
+		}
+		if snapshot {
+			out = &store.SyncPoint{Identity: identity, IssuedAt: snap.IssuedAt.UTC(), Watermark: snap.Watermark}
 		}
 		s.at("checked")
 		return read(q)
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return out, nil
+	return out, identity, nil
 }
 
 // checkPurgeBoundary rejects a token that a tombstone purge has expired:
@@ -156,7 +183,7 @@ func (s *Trips) ListTripChanges(ctx context.Context, member uuid.UUID, tq store.
 	}
 	var rows []dbgen.Trip
 	cx, cid := after(tq.After)
-	snap, err := s.walk(ctx, member, &tq.Since, tq.Snapshot, func(q *dbgen.Queries) error {
+	snap, identity, err := s.walk(ctx, member, &tq.Since, tq.Identity, tq.Snapshot, func(q *dbgen.Queries) error {
 		var err error
 		rows, err = q.ListTripChanges(ctx, dbgen.ListTripChangesParams{
 			MemberID: member, Watermark: tq.Since.Watermark, CursorXid: cx, CursorID: cid, MaxRows: limit,
@@ -166,7 +193,7 @@ func (s *Trips) ListTripChanges(ctx context.Context, member uuid.UUID, tq store.
 	if err != nil {
 		return store.TripPage{}, err
 	}
-	return store.TripPage{Trips: toTrips(rows), Snapshot: snap}, nil
+	return store.TripPage{Trips: toTrips(rows), Snapshot: snap, Identity: identity}, nil
 }
 
 // ListTripDeletions returns a page of the member's trip tombstones written
@@ -178,7 +205,7 @@ func (s *Trips) ListTripDeletions(ctx context.Context, member uuid.UUID, dq stor
 	}
 	var rows []dbgen.ListTripDeletionsRow
 	cx, cid := after(dq.After)
-	snap, err := s.walk(ctx, member, &dq.Since, dq.Snapshot, func(q *dbgen.Queries) error {
+	snap, identity, err := s.walk(ctx, member, &dq.Since, dq.Identity, dq.Snapshot, func(q *dbgen.Queries) error {
 		var err error
 		rows, err = q.ListTripDeletions(ctx, dbgen.ListTripDeletionsParams{
 			MemberID: member, Watermark: dq.Since.Watermark, CursorXid: cx, CursorID: cid, MaxRows: limit,
@@ -195,7 +222,7 @@ func (s *Trips) ListTripDeletions(ctx context.Context, member uuid.UUID, dq stor
 			Change: store.ChangePos{Xid: r.WriterXid, ID: r.ID},
 		}
 	}
-	return store.TripDeletionPage{Deletions: out, Snapshot: snap}, nil
+	return store.TripDeletionPage{Deletions: out, Snapshot: snap, Identity: identity}, nil
 }
 
 func toTrips(rows []dbgen.Trip) []store.Trip {
@@ -455,7 +482,7 @@ func (s *Trips) ListTripHistory(ctx context.Context, member uuid.UUID, hq store.
 		curAt, curID = &at, hq.After.ID
 	}
 	var rows []dbgen.Trip
-	snap, err := s.walk(ctx, member, nil, hq.Snapshot, func(q *dbgen.Queries) error {
+	snap, identity, err := s.walk(ctx, member, nil, hq.Identity, hq.Snapshot, func(q *dbgen.Queries) error {
 		var err error
 		if hq.VehicleID != nil {
 			rows, err = q.ListTripsByVehicle(ctx, dbgen.ListTripsByVehicleParams{
@@ -473,7 +500,7 @@ func (s *Trips) ListTripHistory(ctx context.Context, member uuid.UUID, hq store.
 	if err != nil {
 		return store.TripPage{}, err
 	}
-	return store.TripPage{Trips: toTrips(rows), Snapshot: snap}, nil
+	return store.TripPage{Trips: toTrips(rows), Snapshot: snap, Identity: identity}, nil
 }
 
 // DeletedClientTrips implements store.Trips.

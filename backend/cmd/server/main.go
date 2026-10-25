@@ -161,7 +161,11 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		pool.Close()
 		return store{}, err
 	}
-	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
+	if !trips.ReadsSystemIdentifier() {
+		logger.Warn("pg_control_system() is not readable: sync tokens bind SYNC_DEPLOYMENT_ID only, so change it after every database restore",
+			slog.String("sync_deployment_id", cfg.SyncDeploymentID))
+	}
+	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns), slog.String("sync_deployment_id", cfg.SyncDeploymentID))
 	return store{
 		trips:       trips,
 		members:     db.NewMembers(pool),

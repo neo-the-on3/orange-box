@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,11 +31,18 @@ func newTrips(t *testing.T, pool *pgxpool.Pool) *db.Trips {
 // the member is at or above watermark 1.
 func origin(t *testing.T, q *dbgen.Queries) store.SyncPoint {
 	t.Helper()
+	return store.SyncPoint{Identity: identity(t, q, "test-deployment"), IssuedAt: time.Now(), Watermark: 1}
+}
+
+// identity is the deployment identity of a store with deploymentID on
+// this cluster.
+func identity(t *testing.T, q *dbgen.Queries, deploymentID string) string {
+	t.Helper()
 	id, err := q.SystemIdentifier(t.Context())
 	if err != nil {
-		return store.SyncPoint{Identity: "id:test-deployment", IssuedAt: time.Now(), Watermark: 1}
+		return db.DeploymentIdentity("", deploymentID)
 	}
-	return store.SyncPoint{Identity: "pg:" + strconv.FormatInt(id, 10), IssuedAt: time.Now(), Watermark: 1}
+	return db.DeploymentIdentity(strconv.FormatInt(id, 10), deploymentID)
 }
 
 // once returns a hook that runs f the first time stage is reached.
@@ -186,21 +194,99 @@ func TestSyncDeletionTakenWithFirstPage(t *testing.T) {
 	}
 }
 
-// TestSyncTokenOfAnotherDeployment: a token whose identity isn't this
-// cluster's is expired.
+// TestSyncTokenOfAnotherDeployment: a token or cursor issued under
+// another deployment identity, from another cluster (system_identifier)
+// or under another SYNC_DEPLOYMENT_ID (a restore that kept the
+// cluster), is ErrDeploymentChanged, which is an ErrSyncWindowExpired.
 func TestSyncTokenOfAnotherDeployment(t *testing.T) {
 	t.Parallel()
 	pool := dbtest.New(t)
 	q := dbgen.New(pool)
 	trips := newTrips(t, pool)
 	member := newMember(t, q)
-	since := origin(t, q)
-	since.Identity = "pg:1"
-	if _, err := trips.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: since, Limit: 10}); !errors.Is(err, store.ErrSyncWindowExpired) {
-		t.Fatalf("changes with a foreign token: %v", err)
+	vehicle := insertVehicle(t, q, member, nil)
+	for i := range 3 {
+		if _, err := q.UpsertTrip(t.Context(), tripParams(member, vehicle, newID(), "completed", time.Date(2026, 10, 1+i, 8, 0, 0, 0, time.UTC))); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := trips.ListTripDeletions(t.Context(), member, store.TripDeletionsQuery{Since: since, Limit: 10}); !errors.Is(err, store.ErrSyncWindowExpired) {
-		t.Fatalf("deletions with a foreign token: %v", err)
+	sysID := ""
+	if id, err := q.SystemIdentifier(t.Context()); err == nil {
+		sysID = strconv.FormatInt(id, 10)
+	}
+	ok := origin(t, q)
+	if _, err := trips.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: ok, Limit: 10}); err != nil {
+		t.Fatalf("own token: %v", err)
+	}
+	foreign := map[string]string{
+		"other cluster":       db.DeploymentIdentity("1", "test-deployment"),
+		"other deployment id": db.DeploymentIdentity(sysID, "test-deployment-restored"),
+		"legacy format":       "pg:" + sysID,
+	}
+	for name, id := range foreign {
+		since := ok
+		since.Identity = id
+		if _, err := trips.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: since, Limit: 10}); !errors.Is(err, store.ErrDeploymentChanged) || !errors.Is(err, store.ErrSyncWindowExpired) {
+			t.Errorf("%s: changes: %v, want ErrDeploymentChanged", name, err)
+		}
+		if _, err := trips.ListTripDeletions(t.Context(), member, store.TripDeletionsQuery{Since: since, Limit: 10}); !errors.Is(err, store.ErrDeploymentChanged) {
+			t.Errorf("%s: deletions: %v, want ErrDeploymentChanged", name, err)
+		}
+		// Cursors: a later page of a walk begun under another identity.
+		if _, err := trips.ListTripHistory(t.Context(), member, store.TripHistoryQuery{Identity: id, After: &store.HistoryPos{StartedAt: time.Now(), ID: newID()}, Limit: 10}); !errors.Is(err, store.ErrDeploymentChanged) {
+			t.Errorf("%s: history cursor: %v, want ErrDeploymentChanged", name, err)
+		}
+		if _, err := trips.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: ok, Identity: id, After: &store.ChangePos{Xid: 1, ID: newID()}, Limit: 10}); !errors.Is(err, store.ErrDeploymentChanged) {
+			t.Errorf("%s: changes cursor: %v, want ErrDeploymentChanged", name, err)
+		}
+		if _, err := trips.ListTripDeletions(t.Context(), member, store.TripDeletionsQuery{Since: ok, Identity: id, After: &store.ChangePos{Xid: 1, ID: newID()}, Limit: 10}); !errors.Is(err, store.ErrDeploymentChanged) {
+			t.Errorf("%s: deletions cursor: %v, want ErrDeploymentChanged", name, err)
+		}
+	}
+	// The same database behind a store with another SYNC_DEPLOYMENT_ID
+	// (what operators set after a restore) rejects this store's tokens and
+	// cursors, and pages carry the identity they were read under.
+	restored, err := db.NewTrips(t.Context(), pool, "test-deployment-restored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restored.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: ok, Limit: 10}); !errors.Is(err, store.ErrDeploymentChanged) {
+		t.Errorf("restored store, old token: %v, want ErrDeploymentChanged", err)
+	}
+	page, err := trips.ListTripHistory(t.Context(), member, store.TripHistoryQuery{Snapshot: true, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Identity != ok.Identity || page.Snapshot.Identity != ok.Identity || len(ok.Identity) != 25 {
+		t.Fatalf("page identity %q, snapshot %q, want %q", page.Identity, page.Snapshot.Identity, ok.Identity)
+	}
+	after := store.HistoryPos{StartedAt: page.Trips[0].StartedAt, ID: page.Trips[0].ID}
+	if _, err := restored.ListTripHistory(t.Context(), member, store.TripHistoryQuery{Identity: page.Identity, After: &after, Limit: 10}); !errors.Is(err, store.ErrDeploymentChanged) {
+		t.Errorf("restored store, old history cursor: %v, want ErrDeploymentChanged", err)
+	}
+	if next, err := trips.ListTripHistory(t.Context(), member, store.TripHistoryQuery{Identity: page.Identity, After: &after, Limit: 10}); err != nil || len(next.Trips) != 2 {
+		t.Errorf("own history cursor: %d trips, %v", len(next.Trips), err)
+	}
+	if _, err := db.NewTrips(t.Context(), pool, ""); err == nil {
+		t.Error("NewTrips without a deployment id")
+	}
+}
+
+func TestDeploymentIdentity(t *testing.T) {
+	t.Parallel()
+	seen := map[string]string{}
+	for _, c := range [][2]string{{"1", "2x"}, {"12", "x"}, {"", "a"}, {"7311", "prod-1"}, {"7311", "prod-2"}, {"7312", "prod-1"}} {
+		id := db.DeploymentIdentity(c[0], c[1])
+		if len(id) != 25 || !strings.HasPrefix(id, "d1:") {
+			t.Errorf("DeploymentIdentity(%q, %q) = %q", c[0], c[1], id)
+		}
+		if prev, dup := seen[id]; dup {
+			t.Errorf("DeploymentIdentity(%q, %q) collides with %s", c[0], c[1], prev)
+		}
+		seen[id] = c[0] + "/" + c[1]
+		if db.DeploymentIdentity(c[0], c[1]) != id {
+			t.Error("not deterministic")
+		}
 	}
 }
 

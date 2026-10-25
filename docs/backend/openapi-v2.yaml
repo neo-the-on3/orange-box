@@ -73,13 +73,34 @@ info:
         later pages need only `cursor`. If `since` is sent with a `cursor`, it must be the walk's original `since`,
         or the response is `400`.
       - **Token contents.** The token is opaque to the app: base64url, integrity-protected with a server key (HMAC)
-        so it can't be forged or edited. It carries a format version, the deployment identity (the Postgres
-        cluster's `system_identifier` from `pg_control_system()`, or a configured deployment id where that isn't
-        readable), the issue time (`issuedAt`) and the watermark below. A token with a different version or
+        so it can't be forged or edited. It carries a format version, the deployment identity, the issue time
+        (`issuedAt`) and the watermark below. The deployment identity combines the Postgres cluster's
+        `system_identifier` (from `pg_control_system()`; left out where the database role can't read it) with a
+        configured deployment id that operators change after every database restore, point-in-time recovery or
+        branch reset. Page cursors carry the same identity. A token or cursor with a different version or
         deployment identity, or one that fails the integrity check, is rejected with `400`
         (`code=sync_window_expired`). That way a restore from backup, dump/restore or migration to a new cluster,
         where transaction ids mean something else, can never silently skip writes. Tokens are issued and read on
         the **primary** only, never on a read replica.
+      - **Why a token was rejected (`reason`).** A `sync_window_expired` problem carries a machine-readable
+        `reason`: `deployment_changed` when the token or cursor was issued under another deployment identity (the
+        database was restored or replaced since, and may have lost writes made after its restore point),
+        `purged` when tombstones it depends on were purged (see window expiry below), and `invalid` when it
+        fails to decode or verify (e.g. it was edited, belongs to another member, or the signing key was
+        rotated). Every reason means the same first step: a full `GET /v1/trips` walk without `since`. Clients
+        must treat an unknown or missing `reason` like `invalid`.
+      - **Recovery after `deployment_changed`.** Only for this reason, the app (1) does the full walk of
+        `GET /v1/trips` and stores its `nextSince`; (2) re-creates any local vehicle the server no longer
+        returns (`POST /v1/vehicles` with its `clientVehicleId`, which gives it a new server id) and points its
+        local trips at the new ids; (3) re-uploads, through `POST /v1/trips/batch` with fresh
+        `Idempotency-Key`s, every local trip whose `clientTripId` the full walk didn't return, except trips the
+        user deleted on this device; and (4) updates the local server `id` of each re-uploaded trip from the
+        batch result (a re-created trip gets a new server id). Re-uploading is safe: trips are keyed by
+        (member, `clientTripId`), so a trip the server still has comes back `unchanged` (or `updated` if the
+        local snapshot is newer), and a tombstone the server still has answers `trip_deleted`. Deletions
+        made after the restore point are lost with it: a trip deleted on another device in that window can
+        come back. For `purged` and `invalid` the app must not re-upload: it drops local trips the server no
+        longer returns, because they may have been deleted elsewhere.
       - The token is a **commit-ordered watermark**, captured when the walk's first page is served and carried in
         the cursor. Reference implementation (Postgres): every trip row and tombstone stores the id of the
         transaction that last wrote it (`pg_current_xact_id()`), and the token holds
@@ -104,8 +125,8 @@ info:
         and the highest writer transaction id among the purged tombstones. A token is accepted only if its
         `issuedAt` is after the boundary's `deletedAt` **and** its watermark is above the boundary's transaction
         id, i.e. no tombstone the app might not have seen yet has been purged. Otherwise both endpoints answer
-        `400` (`code=sync_window_expired`). The app then does a full `GET /v1/trips` without `since` and drops
-        local trips the server no longer returns. A token never expires just because of its age while nothing
+        `400` (`code=sync_window_expired`, `reason=purged`). The app then does a full `GET /v1/trips` without
+        `since` and drops local trips the server no longer returns. A token never expires just because of its age while nothing
         it depends on has been purged.
     * **Rate limits**: every response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds),
       set by middleware (declared explicitly only on a few operations to keep the document readable). Every
@@ -1600,6 +1621,10 @@ components:
             properties:
               pointer: {type: string, description: 'JSON Pointer (RFC 6901) into the request body'}
               detail: {type: string}
+        reason:
+          type: string
+          description: 'Why the request failed, where `code` alone is not enough. With `code=sync_window_expired`: `deployment_changed` (the database was restored or replaced; full sync, then re-upload local trips the server lost, see Incremental sync), `purged` (tombstones the token needed were purged) or `invalid` (the token or cursor does not verify). New values may be added; treat unknown ones like `invalid`.'
+          examples: [deployment_changed, purged, invalid]
     Health:
       type: object
       required: [status, apiVersion, time]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,13 @@ import (
 // issued by another deployment (a restore or a new cluster), or a tombstone
 // it might still need has been purged. The client does a full resync.
 var ErrSyncWindowExpired = errors.New("store: sync window expired")
+
+// ErrDeploymentChanged is the ErrSyncWindowExpired of a token or cursor
+// issued under another deployment identity (system_identifier or
+// SYNC_DEPLOYMENT_ID differ): the database was restored, reset or
+// replaced since, and may have lost writes the client made after the
+// restore point.
+var ErrDeploymentChanged = fmt.Errorf("%w: deployment changed", ErrSyncWindowExpired)
 
 // SyncPoint is what a sync token carries (openapi-v2.yaml, Conventions →
 // Incremental sync).
@@ -44,7 +52,10 @@ type TripChangesQuery struct {
 	Snapshot bool
 	// After is the previous page's last item (nil on the first page).
 	After *ChangePos
-	Limit int
+	// Identity is the deployment identity the walk's cursor was issued
+	// under ("" on the first page); another one is ErrSyncWindowExpired.
+	Identity string
+	Limit    int
 }
 
 // TripDeletionsQuery asks for one page of a GET /v1/trips/deletions walk.
@@ -52,6 +63,7 @@ type TripDeletionsQuery struct {
 	Since    SyncPoint
 	Snapshot bool
 	After    *ChangePos
+	Identity string // as in TripChangesQuery
 	Limit    int
 }
 
@@ -119,12 +131,16 @@ type TripDeletion struct {
 type TripPage struct {
 	Trips    []Trip
 	Snapshot *SyncPoint
+	// Identity is the deployment identity the page was read under; a
+	// cursor to the next page carries it.
+	Identity string
 }
 
 // TripDeletionPage is one page of trip tombstones.
 type TripDeletionPage struct {
 	Deletions []TripDeletion
 	Snapshot  *SyncPoint
+	Identity  string
 }
 
 // HistoryPos is a position in history order (startedAt desc, id desc); a
@@ -143,6 +159,7 @@ type TripHistoryQuery struct {
 	// first page of an unfiltered walk, which ends with nextSince).
 	Snapshot bool
 	After    *HistoryPos
+	Identity string // as in TripChangesQuery
 	Limit    int
 }
 

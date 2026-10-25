@@ -28,14 +28,16 @@ import (
 // Format versions. A token or cursor with another version is invalid.
 const (
 	tokenVersion  byte = 1
-	cursorVersion byte = 1
+	cursorVersion byte = 2 // 2: the cursor carries the deployment identity
 )
 
 // MinKeyLen is the shortest accepted secret (SYNC_TOKEN_KEY), in bytes.
 const MinKeyLen = 32
 
-// maxIdentity bounds the deployment identity, so tokens stay well under
-// the spec's 512-character limit.
+// maxIdentity bounds the deployment identity, so tokens and cursors stay
+// well under the spec's 512-character limit. The store's identity is a
+// 25-character digest of the cluster's system_identifier and
+// SYNC_DEPLOYMENT_ID (db.Trips).
 const maxIdentity = 80
 
 // ErrInvalid means a token or cursor failed to decode or verify. It never
@@ -129,6 +131,9 @@ const (
 // Cursor is a decoded page cursor.
 type Cursor struct {
 	Kind Kind
+	// Identity is the deployment identity the page was read under. The
+	// next page must be read under the same one.
+	Identity string
 	// Filter is a hash of a history walk's filters (zero otherwise).
 	Filter [16]byte
 	// Since is the token a Changes or Deletions walk started from.
@@ -144,6 +149,7 @@ type Cursor struct {
 // Cursor returns the cursor for cur, bound to member.
 func (c *Codec) Cursor(member uuid.UUID, cur Cursor) string {
 	b := []byte{byte(cur.Kind)}
+	b = appendString(b, cur.Identity)
 	b = append(b, cur.Filter[:]...)
 	b = appendOptPoint(b, cur.Since)
 	b = appendOptPoint(b, cur.Next)
@@ -166,6 +172,7 @@ func (c *Codec) ParseCursor(member uuid.UUID, s string) (Cursor, error) {
 	r := reader{b: payload}
 	var cur Cursor
 	cur.Kind = Kind(r.byte())
+	cur.Identity = r.string()
 	copy(cur.Filter[:], r.take(16))
 	cur.Since = r.optPoint()
 	cur.Next = r.optPoint()
@@ -256,4 +263,21 @@ func (r *reader) optPoint() *store.SyncPoint {
 		r.bad = true
 		return nil
 	}
+}
+
+func appendString(b []byte, s string) []byte {
+	if len(s) > maxIdentity {
+		s = s[:maxIdentity] // never the case for identities the store makes
+	}
+	b = append(b, byte(len(s))) //nolint:gosec // len(s) <= maxIdentity < 256
+	return append(b, s...)
+}
+
+func (r *reader) string() string {
+	n := int(r.byte())
+	if n > maxIdentity {
+		r.bad = true
+		return ""
+	}
+	return string(r.take(n))
 }
