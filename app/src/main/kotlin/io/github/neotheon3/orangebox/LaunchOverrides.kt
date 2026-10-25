@@ -21,6 +21,8 @@ object LaunchExtras {
     const val DEMO_TRIPS = "demo_trips"
     /** Debug only: `off`/`on` sets the trip-map tile switch (CI smoke runs with tiles off: no automated OSM traffic). */
     const val MAP_TILES = "map_tiles"
+    /** Debug only: `metric` stores km, km/L and °C (the CI emulator's US SIM would otherwise default to mph and °F). */
+    const val UNITS = "units"
 
     enum class Onboarding { SKIP, RESET }
 
