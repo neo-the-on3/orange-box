@@ -49,6 +49,7 @@ data class SettingsUiState(
     /** Display units in effect (#58): the user's choice, else the country's defaults. */
     val units: io.github.neotheon3.orangebox.core.model.UnitPreferences = io.github.neotheon3.orangebox.core.model.UnitPreferences(),
     val alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences = io.github.neotheon3.orangebox.core.model.AlertPreferences(),
+    val crash: CrashSettingsState = CrashSettingsState(),
 )
 
 /** The "Driving dashboard" section. */
@@ -98,7 +99,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** The sections M7/M8 added, all from AppPreferences, as a partial state merged below. */
-    private val general = prefs.preferences.map { p -> SettingsUiState(units = country.units(p), alerts = p.alerts) }.distinctUntilChanged()
+    private val contactDraft = MutableStateFlow<String?>(null)
+    private val contactError = MutableStateFlow(false)
+
+    private val general = combine(prefs.preferences, contactDraft, contactError) { p, draft, error ->
+        SettingsUiState(units = country.units(p), alerts = p.alerts, crash = CrashSettingsState(p.crash, draft, error))
+    }.distinctUntilChanged()
 
     private val backend = combine(repository.config, urlDraft, urlResult) { config, draft, result -> Triple(config, draft, result) }
 
@@ -120,6 +126,61 @@ class SettingsViewModel @Inject constructor(
 
     fun onAlertsChanged(alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences) {
         viewModelScope.launch { prefs.setAlerts(alerts) }
+    }
+
+    /** Crash detection on/off, threshold and countdown; the contact is kept as stored. */
+    fun onCrashChanged(crash: io.github.neotheon3.orangebox.core.model.CrashPreferences) {
+        viewModelScope.launch {
+            val stored = prefs.preferences.first().crash
+            prefs.setCrash(crash.copy(contactNumber = stored.contactNumber, contactName = stored.contactName))
+        }
+    }
+
+    fun onEditContact() {
+        viewModelScope.launch { contactDraft.value = prefs.preferences.first().crash.contactNumber.orEmpty() }
+        contactError.value = false
+    }
+
+    fun onContactDraftChanged(value: String) {
+        contactDraft.value = value.filter { it.isDigit() || it in "+ -()./" }.take(24)
+        contactError.value = false
+    }
+
+    fun onCancelContact() {
+        contactDraft.value = null
+        contactError.value = false
+    }
+
+    /** Saves the typed number if it is usable (#60); otherwise keeps the field open with an error. */
+    fun onSaveContact() {
+        val number = io.github.neotheon3.orangebox.core.model.CrashPreferences.normalizeContactNumber(contactDraft.value)
+        if (number == null) {
+            contactError.value = true
+            return
+        }
+        setContact(number, name = null)
+        contactDraft.value = null
+    }
+
+    /** A number from the system contact picker; null when nothing usable came back. */
+    fun onContactPicked(contact: PickedContact?) {
+        contactDraft.value = null
+        val number = io.github.neotheon3.orangebox.core.model.CrashPreferences.normalizeContactNumber(contact?.number)
+        if (number == null) {
+            contactError.value = contact != null
+            return
+        }
+        setContact(number, contact?.name)
+    }
+
+    fun onClearContact() = setContact(null, null)
+
+    private fun setContact(number: String?, name: String?) {
+        contactError.value = false
+        viewModelScope.launch {
+            val crash = prefs.preferences.first().crash
+            prefs.setCrash(crash.copy(contactNumber = number, contactName = name))
+        }
     }
 
     fun onAutoStartChanged(enabled: Boolean) {

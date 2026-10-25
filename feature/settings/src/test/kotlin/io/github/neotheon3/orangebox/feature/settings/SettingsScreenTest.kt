@@ -2,6 +2,8 @@ package io.github.neotheon3.orangebox.feature.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -134,5 +136,35 @@ class SettingsScreenTest {
         compose.onNodeWithTag("settings_alert_idling").performScrollTo().assertIsOff().performClick()
         compose.onNodeWithTag("settings_alert_voice").performScrollTo().assertIsOff().performClick()
         assertEquals(listOf(d.copy(overspeed = false), d.copy(idling = true), d.copy(voice = true)), changed)
+    }
+
+    @Test fun `crash section toggles detection and edits the emergency contact (#60)`() {
+        val events = mutableListOf<String>()
+        var crash: io.github.neotheon3.orangebox.core.model.CrashPreferences? = null
+        val actions = CrashSettingsActions(
+            onChanged = { crash = it }, onPickContact = { events += "pick" }, onEditContact = { events += "edit" },
+            onSaveContact = { events += "save" }, onClearContact = { events += "clear" },
+        )
+        var state by androidx.compose.runtime.mutableStateOf(
+            CrashSettingsState(io.github.neotheon3.orangebox.core.model.CrashPreferences(contactNumber = "+919876543210", contactName = "Asha")),
+        )
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(crash = state), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                    actions = SettingsActions(crash = actions),
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_crash_contact").performScrollTo().assertTextContains("Asha · +919876543210", substring = true)
+        compose.onNodeWithTag("settings_crash_contact_pick").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_crash_contact_edit").performClick()
+        compose.onNodeWithTag("settings_crash_contact_clear").performScrollTo().performClick()
+        compose.onNodeWithTag("settings_crash_detection").performScrollTo().assertIsOn().performClick()
+        assertEquals(false, crash?.detectionEnabled)
+        state = state.copy(contactDraft = "12", contactError = true)
+        compose.onNodeWithTag("settings_crash_contact_field").performScrollTo().assertTextContains("Use 3–15 digits", substring = true)
+        compose.onNodeWithTag("settings_crash_contact_save").performScrollTo().performClick()
+        assertEquals(listOf("pick", "edit", "clear", "save"), events)
     }
 }

@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.neotheon3.orangebox.core.model.BackendMode
 import io.github.neotheon3.orangebox.core.model.BaseUrlValidator
@@ -54,6 +55,15 @@ fun SettingsRoute(
     val apps by viewModel.launchableApps.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     RefreshOnResume(viewModel::refreshFullScreen)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val pickContact = androidx.activity.compose.rememberLauncherForActivityResult(PickPhoneNumber()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val picked = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { PickedContactReader.read(context, uri) }
+                viewModel.onContactPicked(picked ?: PickedContact(null, ""))
+            }
+        }
+    }
     SettingsScreen(
         state = state,
         onBack = onBack,
@@ -79,6 +89,18 @@ fun SettingsRoute(
         actions = SettingsActions(
             onUnitsChanged = viewModel::onUnitsChanged,
             onAlertsChanged = viewModel::onAlertsChanged,
+            crash = CrashSettingsActions(
+                onChanged = viewModel::onCrashChanged,
+                onPickContact = {
+                    // No contacts app to pick from: type the number instead.
+                    runCatching { pickContact.launch(Unit) }.onFailure { viewModel.onEditContact() }
+                },
+                onEditContact = viewModel::onEditContact,
+                onContactDraftChanged = viewModel::onContactDraftChanged,
+                onSaveContact = viewModel::onSaveContact,
+                onCancelContact = viewModel::onCancelContact,
+                onClearContact = viewModel::onClearContact,
+            ),
         ),
     )
 }
@@ -87,6 +109,7 @@ fun SettingsRoute(
 data class SettingsActions(
     val onUnitsChanged: (io.github.neotheon3.orangebox.core.model.UnitPreferences) -> Unit = {},
     val onAlertsChanged: (io.github.neotheon3.orangebox.core.model.AlertPreferences) -> Unit = {},
+    val crash: CrashSettingsActions = CrashSettingsActions(),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -205,6 +228,8 @@ fun SettingsScreen(
             UnitsSettingsSection(state.units, actions.onUnitsChanged)
             HorizontalDivider()
             AlertsSettingsSection(state.alerts, actions.onAlertsChanged)
+            HorizontalDivider()
+            CrashSettingsSection(state.crash, actions.crash)
             HorizontalDivider()
             Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
             Text(

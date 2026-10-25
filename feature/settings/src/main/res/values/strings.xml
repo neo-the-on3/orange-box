@@ -72,4 +72,27 @@
     <string name="settings_alert_sound_summary">Short tones made for Orange Box, played over your music</string>
     <string name="settings_alert_voice">Speak alerts</string>
     <string name="settings_alert_voice_summary">Uses your phone\'s text-to-speech engine</string>
+
+    <string name="settings_crash_section">Crash detection</string>
+    <string name="settings_crash_detection">Detect crashes while driving</string>
+    <string name="settings_crash_detection_summary">After a hard impact, a countdown asks if you are OK. Nothing is called or sent unless you tap it; at the end only your dialer opens.</string>
+    <string name="settings_crash_sensitivity">Impact threshold</string>
+    <string name="settings_crash_threshold_value">%1$.1f g</string>
+    <string name="settings_crash_sensitivity_high">Very sensitive: hard braking or potholes may trigger it</string>
+    <string name="settings_crash_sensitivity_normal">Normal</string>
+    <string name="settings_crash_sensitivity_low">Less sensitive: only severe impacts</string>
+    <string name="settings_crash_countdown">Countdown</string>
+    <string name="settings_crash_countdown_value">%1$d s</string>
+    <string name="settings_crash_countdown_summary">Time to cancel before the dialer opens</string>
+    <string name="settings_crash_contact">Emergency contact</string>
+    <string name="settings_crash_contact_none">None: the SMS app opens without a recipient</string>
+    <string name="settings_crash_contact_pick">Choose contact</string>
+    <string name="settings_crash_contact_enter">Enter number</string>
+    <string name="settings_crash_contact_clear">Remove contact</string>
+    <string name="settings_crash_contact_number">Phone number</string>
+    <string name="settings_crash_contact_help">With country code, e.g. +91 98765 43210</string>
+    <string name="settings_crash_contact_invalid">Use 3–15 digits, optionally starting with +</string>
+    <string name="settings_crash_contact_picked_invalid">That contact has no usable phone number</string>
+    <string name="settings_crash_contact_save">Save</string>
+    <string name="settings_crash_contact_privacy">Only the number you choose is read; Orange Box cannot see your other contacts.</string>
 </resources>

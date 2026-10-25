@@ -29,6 +29,10 @@ class FakeAppPreferencesRepository(initial: AppPreferences = AppPreferences()) :
             crash = crash.copy(
                 thresholdG = io.github.neotheon3.orangebox.core.model.CrashPreferences.clampThreshold(crash.thresholdG),
                 countdownSeconds = io.github.neotheon3.orangebox.core.model.CrashPreferences.clampCountdown(crash.countdownSeconds),
+                contactNumber = io.github.neotheon3.orangebox.core.model.CrashPreferences.normalizeContactNumber(crash.contactNumber),
+                contactName = crash.contactName?.trim()?.takeIf {
+                    it.isNotEmpty() && io.github.neotheon3.orangebox.core.model.CrashPreferences.normalizeContactNumber(crash.contactNumber) != null
+                },
             ),
         )
     }

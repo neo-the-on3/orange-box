@@ -96,4 +96,18 @@ class AppPreferencesRepositoryTest {
         repo.setAlerts(changed)
         assertEquals(changed, repo.preferences.first().alerts)
     }
+
+    @Test fun `emergency contact is stored normalized and an invalid one is dropped (#60)`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = DataStoreAppPreferencesRepository(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("c.preferences_pb").also { it.delete() } },
+        )
+        val base = io.github.neotheon3.orangebox.core.model.CrashPreferences()
+        assertEquals(null, repo.preferences.first().crash.contactNumber)
+        repo.setCrash(base.copy(contactNumber = "+91 98765 43210", contactName = " Asha "))
+        assertEquals("+919876543210", repo.preferences.first().crash.contactNumber)
+        assertEquals("Asha", repo.preferences.first().crash.contactName)
+        repo.setCrash(base.copy(contactNumber = "not a number", contactName = "Asha"))
+        assertEquals(null, repo.preferences.first().crash.contactNumber)
+        assertEquals("no name without a number", null, repo.preferences.first().crash.contactName)
+    }
 }

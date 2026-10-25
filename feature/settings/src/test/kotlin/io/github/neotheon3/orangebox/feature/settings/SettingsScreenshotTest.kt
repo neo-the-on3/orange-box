@@ -41,4 +41,18 @@ class SettingsScreenshotTest {
     @Test fun unitsDark() = shot("settings_units_dark", dark = true) { UnitsSettingsSection(UnitPreferences()) {} }
 
     @Test fun alerts() = shot("settings_alerts") { AlertsSettingsSection(io.github.neotheon3.orangebox.core.model.AlertPreferences()) {} }
+
+    @Test fun crash() = shot("settings_crash") {
+        CrashSettingsSection(
+            CrashSettingsState(io.github.neotheon3.orangebox.core.model.CrashPreferences(contactNumber = "+919876543210", contactName = "Asha")),
+            CrashSettingsActions(),
+        )
+    }
+
+    @Test fun crashContactEntry() = shot("settings_crash_contact_entry", dark = true) {
+        CrashSettingsSection(
+            CrashSettingsState(io.github.neotheon3.orangebox.core.model.CrashPreferences(detectionEnabled = false), contactDraft = "12", contactError = true),
+            CrashSettingsActions(),
+        )
+    }
 }

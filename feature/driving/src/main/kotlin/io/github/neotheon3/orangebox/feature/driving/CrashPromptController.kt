@@ -55,7 +55,12 @@ class CrashPromptController(
     val targets: StateFlow<EmergencyTargets> = prefs.map { p -> targetsOf(p) }
         .stateIn(scope, SharingStarted.Eagerly, EmergencyTargets(EMERGENCY_NUMBER))
 
-    private fun targetsOf(p: AppPreferences) = EmergencyTargets(emergencyNumber(p))
+    /** Dial the dashboard's emergency number; text the emergency contact from Settings (#60), if any. */
+    private fun targetsOf(p: AppPreferences) = EmergencyTargets(
+        dialNumber = emergencyNumber(p),
+        smsNumber = p.crash.contactNumber,
+        smsName = p.crash.contactNumber?.let { p.crash.contactName ?: it },
+    )
 
     fun cancel() = monitor.cancel()
 
