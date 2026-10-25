@@ -32,7 +32,7 @@ data class PollingConfig(
      * what is left of it, so a slow dongle runs ticks back to back instead of adding a fixed pause.
      */
     val fastIntervalMillis: Long = 500,
-    /** Each slow PID is read once every [slowEvery] ticks; slow PIDs are spread over the ticks (#193). */
+    /** Each slow PID is read once every [slowEvery] rounds of the secondary PIDs; spread over the rounds (#193). */
     val slowEvery: Int = 10,
     /**
      * Read first on every tick, and the sample is published right after them, so the dashboard's speed and
@@ -53,8 +53,18 @@ data class PollingConfig(
         ObdPid.BAROMETRIC_PRESSURE, ObdPid.SHORT_FUEL_TRIM_1, ObdPid.LONG_FUEL_TRIM_1, ObdPid.FUEL_PRESSURE,
         ObdPid.DISTANCE_WITH_MIL, ObdPid.O2_B1S1_VOLTAGE,
     ),
-    /** Read MIL state + DTC count (PID 01 01) every [slowEvery] ticks when supported. */
+    /** Read MIL state + DTC count (PID 01 01) once every [slowEvery] rounds when supported. */
     val monitorStatus: Boolean = true,
+    /**
+     * A value that fails this many reads in a row (NO DATA) is dropped from the sample instead of being repeated
+     * (RDF1 drive 2: with the ignition off the ECU went silent and the last idle rpm and MAF were repeated for
+     * 3.6 h, so the trip never ended and billed ~1 L/h of "idle" fuel).
+     */
+    val dropAfterMisses: Int = 2,
+    /** Every read failing for this many ticks in a row means the ECU is silent (ignition off): see [silentIntervalMillis]. */
+    val silentAfterTicks: Int = 3,
+    /** While the ECU is silent only the priority PIDs are tried, once per this period, until one answers. */
+    val silentIntervalMillis: Long = 2_000,
     /** How often `polling_stats` is logged (connection log), ms of sample time. 0 = never. */
     val statsIntervalMillis: Long = 30_000,
 )
@@ -65,8 +75,16 @@ data class PollingConfig(
  * the connection leaves Connected and restarts (with a fresh bitmap read) on the next Connected.
  *
  * Tick order (#193): the [PollingConfig.priority] PIDs (speed, rpm) first, then the sample is emitted,
- * then the other fast PIDs and this tick's share of the slow PIDs, then a sleep for the rest of the period.
- * The very first tick reads everything before its sample so no value starts out missing.
+ * then as many secondary reads as fit in the rest of the period, then a sleep for whatever is left.
+ * Secondary reads take turns from a round: the other fast PIDs plus that round's share of the slow PIDs.
+ * A quick dongle finishes a whole round every tick; a slow one (RDF1 drive 2: ~125 ms per request, so a full
+ * round is ~0.9 s) spreads it over a few ticks, and speed and rpm still refresh every period.
+ * The very first tick reads the whole first round before its sample so no value starts out missing.
+ *
+ * A PID that fails [PollingConfig.dropAfterMisses] reads in a row is dropped from the sample, and when
+ * every read fails for [PollingConfig.silentAfterTicks] ticks the ECU is treated as silent (ignition off):
+ * the values are cleared, only speed and rpm are tried every [PollingConfig.silentIntervalMillis], and
+ * `ecu_silent` / `ecu_awake` go to the connection log.
  */
 class PidPoller(
     private val connection: ObdConnection,
@@ -82,11 +100,21 @@ class PidPoller(
     @Volatile var activePids: Set<ObdPid> = emptySet()
         private set
 
-    /** Slow PIDs (and the monitor read) due on [tick]: slow PID `i` on ticks where `tick % slowEvery == i % slowEvery`. */
-    internal fun slowDue(slow: List<ObdPid>, tick: Long): List<ObdPid> {
-        val phase = (tick % config.slowEvery).toInt()
+    /** Slow PIDs due in round [round]: slow PID `i` in rounds where `round % slowEvery == i % slowEvery`. */
+    internal fun slowDue(slow: List<ObdPid>, round: Long): List<ObdPid> {
+        val phase = (round % config.slowEvery).toInt()
         return slow.filterIndexed { i, _ -> i % config.slowEvery == phase }
     }
+
+    /** One round of secondary reads: the non-priority fast PIDs, then round [round]'s share of the slow PIDs. */
+    private sealed interface Item {
+        data class Pid(val pid: ObdPid) : Item
+        data object Monitor : Item
+    }
+
+    private fun round(rest: List<ObdPid>, slow: List<ObdPid>, readMonitor: Boolean, round: Long): List<Item> =
+        rest.map { Item.Pid(it) } + slowDue(slow, round).map { Item.Pid(it) } +
+            if (readMonitor && round % config.slowEvery == 0L) listOf(Item.Monitor) else emptyList()
 
     private fun pollSession(): Flow<VehicleSample> = flow {
         val supported = connection.withSession { it.readSupportedPids() } ?: return@flow
@@ -101,38 +129,88 @@ class PidPoller(
             "period_ms" to config.fastIntervalMillis,
         )
         val values = LinkedHashMap<ObdPid, Double>()
+        val misses = HashMap<ObdPid, Int>()
         val readMonitor = config.monitorStatus && MONITOR_STATUS_PID in supported
         var monitor: MonitorStatus? = null
         val stats = PollingStats(clock())
         var tick = 0L
+        var roundNo = 0L
+        var pending = ArrayDeque(round(rest, slow, readMonitor, roundNo))
+        val roundCap = (rest.size + (slow.size + config.slowEvery - 1) / config.slowEvery + if (readMonitor) 1 else 0).coerceAtLeast(1)
+        var silentTicks = 0
+        var silent = false
+        var requestMsAvg = 0.0
         while (true) {
             val tickStart = clock()
-            val slowNow = slowDue(slow, tick)
-            val monitorNow = readMonitor && tick % config.slowEvery == 0L
             var sampledAt = tickStart
+            var answered = 0
             suspend fun Elm327Session.timedRead(pid: ObdPid) {
                 val t0 = clock()
                 if (pid == ObdPid.SPEED) sampledAt = t0
-                read(pid)?.let { values[pid] = it }
-                stats.request(clock() - t0)
+                val v = read(pid)
+                if (v != null) {
+                    values[pid] = v; misses.remove(pid); answered++
+                } else {
+                    val n = (misses[pid] ?: 0) + 1
+                    misses[pid] = n
+                    if (n >= config.dropAfterMisses) values.remove(pid)
+                }
+                val ms = clock() - t0
+                stats.request(ms)
+                requestMsAvg = if (requestMsAvg == 0.0) ms.toDouble() else requestMsAvg * 0.8 + ms * 0.2
+            }
+            suspend fun Elm327Session.readItem(item: Item) {
+                when (item) {
+                    is Item.Pid -> timedRead(item.pid)
+                    Item.Monitor -> readMonitorStatus()?.let { monitor = it; answered++ }
+                }
+            }
+            /** Secondary reads for this tick: at least one, then while another fits in the period; at most a round's worth. */
+            suspend fun Elm327Session.secondaries(first: Boolean) {
+                if (first) {
+                    while (pending.isNotEmpty()) readItem(pending.removeFirst())
+                    return
+                }
+                var n = 0
+                while (n < roundCap) {
+                    if (pending.isEmpty()) pending = ArrayDeque(round(rest, slow, readMonitor, ++roundNo))
+                    if (pending.isEmpty()) break
+                    if (n > 0 && clock() - tickStart + requestMsAvg > config.fastIntervalMillis) break
+                    readItem(pending.removeFirst())
+                    n++
+                }
             }
             val ok = try {
                 connection.withSession { s ->
                     priority.forEach { s.timedRead(it) }
-                    if (tick == 0L) {
-                        (rest + slowNow).forEach { s.timedRead(it) }
-                        if (monitorNow) s.readMonitorStatus()?.let { monitor = it }
-                        emit(VehicleSample(sampledAt, values.toMap(), monitor))
-                    } else {
-                        emit(VehicleSample(sampledAt, values.toMap(), monitor))
-                        (rest + slowNow).forEach { s.timedRead(it) }
-                        if (monitorNow) s.readMonitorStatus()?.let { monitor = it }
+                    when {
+                        silent && priority.isNotEmpty() -> emit(VehicleSample(sampledAt, values.toMap(), monitor))
+                        tick == 0L -> {
+                            s.secondaries(first = true)
+                            emit(VehicleSample(sampledAt, values.toMap(), monitor))
+                        }
+                        else -> {
+                            emit(VehicleSample(sampledAt, values.toMap(), monitor))
+                            s.secondaries(first = false)
+                        }
                     }
                 } != null
             } catch (e: ObdError) {
                 false // link failure: the connection manager notices and leaves Connected
             }
             if (!ok) return@flow
+            if (answered == 0) {
+                silentTicks++
+                if (!silent && silentTicks >= config.silentAfterTicks) {
+                    silent = true
+                    values.clear(); monitor = null
+                    OrangeLog.i(OrangeLog.Areas.TELEMETRY, "ecu_silent", "ticks" to silentTicks, "retry_ms" to config.silentIntervalMillis)
+                }
+            } else {
+                if (silent) OrangeLog.i(OrangeLog.Areas.TELEMETRY, "ecu_awake", "silent_ticks" to silentTicks)
+                silent = false
+                silentTicks = 0
+            }
             val elapsed = clock() - tickStart
             stats.tick(sampledAt, elapsed)
             if (config.statsIntervalMillis > 0 && clock() - stats.since >= config.statsIntervalMillis) {
@@ -140,7 +218,7 @@ class PidPoller(
                 stats.reset(clock())
             }
             tick++
-            delay((config.fastIntervalMillis - elapsed).coerceAtLeast(0))
+            delay(((if (silent) config.silentIntervalMillis else config.fastIntervalMillis) - elapsed).coerceAtLeast(0))
         }
     }
 

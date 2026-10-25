@@ -134,6 +134,7 @@ class Elm327SessionTest {
         assertEquals(14.1, Elm327Session.parseVoltage("14.1")!!, 0.0)
         assertNull(Elm327Session.parseVoltage("1#.4V"))
         assertNull(Elm327Session.parseVoltage("?"))
+        assertNull("adapter glitch seen on the SX4", Elm327Session.parseVoltage("0.7\r\r"))
     }
 
     @Test fun `protocol from ATDPN`() {

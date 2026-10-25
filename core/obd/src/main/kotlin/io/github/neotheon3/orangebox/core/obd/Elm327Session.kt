@@ -199,11 +199,15 @@ class Elm327Session(
             .filter { it.isNotEmpty() && !it.equals(cmd, ignoreCase = true) && !it.startsWith("SEARCHING", ignoreCase = true) }
             .joinToString("\n")
 
+        const val MIN_PLAUSIBLE_VOLTS = 5.0
+
         fun parseVoltage(raw: String): Double? =
             Regex("""^\s*(\d{1,2}(?:\.\d{1,2})?)\s*V?\s*$""", RegexOption.IGNORE_CASE)
                 .find(raw.lines().firstOrNull { it.isNotBlank() }.orEmpty())
                 ?.groupValues?.get(1)?.toDoubleOrNull()
-                ?.takeIf { it in 0.0..30.0 }
+                // An ELM327 can't run below ~5 V, so lower readings are glitches (RDF1 drive 2: "0.7" now and then
+                // between 13.1 V readings); they are ignored rather than shown as the battery voltage.
+                ?.takeIf { it in MIN_PLAUSIBLE_VOLTS..30.0 }
 
         /** Parses `41 0C 1A F8` style lines (spaces optional). Null unless the header matches and enough bytes follow. */
         fun parseResponse(raw: String, mode: Int, pid: Int, minBytes: Int): IntArray? {
