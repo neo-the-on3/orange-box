@@ -41,11 +41,13 @@ tap_until text "Start using Orange Box" "Backend:" onboarding-home || fail "Onbo
 adb logcat -d | grep -q "onboarding_complete" || fail "onboarding_complete log line missing"
 adb shell am force-stop "$PKG"
 
-# 1) Launch with backend_mode=off
-adb shell am start -W -n "$PKG/$ACTIVITY" --es backend_mode off
+# 1) Launch with backend_mode=off; units pinned to metric, since units follow the emulator's US SIM (#58)
+#    and the smoke steps read km/h, °C and km/L.
+adb shell am start -W -n "$PKG/$ACTIVITY" --es backend_mode off --es units metric
 wait_for_text "Backend: Off" home-off || fail "Home did not show 'Backend: Off'"
 shot 01-home-backend-off
 adb logcat -d | grep -q "backend_mode override applied: off" || fail "override log line missing"
+adb logcat -d | grep -q "units override applied: metric" || fail "units override log line missing"
 
 # 2) Relaunch with fake, check the override takes effect
 adb shell am force-stop "$PKG"

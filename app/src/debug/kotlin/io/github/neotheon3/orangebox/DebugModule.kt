@@ -14,7 +14,7 @@ import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Debug-only: honours `--es backend_mode off|fake|remote`, `--es onboarding skip|reset` and `--es demo_trips seed`, `--es map_tiles off|on`. */
+/** Debug-only: honours `--es backend_mode off|fake|remote`, `--es onboarding skip|reset` and `--es demo_trips seed`, `--es map_tiles off|on`, `--es units metric`. */
 @Singleton
 class DebugLaunchOverrides @Inject constructor(
     private val backendConfigRepository: BackendConfigRepository,
@@ -30,6 +30,10 @@ class DebugLaunchOverrides @Inject constructor(
         when (intent?.getStringExtra(LaunchExtras.MAP_TILES)) {
             "off" -> runBlocking { appPreferences.setMapTilesEnabled(false) }.also { Log.i(TAG, "map_tiles override applied: off") }
             "on" -> runBlocking { appPreferences.setMapTilesEnabled(true) }.also { Log.i(TAG, "map_tiles override applied: on") }
+        }
+        if (intent?.getStringExtra(LaunchExtras.UNITS) == "metric") {
+            runBlocking { appPreferences.setUnits(io.github.neotheon3.orangebox.core.model.UnitPreferences()) }
+            Log.i(TAG, "units override applied: metric")
         }
         val raw = intent?.getStringExtra(LaunchExtras.BACKEND_MODE) ?: return null
         val mode = LaunchExtras.resolveBackendMode(raw)
