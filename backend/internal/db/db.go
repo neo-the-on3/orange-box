@@ -36,7 +36,16 @@ type Options struct {
 	// data migration isn't killed halfway, while lock_timeout still applies
 	// (#178).
 	ForMigrations bool
+	// Guard, if set, checks every new connection's cluster
+	// (ClusterGuard.AfterConnect).
+	Guard *ClusterGuard
 }
+
+// connMaxLifetime bounds how long a connection lives (with 10% jitter),
+// so after the endpoint is switched to another cluster, connections that
+// still reach the old one are replaced, and the guard notices the switch,
+// within it.
+const connMaxLifetime = 15 * time.Minute
 
 // Open connects a pool, applies the session defaults and pings the server.
 // It does not check the schema version; see CheckMigrated.
@@ -59,9 +68,17 @@ func Open(ctx context.Context, opts Options) (*pgxpool.Pool, error) {
 		cfg.MaxConns = int32(opts.MaxConns)
 	}
 	cfg.MaxConnIdleTime = 5 * time.Minute
+	cfg.MaxConnLifetime = connMaxLifetime
+	cfg.MaxConnLifetimeJitter = connMaxLifetime / 10
+	if opts.Guard != nil {
+		cfg.AfterConnect = opts.Guard.AfterConnect
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open database pool: %w", err)
+	}
+	if opts.Guard != nil {
+		opts.Guard.attach(pool)
 	}
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

@@ -3,6 +3,7 @@ package db_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -439,5 +440,28 @@ func TestTripsInstancesAgree(t *testing.T) {
 	}
 	if _, err := b.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: origin(t, q), Limit: 10}); err != nil {
 		t.Errorf("a token on another instance: %v", err)
+	}
+}
+
+// TestClusterGuardDefaultRead: with the real pg_control_system() read,
+// new connections to the same cluster pass the guard and keep serving.
+func TestClusterGuardDefaultRead(t *testing.T) {
+	t.Parallel()
+	guard := db.NewClusterGuard(db.ClusterGuardOptions{DeploymentID: "test-deployment"})
+	pool := dbtest.NewWith(t, db.Options{Guard: guard, MaxConns: 2})
+	trips, err := db.NewTripsWith(t.Context(), pool, db.TripsOptions{DeploymentID: "test-deployment", Guard: guard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := dbgen.New(pool)
+	member := newMember(t, q)
+	for range 3 {
+		pool.Reset()
+		if _, err := trips.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: origin(t, q), Limit: 1}); err != nil || guard.Err() != nil {
+			t.Fatalf("after reconnecting to the same cluster: %v, guard %v", err, guard.Err())
+		}
+	}
+	if db.Classify(fmt.Errorf("acquire: %w", db.ErrClusterChanged)) != store.FailureUnavailable {
+		t.Error("ErrClusterChanged is not FailureUnavailable")
 	}
 }
