@@ -221,4 +221,45 @@ class TripRecorderTest {
         r.drive(5, 72.0, 2000.0) // stopped: no new trip
         assertEquals(1, r.trips.rows.size)
     }
+    @Test fun `an overspeed cut by a sample gap is stored as two rows that match the summary (#187)`() = runTest {
+        val r = rig()
+        r.drive(1, 72.0, 2000.0)
+        r.drive(20, 72.0, 2000.0)
+        r.drive(1, 100.0, 2500.0)
+        r.drive(1, 123.0, 3000.0) // overspeed starts on this sample
+        // 6.3 s without samples (host load) while still over the limit: the engine ends the event as
+        // signal_lost at the last pre-gap sample and opens a second one when polling resumes.
+        r.scope.advanceTimeBy(6_300); r.scope.runCurrent()
+        r.drive(37, 129.0, 3200.0)
+        r.drive(5, 100.0, 2500.0) // released after the hold
+        r.recorder.stop(TripRecorder.END_USER)
+
+        val trip = r.trips.rows.values.single()
+        val rows = r.trips.events.filter { it.type == TripRecorder.EVENT_OVERSPEED }.sortedBy { it.timestampMillis }
+        assertEquals(2, trip.overspeedCount)
+        assertEquals("one row per counted event", trip.overspeedCount, rows.size)
+        assertEquals("the first row ends at the last sample before the gap", 0.0, rows[0].durationS!!, 1e-9)
+        assertEquals(123.0, rows[0].value!!, 1e-9)
+        assertEquals(129.0, rows[1].value!!, 1e-9)
+        // No row includes the gap: together they never exceed the trip's overspeed time (+1 sample of hold).
+        val rowSum = rows.sumOf { it.durationS!! }
+        assertTrue("rows $rowSum s vs overspeed ${trip.overspeedS} s", rowSum <= trip.overspeedS + 1.0 + 1e-9)
+        assertTrue("rows $rowSum s include no gap", rowSum < 40.0)
+    }
+
+    @Test fun `a gap longer than the stale limit closes events that the engine re-opens (#187)`() = runTest {
+        val r = rig()
+        r.drive(1, 30.0, 1500.0)
+        r.drive(5, 30.0, 1500.0)
+        r.drive(1, 130.0, 3000.0) // harsh accel + overspeed (well, 100 km/h in a second)
+        r.drive(3, 130.0, 3000.0)
+        r.scope.advanceTimeBy(10_000); r.scope.runCurrent()
+        r.drive(3, 130.0, 3000.0)
+        r.recorder.stop(TripRecorder.END_USER)
+        val trip = r.trips.rows.values.single()
+        val rows = r.trips.events.filter { it.type == TripRecorder.EVENT_OVERSPEED }.sortedBy { it.timestampMillis }
+        assertEquals(trip.overspeedCount, rows.size)
+        assertEquals(3.0, rows[0].durationS!!, 1e-9)
+        assertEquals(2.0, rows[1].durationS!!, 1e-9)
+    }
 }
