@@ -246,21 +246,21 @@ object DashboardIcons {
 
 private val White = SolidColor(Color.White)
 
-private fun icon(name: String, block: ImageVector.Builder.() -> Unit): ImageVector =
+internal fun icon(name: String, block: ImageVector.Builder.() -> Unit): ImageVector =
     ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
         .apply(block)
         .build()
 
-private fun ImageVector.Builder.fill(type: PathFillType = PathFillType.NonZero, block: PathBuilder.() -> Unit) =
+internal fun ImageVector.Builder.fill(type: PathFillType = PathFillType.NonZero, block: PathBuilder.() -> Unit) =
     path(fill = White, pathFillType = type, pathBuilder = block)
 
-private fun ImageVector.Builder.stroke(width: Float = 2f, block: PathBuilder.() -> Unit) =
+internal fun ImageVector.Builder.stroke(width: Float = 2f, block: PathBuilder.() -> Unit) =
     path(
         stroke = White, strokeLineWidth = width, strokeLineCap = StrokeCap.Round,
         strokeLineJoin = StrokeJoin.Round, pathBuilder = block,
     )
 
-private fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {
+internal fun PathBuilder.circle(cx: Float, cy: Float, r: Float) {
     moveTo(cx - r, cy)
     arcToRelative(r, r, 0f, true, true, 2 * r, 0f)
     arcToRelative(r, r, 0f, true, true, -2 * r, 0f)
