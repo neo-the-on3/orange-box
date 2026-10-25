@@ -71,18 +71,23 @@ info:
         is how a new device starts syncing. `since` cannot be combined with `vehicleId`, `from` or `to` (`400`),
         and a walk that uses those filters returns `nextSince: null`. The cursor carries the walk's watermark, so
         later pages need only `cursor`. If `since` is sent with a `cursor`, it must be the walk's original `since`,
-        or the response is `400`.
+        or the response is `400` with `code=bad_request` (a client bug, not a `sync_window_expired`: don't restart
+        the walk, send the walk's original `since` or none).
       - **Token contents.** The token is opaque to the app: base64url, integrity-protected with a server key (HMAC)
         so it can't be forged or edited. It carries a format version, the deployment identity, the issue time
         (`issuedAt`) and the watermark below. The deployment identity combines the Postgres cluster's
-        `system_identifier` (from `pg_control_system()`; left out where the database role can't read it) with a
-        configured deployment id that operators change after every database restore, point-in-time recovery or
+        `system_identifier` (from `pg_control_system()`; left out where the server is configured not to read it)
+        with a configured deployment id that operators change after every database restore, point-in-time recovery or
         branch reset. Page cursors of `GET /v1/trips` and `GET /v1/trips/deletions` carry the same identity. A
         token or cursor with a different version or deployment identity, or one that fails the integrity check,
         is rejected with `400` (`code=sync_window_expired`); so is a cursor sent to another endpoint, walk or
         filter than the one it came from. That way a restore from backup, dump/restore or migration to a new cluster,
-        where transaction ids mean something else, can never silently skip writes. Tokens are issued and read on
-        the **primary** only, never on a read replica.
+        where transaction ids mean something else, can never silently skip writes. A server instance whose
+        database endpoint starts reaching another cluster while it runs (e.g. a blue/green switchover or a
+        failover behind the same address) answers `503` (`code=service_unavailable`) instead of serving sync,
+        until it is restarted; clients retry, then get `deployment_changed`. (A server configured not to read
+        `system_identifier` can't notice this; its operators change the deployment id instead.) Tokens are issued and read on the
+        **primary** only, never on a read replica.
       - **Why a token was rejected (`reason`).** A `sync_window_expired` problem carries a machine-readable
         `reason`: `deployment_changed` when the token or cursor was issued under another deployment identity (the
         database was restored or replaced since, and may have lost writes made after its restore point),
@@ -1644,7 +1649,8 @@ components:
         reason:
           type: string
           enum: [deployment_changed, purged, invalid]
-          description: 'Why the request failed, where `code` alone is not enough; only sent with `code=sync_window_expired`. `deployment_changed`: the token or cursor is from before a database restore or replacement (full sync, then re-upload local trips the server lost; see Conventions → Incremental sync). `purged`: tombstones the token needed were purged. `invalid`: the token or cursor does not verify or belongs to another endpoint, walk or filter. Adding a value is a spec change; clients should still treat an unknown one like `invalid`.'
+          x-extensible-enum: true
+          description: 'Why the request failed, where `code` alone is not enough; only sent with `code=sync_window_expired`. **Extensible:** later versions may add values, so clients must decode it leniently (e.g. a string, or an enum with an unknown fallback, never a closed enum that fails to parse) and treat any unknown value like `invalid`. `deployment_changed`: the token or cursor is from before a database restore or replacement (full sync, then re-upload local trips the server lost; see Conventions → Incremental sync). `purged`: tombstones the token needed were purged. `invalid`: the token or cursor does not verify or belongs to another endpoint, walk or filter.'
 
     Health:
       type: object
