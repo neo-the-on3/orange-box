@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.neotheon3.orangebox.feature.trips.R
 import io.github.neotheon3.orangebox.feature.trips.TripFormat
+import io.github.neotheon3.orangebox.feature.trips.displayUnits
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -52,7 +53,7 @@ fun TripCharts(
         if (speed.size >= 2) {
             LineChartCard(
                 title = stringResource(R.string.chart_speed_title),
-                unit = stringResource(R.string.chart_unit_kph),
+                unit = displayUnits.speedLabel,
                 points = speed,
                 color = MaterialTheme.colorScheme.primary,
                 locale = locale,
@@ -63,7 +64,7 @@ fun TripCharts(
         if (economy.size >= 2) {
             LineChartCard(
                 title = stringResource(R.string.chart_economy_title),
-                unit = stringResource(R.string.chart_unit_kml),
+                unit = displayUnits.economyLabel,
                 points = economy,
                 color = MaterialTheme.colorScheme.tertiary,
                 locale = locale,
@@ -76,7 +77,7 @@ fun TripCharts(
 
 @Composable
 private fun SpeedZoneCard(zones: SpeedZones, locale: Locale) {
-    val labels = zoneLabels(zones.bounds)
+    val labels = zoneLabels(zones.bounds.map(displayUnits::speed))
     val colors = zoneColors(zones.seconds.size)
     OutlinedCard(Modifier.fillMaxWidth().testTag("chart_speed_zones")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -84,7 +85,7 @@ private fun SpeedZoneCard(zones: SpeedZones, locale: Locale) {
             val shares = zones.shares
             zones.seconds.forEachIndexed { i, s ->
                 val pct = (shares[i] * 100).roundToInt()
-                val description = stringResource(R.string.chart_zone_description, labels[i], TripFormat.elapsed(s), pct)
+                val description = stringResource(R.string.chart_zone_description, labels[i], TripFormat.elapsed(s), pct, displayUnits.speedLabel)
                 Row(
                     Modifier.fillMaxWidth().semantics { contentDescription = description }.testTag("chart_zone_$i"),
                     verticalAlignment = Alignment.CenterVertically,

@@ -37,9 +37,10 @@ class DashboardViewModel @Inject constructor(
     private val apps: QuickLaunchApps,
     recorded: RecordedTripTotals,
     private val crash: io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor,
+    units: io.github.neotheon3.orangebox.core.datastore.DisplayUnits,
 ) : ViewModel() {
-    val state: StateFlow<DashboardUiState> = combine(connection.state, telemetry.latest, recorded.totals()) { c, s, trip ->
-        DashboardStateMapper.map(c, s, poller.activePids, recordedTrip = trip)
+    val state: StateFlow<DashboardUiState> = combine(connection.state, telemetry.latest, recorded.totals(), units.units()) { c, s, trip, u ->
+        DashboardStateMapper.map(c, s, poller.activePids, recordedTrip = trip, units = u)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
 
     val controls: StateFlow<DashboardControls> = prefs.preferences.map { it.dashboard }.distinctUntilChanged()

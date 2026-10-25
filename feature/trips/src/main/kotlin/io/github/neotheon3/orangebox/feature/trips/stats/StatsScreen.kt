@@ -46,6 +46,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.neotheon3.orangebox.feature.trips.R
 import io.github.neotheon3.orangebox.feature.trips.TripFormat
+import io.github.neotheon3.orangebox.feature.trips.displayUnits
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
@@ -128,14 +129,14 @@ private fun CurrentCard(p: PeriodStats, period: StatsPeriod, locale: Locale) {
                 Text(stringResource(R.string.stats_no_trips), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("stats_empty"))
             } else {
                 val tiles = listOf(
-                    stringResource(R.string.metric_distance) to stringResource(R.string.trips_distance_km, TripFormat.km(t.distanceKm, locale)),
+                    stringResource(R.string.metric_distance) to stringResource(R.string.trips_distance_km, TripFormat.km(displayUnits.distance(t.distanceKm), locale), displayUnits.distanceLabel),
                     stringResource(R.string.stats_driving_time) to TripFormat.elapsed(t.durationS),
-                    stringResource(R.string.metric_economy) to (p.economyKmPerL?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale)) } ?: dash),
+                    stringResource(R.string.metric_economy) to (p.economyKmPerL?.let(displayUnits::economy)?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale), displayUnits.economyLabel) } ?: dash),
                     stringResource(R.string.metric_fuel) to stringResource(R.string.unit_litres, TripFormat.decimal(t.fuelLitres, locale)),
                     stringResource(R.string.metric_eco_time) to (p.ecoShare?.let { "${(it * 100).roundToInt()}%" } ?: dash),
                     stringResource(R.string.metric_harsh) to stringResource(R.string.metric_harsh_value, t.harshAccel, t.harshBrake),
                     stringResource(R.string.stats_overspeed_events) to t.overspeed.toString(),
-                    stringResource(R.string.metric_max_speed) to stringResource(R.string.unit_kph, TripFormat.decimal(t.maxSpeedKph, locale)),
+                    stringResource(R.string.metric_max_speed) to stringResource(R.string.unit_kph, TripFormat.decimal(displayUnits.speed(t.maxSpeedKph), locale), displayUnits.speedLabel),
                 )
                 tiles.chunked(2).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -205,9 +206,9 @@ private fun PeriodRow(p: PeriodStats, period: StatsPeriod, locale: Locale) {
             Text(
                 if (t.trips == 0) stringResource(R.string.trips_none_short) else listOfNotNull(
                     pluralStringResource(R.plurals.trips_count, t.trips, t.trips),
-                    stringResource(R.string.trips_distance_km, TripFormat.km(t.distanceKm, locale)),
+                    stringResource(R.string.trips_distance_km, TripFormat.km(displayUnits.distance(t.distanceKm), locale), displayUnits.distanceLabel),
                     TripFormat.elapsed(t.durationS),
-                    p.economyKmPerL?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale)) },
+                    p.economyKmPerL?.let(displayUnits::economy)?.let { stringResource(R.string.trips_economy_kml, TripFormat.decimal(it, locale), displayUnits.economyLabel) },
                 ).joinToString(" · "),
             )
         },

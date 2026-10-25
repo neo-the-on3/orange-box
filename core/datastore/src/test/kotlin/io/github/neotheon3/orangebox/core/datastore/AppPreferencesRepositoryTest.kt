@@ -67,4 +67,18 @@ class AppPreferencesRepositoryTest {
         assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences.MAX_THRESHOLD_G, c.thresholdG, 0.0)
         assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences.MIN_COUNTDOWN_S, c.countdownSeconds)
     }
+
+    @Test fun `units follow the country until chosen, then persist`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = DataStoreAppPreferencesRepository(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("u.preferences_pb").also { it.delete() } },
+        )
+        assertEquals(null, repo.preferences.first().units)
+        val chosen = io.github.neotheon3.orangebox.core.model.UnitPreferences(
+            io.github.neotheon3.orangebox.core.model.DistanceUnit.MI,
+            io.github.neotheon3.orangebox.core.model.EconomyUnit.L_PER_100KM,
+            io.github.neotheon3.orangebox.core.model.TemperatureUnit.FAHRENHEIT,
+        )
+        repo.setUnits(chosen)
+        assertEquals(chosen, repo.preferences.first().units)
+    }
 }

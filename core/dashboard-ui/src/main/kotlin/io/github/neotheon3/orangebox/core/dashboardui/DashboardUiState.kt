@@ -7,6 +7,7 @@ import io.github.neotheon3.orangebox.core.obd.pid.ObdPid
 import io.github.neotheon3.orangebox.core.telemetry.InstantTelemetry
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
 import io.github.neotheon3.orangebox.core.telemetry.TripTotals
+import io.github.neotheon3.orangebox.core.model.UnitPreferences
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -60,6 +61,10 @@ data class DashboardUiState(
     val leftGlow: PanelGlow = PanelGlow.NONE,
     val rightGlow: PanelGlow = PanelGlow.NONE,
     val detailPages: List<List<DetailTileState>> = DashboardStateMapper.detailPages(null, emptySet()),
+    /** Unit labels for [speed], [tripKm] and the economy values (Settings, #58); the values are already converted. */
+    val speedUnit: String = UnitPreferences().speedLabel,
+    val distanceUnit: String = UnitPreferences().distanceLabel,
+    val economyUnit: String = UnitPreferences().economyLabel,
 ) {
     companion object {
         const val NO_INT = "---"
@@ -78,9 +83,14 @@ object DashboardStateMapper {
         snapshot: TelemetrySnapshot?,
         activePids: Set<ObdPid> = emptySet(),
         recordedTrip: TripTotals? = null,
+        units: UnitPreferences = UnitPreferences(),
     ): DashboardUiState {
         if (connection !is ObdConnectionState.Connected || snapshot == null) {
-            return DashboardUiState(obdOn = connection is ObdConnectionState.Connected)
+            return DashboardUiState(
+                obdOn = connection is ObdConnectionState.Connected,
+                detailPages = detailPages(null, emptySet(), units),
+                speedUnit = units.speedLabel, distanceUnit = units.distanceLabel, economyUnit = units.economyLabel,
+            )
         }
         // The recorded trip's totals carry over a reconnect inside the grace; the engine's restart from 0 (#144).
         @Suppress("NAME_SHADOWING")
@@ -90,7 +100,7 @@ object DashboardStateMapper {
         return DashboardUiState(
             live = true,
             rpm = i.rpm?.takeIf { it >= 0 }?.roundToInt()?.toString() ?: DashboardUiState.NO_INT,
-            speed = i.speedKph?.takeIf { it >= 0 }?.roundToInt()?.toString() ?: DashboardUiState.NO_INT,
+            speed = i.speedKph?.takeIf { it >= 0 }?.let { units.speed(it).roundToInt().toString() } ?: DashboardUiState.NO_INT,
             fuelCut = i.fuelCut,
             overspeed = i.overspeed,
             harshAccel = i.harshAccel,
@@ -102,17 +112,23 @@ object DashboardStateMapper {
             milOn = i.milOn == true,
             dtcCount = i.dtcCount,
             obdOn = true,
-            tripKmPerL = decimal(trip.economyKmPerL?.coerceAtMost(TRIP_KM_PER_L_CAP)),
-            instantKmPerL = decimal(i.instantKmPerL),
+            tripKmPerL = decimal(trip.economyKmPerL?.coerceAtMost(TRIP_KM_PER_L_CAP)?.let(units::economy)?.let(::capDisplay)),
+            instantKmPerL = decimal(i.instantKmPerL?.let(units::economy)?.let(::capDisplay)),
             instantFraction = ((i.instantKmPerL ?: 0.0) / KM_PER_L_SCALE).toFloat().coerceIn(0f, 1f),
             fuelUsedL = decimal(trip.fuelLitres),
-            tripKm = decimal(trip.distanceKm),
+            tripKm = decimal(units.distance(trip.distanceKm)),
             tripTime = elapsed(trip.durationS),
             leftGlow = leftGlow(i.fuelCut, ecoLamp(i.eco, i.ecoLevel)),
             rightGlow = rightGlow(i.overspeed, i.harshAccel || i.harshBrake),
-            detailPages = detailPages(snapshot, activePids),
+            detailPages = detailPages(snapshot, activePids, units),
+            speedUnit = units.speedLabel,
+            distanceUnit = units.distanceLabel,
+            economyUnit = units.economyLabel,
         )
     }
+
+    /** Converted economy values stay within the 4-character tile ("99.9"). */
+    private fun capDisplay(v: Double) = v.coerceAtMost(TRIP_KM_PER_L_CAP)
 
     /**
      * ECO lamp / tint level (#138). Off whenever eco time is not counted (moving, rpm <= 2500 and
@@ -162,7 +178,7 @@ object DashboardStateMapper {
      * The 3 × 9 Detailed Info tiles (§4.6, decision D5). A PID tile is UNSUPPORTED when polling is
      * active and the car doesn't announce the PID, NO_DATA while it hasn't been read yet.
      */
-    fun detailPages(snapshot: TelemetrySnapshot?, activePids: Set<ObdPid>): List<List<DetailTileState>> {
+    fun detailPages(snapshot: TelemetrySnapshot?, activePids: Set<ObdPid>, units: UnitPreferences = UnitPreferences()): List<List<DetailTileState>> {
         val v = snapshot?.values.orEmpty()
         val i = snapshot?.instant
         val trip = snapshot?.trip
@@ -170,10 +186,12 @@ object DashboardStateMapper {
         fun pid(
             title: Int, p: ObdPid, unit: String, digits: Int = 0, large: Boolean = false, icon: DetailIcon? = null,
             warning: (Double) -> Boolean = { false },
+            convert: (Double) -> Double = { it },
         ): DetailTileState {
-            val value = v[p]
+            val raw = v[p]
+            val value = raw?.let(convert)
             val status = when {
-                value != null -> if (warning(value)) TileStatus.WARNING else TileStatus.NORMAL
+                raw != null -> if (warning(raw)) TileStatus.WARNING else TileStatus.NORMAL
                 snapshot != null && activePids.isNotEmpty() && p !in activePids -> TileStatus.UNSUPPORTED
                 else -> TileStatus.NO_DATA
             }
@@ -190,31 +208,38 @@ object DashboardStateMapper {
         val batteryWarn = i?.batteryWarning == true
         val coolantWarn = i?.coolantWarning == true
         val dtc = i?.dtcCount
+        val speed: (Double) -> Double = { units.speed(it) }
+        val temp: (Double) -> Double = { units.temperature(it) }
+        val dist: (Double) -> Double = { units.distance(it) }
         return listOf(
             listOf(
                 pid(R.string.detail_accel_pedal, ObdPid.ACCELERATOR_PEDAL_D, "%"),
                 pid(R.string.detail_fuel_level, ObdPid.FUEL_LEVEL, "%"),
                 pid(R.string.detail_baro, ObdPid.BAROMETRIC_PRESSURE, "kPa"),
-                pid(R.string.detail_speed, ObdPid.SPEED, "km/h"),
+                pid(R.string.detail_speed, ObdPid.SPEED, units.speedLabel, convert = speed),
                 pid(R.string.detail_rpm, ObdPid.RPM, "rpm"),
                 pid(R.string.detail_engine_load, ObdPid.ENGINE_LOAD, "%"),
-                pid(R.string.detail_battery, ObdPid.CONTROL_MODULE_VOLTAGE, "V", 1, true, DetailIcon.BATTERY) { batteryWarn },
-                pid(R.string.detail_coolant, ObdPid.COOLANT_TEMP, "°C", 1, true, DetailIcon.COOLANT) { coolantWarn },
+                pid(R.string.detail_battery, ObdPid.CONTROL_MODULE_VOLTAGE, "V", 1, true, DetailIcon.BATTERY, warning = { batteryWarn }),
+                pid(R.string.detail_coolant, ObdPid.COOLANT_TEMP, units.temperatureLabel, 1, true, DetailIcon.COOLANT, { coolantWarn }, temp),
                 derived(R.string.detail_mil, dtc?.toString(), "ea", true, DetailIcon.MIL, warn = (dtc ?: 0) > 0 || i?.milOn == true),
             ),
             listOf(
                 pid(R.string.detail_st_fuel_trim, ObdPid.SHORT_FUEL_TRIM_1, "%", 1),
                 pid(R.string.detail_lt_fuel_trim, ObdPid.LONG_FUEL_TRIM_1, "%", 1),
                 pid(R.string.detail_fuel_pressure, ObdPid.FUEL_PRESSURE, "kPa"),
-                pid(R.string.detail_intake_temp, ObdPid.INTAKE_TEMP, "°C"),
-                pid(R.string.detail_ambient_temp, ObdPid.AMBIENT_TEMP, "°C"),
+                pid(R.string.detail_intake_temp, ObdPid.INTAKE_TEMP, units.temperatureLabel, convert = temp),
+                pid(R.string.detail_ambient_temp, ObdPid.AMBIENT_TEMP, units.temperatureLabel, convert = temp),
                 pid(R.string.detail_throttle, ObdPid.THROTTLE, "%", 1),
-                pid(R.string.detail_distance_mil, ObdPid.DISTANCE_WITH_MIL, "km", 0, true, DetailIcon.PIN) { it > 0 },
-                pid(R.string.detail_oil_temp, ObdPid.OIL_TEMP, "°C", 0, true, DetailIcon.OIL),
+                pid(R.string.detail_distance_mil, ObdPid.DISTANCE_WITH_MIL, units.distanceLabel, 0, true, DetailIcon.PIN, { it > 0 }, dist),
+                pid(R.string.detail_oil_temp, ObdPid.OIL_TEMP, units.temperatureLabel, 0, true, DetailIcon.OIL, convert = temp),
                 pid(R.string.detail_o2, ObdPid.O2_B1S1_VOLTAGE, "V", 2, true, DetailIcon.OBD),
             ),
             listOf(
-                derived(R.string.detail_avg_economy, trip?.economyKmPerL?.let { decimal(it.coerceAtMost(TRIP_KM_PER_L_CAP)) }, "km/L"),
+                derived(
+                    R.string.detail_avg_economy,
+                    trip?.economyKmPerL?.let { units.economy(it.coerceAtMost(TRIP_KM_PER_L_CAP)) }?.let { decimal(capDisplay(it)) },
+                    units.economyLabel,
+                ),
                 derived(R.string.detail_fuel_used, trip?.let { decimal(it.fuelLitres, 2) }, "L"),
                 derived(R.string.detail_co2, trip?.let { decimal(it.co2Grams / 1000.0, 2) }, "kg"),
                 derived(R.string.detail_fuel_cut_time, trip?.let { elapsed(it.fuelCutS) }, ""),

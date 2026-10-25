@@ -46,6 +46,8 @@ data class SettingsUiState(
     val dongleName: String? = null,
     val autoStart: Boolean = false,
     val dashboard: DashboardSettingsState = DashboardSettingsState(),
+    /** Display units in effect (#58): the user's choice, else the country's defaults. */
+    val units: io.github.neotheon3.orangebox.core.model.UnitPreferences = io.github.neotheon3.orangebox.core.model.UnitPreferences(),
 )
 
 /** The "Driving dashboard" section. */
@@ -94,9 +96,14 @@ class SettingsViewModel @Inject constructor(
         Triple(v?.name, d?.name?.ifBlank { d.address }, p.autoStartOnDongleConnect)
     }
 
+    /** The sections M7/M8 added, all from AppPreferences, as a partial state merged below. */
+    private val general = prefs.preferences.map { p -> SettingsUiState(units = country.units(p)) }.distinctUntilChanged()
+
+    private val backend = combine(repository.config, urlDraft, urlResult) { config, draft, result -> Triple(config, draft, result) }
+
     val uiState: StateFlow<SettingsUiState> =
-        combine(repository.config, urlDraft, urlResult, setup, dashboard) { config, draft, result, (vehicle, dongle, autoStart), dash ->
-            SettingsUiState(
+        combine(backend, setup, dashboard, general) { (config, draft, result), (vehicle, dongle, autoStart), dash, g ->
+            g.copy(
                 config = config, urlDraft = draft ?: config.baseUrl, urlResult = result, version = version,
                 vehicleName = vehicle, dongleName = dongle, autoStart = autoStart, dashboard = dash,
             )
@@ -104,6 +111,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onModeSelected(mode: BackendMode) {
         viewModelScope.launch { repository.setMode(mode) }
+    }
+
+    fun onUnitsChanged(units: io.github.neotheon3.orangebox.core.model.UnitPreferences) {
+        viewModelScope.launch { prefs.setUnits(units) }
     }
 
     fun onAutoStartChanged(enabled: Boolean) {

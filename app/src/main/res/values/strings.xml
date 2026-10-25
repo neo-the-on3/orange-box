@@ -10,7 +10,7 @@
     <string name="notif_connected_title">OBD dongle connected</string>
     <string name="notif_connected_text">A trip starts recording when the engine runs.</string>
     <string name="notif_recording_title">Recording trip</string>
-    <string name="notif_recording_text">%1$s km · %2$s</string>
+    <string name="notif_recording_text">%1$s · %2$s</string>
     <string name="notif_start_driving">Start driving</string>
     <string name="notif_drive_start_title">Your car is connected</string>
     <string name="notif_drive_start_text">Tap to open the driving dashboard.</string>

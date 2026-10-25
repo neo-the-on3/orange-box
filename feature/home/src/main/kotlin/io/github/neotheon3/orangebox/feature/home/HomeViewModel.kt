@@ -37,12 +37,13 @@ class HomeViewModel @Inject constructor(
     private val obd: ObdConnection,
     telemetry: TelemetrySource,
     recorded: RecordedTripTotals = RecordedTripTotals.NONE,
+    units: io.github.neotheon3.orangebox.core.datastore.DisplayUnits = io.github.neotheon3.orangebox.core.datastore.DisplayUnits.METRIC,
 ) : ViewModel() {
     val uiState: StateFlow<HomeUiState> =
-        combine(backendConfigRepository.config, obd.state, telemetry.latest, recorded.totals()) { backend, obdState, live, trip ->
+        combine(backendConfigRepository.config, obd.state, telemetry.latest, recorded.totals(), units.units()) { backend, obdState, live, trip, u ->
             HomeUiState(
                 backend = backend, loading = false, obd = obdState, live = live,
-                dashboard = DashboardStateMapper.map(obdState, live, recordedTrip = trip),
+                dashboard = DashboardStateMapper.map(obdState, live, recordedTrip = trip, units = u),
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 

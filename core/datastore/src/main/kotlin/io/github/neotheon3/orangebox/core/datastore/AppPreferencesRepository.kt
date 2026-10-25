@@ -11,6 +11,10 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import io.github.neotheon3.orangebox.core.model.AppPreferences
 import io.github.neotheon3.orangebox.core.model.CrashPreferences
+import io.github.neotheon3.orangebox.core.model.DistanceUnit
+import io.github.neotheon3.orangebox.core.model.EconomyUnit
+import io.github.neotheon3.orangebox.core.model.TemperatureUnit
+import io.github.neotheon3.orangebox.core.model.UnitPreferences
 import io.github.neotheon3.orangebox.core.model.DashboardButton
 import io.github.neotheon3.orangebox.core.model.DashboardPreferences
 import kotlinx.coroutines.flow.Flow
@@ -34,6 +38,8 @@ interface AppPreferencesRepository {
     suspend fun setMapTilesEnabled(enabled: Boolean)
     /** Stores the crash-detection settings (threshold and countdown clamped). */
     suspend fun setCrash(crash: CrashPreferences)
+    /** Stores the display units; from then on they no longer follow the device country. */
+    suspend fun setUnits(units: UnitPreferences)
 }
 
 @Singleton
@@ -61,6 +67,13 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                 thresholdG = CrashPreferences.clampThreshold(p[CRASH_THRESHOLD] ?: CrashPreferences.DEFAULT_THRESHOLD_G),
                 countdownSeconds = CrashPreferences.clampCountdown(p[CRASH_COUNTDOWN] ?: CrashPreferences.DEFAULT_COUNTDOWN_S),
             ),
+            units = p[UNITS_DISTANCE]?.let { d ->
+                UnitPreferences(
+                    distance = DistanceUnit.entries.firstOrNull { it.name == d } ?: DistanceUnit.KM,
+                    economy = EconomyUnit.entries.firstOrNull { it.name == p[UNITS_ECONOMY] } ?: EconomyUnit.KM_PER_L,
+                    temperature = TemperatureUnit.entries.firstOrNull { it.name == p[UNITS_TEMPERATURE] } ?: TemperatureUnit.CELSIUS,
+                )
+            },
         )
     }.distinctUntilChanged()
 
@@ -89,6 +102,14 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         }
     }
 
+    override suspend fun setUnits(units: UnitPreferences) {
+        dataStore.edit {
+            it[UNITS_DISTANCE] = units.distance.name
+            it[UNITS_ECONOMY] = units.economy.name
+            it[UNITS_TEMPERATURE] = units.temperature.name
+        }
+    }
+
     override suspend fun setDashboard(dashboard: DashboardPreferences) {
         dataStore.edit {
             it[DASH_BUTTON] = dashboard.button.name
@@ -110,6 +131,9 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val CRASH_ENABLED = booleanPreferencesKey("crash_detection_enabled")
         val CRASH_THRESHOLD = doublePreferencesKey("crash_threshold_g")
         val CRASH_COUNTDOWN = intPreferencesKey("crash_countdown_s")
+        val UNITS_DISTANCE = stringPreferencesKey("units_distance")
+        val UNITS_ECONOMY = stringPreferencesKey("units_economy")
+        val UNITS_TEMPERATURE = stringPreferencesKey("units_temperature")
         val ONBOARDING_STEP = stringPreferencesKey("onboarding_step")
         val ONBOARDING = booleanPreferencesKey("onboarding_complete")
         val DISCLAIMER = booleanPreferencesKey("disclaimer_accepted")

@@ -46,11 +46,16 @@
     <string name="settings_launcher_none">No apps found</string>
     <string name="settings_cancel">Cancel</string>
     <string name="settings_overspeed">Overspeed warning</string>
-    <string name="settings_overspeed_summary">Starts above %1$d km/h, ends below %2$d km/h</string>
-    <string name="settings_overspeed_value">%1$d km/h</string>
+    <string name="settings_overspeed_summary">Starts above %1$d %3$s, ends below %2$d %3$s</string>
+    <string name="settings_overspeed_value">%1$d %2$s</string>
     <string name="settings_auto_show">Show dashboard automatically</string>
     <string name="settings_auto_show_summary">Opens the dashboard when your car connects, and wakes the screen. Warning: it then shows over the lock screen, so your live driving data is visible without unlocking. Unlocking is still needed to leave it.</string>
     <string name="settings_full_screen_needed">Full-screen notifications are off</string>
     <string name="settings_full_screen_needed_summary">Without them the dashboard can\'t open by itself while Orange Box is in the background; you get a notification instead.</string>
     <string name="settings_full_screen_allow">Allow</string>
+
+    <string name="settings_units_section">Units</string>
+    <string name="settings_units_distance">Distance and speed</string>
+    <string name="settings_units_economy">Fuel economy</string>
+    <string name="settings_units_temperature">Temperature</string>
 </resources>

@@ -16,6 +16,7 @@ import io.github.neotheon3.orangebox.R
 import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.driving.ActiveTrip
 import io.github.neotheon3.orangebox.core.driving.FullScreenIntents
+import io.github.neotheon3.orangebox.core.model.UnitPreferences
 import java.util.Locale
 
 /**
@@ -67,25 +68,26 @@ object DrivingNotifications {
      * What the ongoing notification displays. Re-posting is driven by changes of this value only
      * ([OngoingNotificationUpdater]), never by every telemetry poll.
      */
-    data class OngoingContent(val recording: Boolean, val distanceKm: String = "", val elapsed: String = "")
+    data class OngoingContent(val recording: Boolean, val distance: String = "", val elapsed: String = "")
 
-    fun ongoingContent(trip: ActiveTrip?): OngoingContent =
+    /** [units]: the display units from Settings (#58); the distance carries its unit, e.g. "12.3 km". */
+    fun ongoingContent(trip: ActiveTrip?, units: UnitPreferences = UnitPreferences()): OngoingContent =
         if (trip == null) OngoingContent(recording = false)
         else OngoingContent(
             recording = true,
-            distanceKm = String.format(Locale.getDefault(), "%.1f", trip.totals.distanceKm),
+            distance = String.format(Locale.getDefault(), "%.1f %s", units.distance(trip.totals.distanceKm), units.distanceLabel),
             elapsed = elapsed(trip.totals.durationS),
         )
 
     /** The foreground-service notification. [trip] null means connected but not recording yet. */
-    fun ongoing(context: Context, trip: ActiveTrip?) = ongoing(context, ongoingContent(trip))
+    fun ongoing(context: Context, trip: ActiveTrip?, units: UnitPreferences = UnitPreferences()) = ongoing(context, ongoingContent(trip, units))
 
     fun ongoing(context: Context, content: OngoingContent) = NotificationCompat.Builder(context, CHANNEL_DRIVING)
         .setSmallIcon(R.drawable.ic_stat_drive)
         .setContentTitle(context.getString(if (content.recording) R.string.notif_recording_title else R.string.notif_connected_title))
         .setContentText(
             if (!content.recording) context.getString(R.string.notif_connected_text)
-            else context.getString(R.string.notif_recording_text, content.distanceKm, content.elapsed),
+            else context.getString(R.string.notif_recording_text, content.distance, content.elapsed),
         )
         .setOngoing(true)
         .setOnlyAlertOnce(true)

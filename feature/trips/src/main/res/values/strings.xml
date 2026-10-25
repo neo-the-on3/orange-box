@@ -6,9 +6,9 @@
     <string name="trips_next_month">Next month</string>
     <string name="trips_empty_month">No trips in %1$s</string>
     <string name="trips_none_short">no trips</string>
-    <string name="trips_month_summary">%1$s · %2$s km · %3$s</string>
-    <string name="trips_distance_km">%1$s km</string>
-    <string name="trips_economy_kml">%1$s km/L</string>
+    <string name="trips_month_summary">%1$s · %2$s %4$s · %3$s</string>
+    <string name="trips_distance_km">%1$s %2$s</string>
+    <string name="trips_economy_kml">%1$s %2$s</string>
     <string name="trips_eco_time">eco %1$s</string>
     <string name="trips_recording">Recording</string>
     <plurals name="trips_count">
@@ -45,7 +45,7 @@
     <string name="metric_fuel_cut_time">Fuel cut</string>
     <string name="metric_harsh">Harsh accel. / brake</string>
     <string name="metric_harsh_value">%1$d / %2$d</string>
-    <string name="unit_kph">%1$s km/h</string>
+    <string name="unit_kph">%1$s %2$s</string>
     <string name="unit_litres">%1$s L</string>
     <string name="unit_kg">%1$s kg</string>
     <string name="unit_mps2">%1$s m/s²</string>
@@ -57,11 +57,9 @@
     <string name="event_fuel_cut">Fuel cut</string>
     <string name="chart_speed_zones_title">Speed zones</string>
     <string name="chart_zone_stopped">Stopped</string>
-    <string name="chart_zone_description">%1$s km/h: %2$s, %3$d percent</string>
+    <string name="chart_zone_description">%1$s %4$s: %2$s, %3$d percent</string>
     <string name="chart_speed_title">Speed</string>
     <string name="chart_economy_title">Economy</string>
-    <string name="chart_unit_kph">km/h</string>
-    <string name="chart_unit_kml">km/L</string>
     <string name="chart_line_description">%1$s chart, peak %2$s %3$s</string>
     <string name="trips_stats">Stats</string>
     <string name="stats_title">Driving stats</string>

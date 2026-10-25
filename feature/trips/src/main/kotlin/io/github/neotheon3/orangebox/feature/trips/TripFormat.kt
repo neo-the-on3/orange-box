@@ -4,7 +4,7 @@ import io.github.neotheon3.orangebox.core.database.TripEntity
 import java.util.Locale
 import kotlin.math.roundToLong
 
-/** Shared number formats for the trip screens (km and L until the units setting lands in M8). */
+/** Shared number formats for the trip screens; values are converted to the Settings units first (displayUnits). */
 object TripFormat {
     /** H:MM:SS, e.g. 0:32:05 (the dashboard's TRIP tile format). */
     fun elapsed(seconds: Double): String {

@@ -76,8 +76,16 @@ fun SettingsRoute(
                 runCatching { context.startActivity(io.github.neotheon3.orangebox.core.driving.FullScreenIntents.settingsIntent(context)) }
             },
         ),
+        actions = SettingsActions(
+            onUnitsChanged = viewModel::onUnitsChanged,
+        ),
     )
 }
+
+/** Callbacks of the sections M7/M8 added (units, alerts, crash, diagnostics). */
+data class SettingsActions(
+    val onUnitsChanged: (io.github.neotheon3.orangebox.core.model.UnitPreferences) -> Unit = {},
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +101,7 @@ fun SettingsScreen(
     onAutoStartChanged: (Boolean) -> Unit = {},
     launchableApps: List<io.github.neotheon3.orangebox.core.driving.LaunchableApp>? = null,
     dashboardActions: DashboardSettingsActions = DashboardSettingsActions(),
+    actions: SettingsActions = SettingsActions(),
 ) {
     Scaffold(
         topBar = {
@@ -189,7 +198,9 @@ fun SettingsScreen(
                     .testTag("settings_auto_start"),
             )
             HorizontalDivider()
-            DashboardSettingsSection(state.dashboard, launchableApps, dashboardActions)
+            DashboardSettingsSection(state.dashboard, launchableApps, dashboardActions, state.units)
+            HorizontalDivider()
+            UnitsSettingsSection(state.units, actions.onUnitsChanged)
             HorizontalDivider()
             Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
             Text(
