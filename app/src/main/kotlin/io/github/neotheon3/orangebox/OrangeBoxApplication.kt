@@ -19,6 +19,7 @@ class OrangeBoxApplication : Application() {
     @Inject lateinit var backendConfig: BackendConfigRepository
     @Inject @ApplicationScope lateinit var appScope: CoroutineScope
     @Inject lateinit var drivingController: io.github.neotheon3.orangebox.driving.DrivingController
+    @Inject lateinit var diagnosingPrompt: io.github.neotheon3.orangebox.core.diagnostics.DiagnosingPromptController
 
     override fun onCreate() {
         AndroidLogSink.install(debug = BuildConfig.DEBUG)
@@ -28,6 +29,8 @@ class OrangeBoxApplication : Application() {
         AclLinkReceiver(dongleLinkEvents).register(this)
         // Dongle connect -> driving service + trip recording (M4).
         drivingController.install(this)
+        // One "Car Diagnosing…" scan per drive (M6, #50).
+        diagnosingPrompt.install()
         appScope.launch {
             backendConfig.config.map { it.mode }.distinctUntilChanged().collect {
                 OrangeLog.i(OrangeLog.Areas.BACKEND, "mode", "mode" to it.wireName)
