@@ -34,7 +34,7 @@ class CrashMonitorTest {
         val motion: Channel<MotionSample>,
     )
 
-    private fun TestScope.rig(crash: CrashPreferences = CrashPreferences(countdownSeconds = 10)): Rig {
+    private fun TestScope.rig(crash: CrashPreferences = CrashPreferences(detectionEnabled = true, countdownSeconds = 10)): Rig {
         val conn = FakeObdConnection()
         val telemetry = FakeTelemetrySource()
         val prefs = FakeAppPreferencesRepository(AppPreferences(crash = crash))
@@ -66,7 +66,7 @@ class CrashMonitorTest {
         assertTrue(r.monitor.watching.value)
         r.prefs.setCrash(CrashPreferences(detectionEnabled = false)); runCurrent()
         assertFalse(r.monitor.watching.value)
-        r.prefs.setCrash(CrashPreferences()); runCurrent()
+        r.prefs.setCrash(CrashPreferences(detectionEnabled = true)); runCurrent()
         assertTrue(r.monitor.watching.value)
         // The link drops (a collision can cut the dongle's power): keep watching for a minute.
         r.conn.state.value = ObdConnectionState.Idle; runCurrent()
@@ -125,7 +125,7 @@ class CrashMonitorTest {
     }
 
     @Test fun `simulated impact uses the countdown from Settings, without sensor or speed`() = runTest {
-        val r = rig(CrashPreferences(countdownSeconds = 15))
+        val r = rig(CrashPreferences(detectionEnabled = true, countdownSeconds = 15))
         r.monitor.injectImpact(); runCurrent()
         val p = r.monitor.prompt.value!!
         assertEquals(CrashTrigger.SIMULATED, p.trigger)

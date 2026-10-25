@@ -53,15 +53,15 @@ class AppPreferencesRepositoryTest {
         assertEquals(null, d.quickLaunchPackage)
     }
 
-    @Test fun `crash settings default on, persist and clamp`() = runTest(UnconfinedTestDispatcher()) {
+    @Test fun `crash settings default off, persist and clamp`() = runTest(UnconfinedTestDispatcher()) {
         val repo = DataStoreAppPreferencesRepository(
             PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("c.preferences_pb").also { it.delete() } },
         )
         val defaults = repo.preferences.first().crash
         assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences(), defaults)
-        assertEquals(true, defaults.detectionEnabled)
-        repo.setCrash(defaults.copy(detectionEnabled = false, thresholdG = 5.5, countdownSeconds = 20))
-        assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences(false, 5.5, 20), repo.preferences.first().crash)
+        assertEquals("crash detection off by default", false, defaults.detectionEnabled)
+        repo.setCrash(defaults.copy(detectionEnabled = true, thresholdG = 5.5, countdownSeconds = 20))
+        assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences(true, 5.5, 20), repo.preferences.first().crash)
         repo.setCrash(defaults.copy(thresholdG = 99.0, countdownSeconds = 1))
         val c = repo.preferences.first().crash
         assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences.MAX_THRESHOLD_G, c.thresholdG, 0.0)

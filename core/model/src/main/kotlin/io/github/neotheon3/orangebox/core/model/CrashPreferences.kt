@@ -5,8 +5,8 @@ package io.github.neotheon3.orangebox.core.model
  * impact shows a countdown prompt, and only the phone's own dialer / SMS app is opened, prefilled.
  */
 data class CrashPreferences(
-    /** Watch the accelerometer while driving. On by default (it only ever opens a prompt). */
-    val detectionEnabled: Boolean = true,
+    /** Watch the accelerometer while driving. Off by default; the driver turns it on in Settings. */
+    val detectionEnabled: Boolean = false,
     /** Impact threshold, g (total acceleration magnitude, gravity included). */
     val thresholdG: Double = DEFAULT_THRESHOLD_G,
     /** Seconds the prompt counts down before the dialer opens. */

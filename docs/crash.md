@@ -20,7 +20,7 @@ manifest has no `CALL_PHONE`, `SEND_SMS` or `READ_CONTACTS` (`ManifestPermission
   A 30 s cooldown follows, so a tumbling phone can't raise a second prompt.
 - **`CrashMonitor`** reads motion only **while driving**: while the OBD link is connected, and for 60 s
   after it drops, because a collision can cut the dongle's power. Detection must also be on in Settings
-  (it is on by default). An impact only counts if the car was doing ≥ 15 km/h in the last 15 s, so a phone
+  (it is off by default; the driver turns it on). An impact only counts if the car was doing ≥ 15 km/h in the last 15 s, so a phone
   knocked around in a parked car doesn't raise a prompt.
 
 The test traces in `core/driving/src/test/resources/motion/` (impact, pothole, knock, phone_drop) are
@@ -47,4 +47,4 @@ recipient is the emergency contact from Settings → Crash detection (M8 #60, se
 ## Debug
 
 Simulator → **Crash prompt (M7)** → *Inject impact* raises the prompt as a 6.5 g impact, skipping the
-sensor and the speed check.
+sensor and the speed check (it works even while detection is off in Settings).
