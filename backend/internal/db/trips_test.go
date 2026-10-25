@@ -595,3 +595,57 @@ func TestClassifyReadOnly(t *testing.T) {
 		t.Errorf("25006 classified as %v", db.Classify(err))
 	}
 }
+
+// TestClusterCheckFailuresUnhealthy: background checks that keep failing
+// (e.g. the endpoint now rejects the server's credentials) make readiness
+// fail after 3 in a row without latching: the pool keeps serving, and the
+// next good check makes it healthy again.
+func TestClusterCheckFailuresUnhealthy(t *testing.T) {
+	t.Parallel()
+	var failing atomic.Bool
+	guard := db.NewClusterGuard(db.ClusterGuardOptions{
+		DeploymentID: "test-deployment",
+		Read: func(ctx context.Context, conn *pgx.Conn) (int64, error) {
+			if failing.Load() {
+				return 0, &pgconn.PgError{Code: "28P01", Message: "password authentication failed"}
+			}
+			var id int64
+			err := conn.QueryRow(ctx, "SELECT system_identifier FROM pg_control_system()").Scan(&id)
+			return id, err
+		},
+	})
+	pool := dbtest.NewWith(t, db.Options{Guard: guard, MaxConns: 2})
+	if _, err := db.NewTripsWith(t.Context(), pool, db.TripsOptions{DeploymentID: "test-deployment", Guard: guard}); err != nil {
+		t.Fatal(err)
+	}
+	// Warm the pool before the checks start failing.
+	if err := pool.Ping(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	go guard.Run(ctx, 20*time.Millisecond)
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting until %s", what)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	failing.Store(true)
+	waitFor("unhealthy", func() bool { return errors.Is(guard.Ready(), db.ErrClusterUnchecked) })
+	if guard.Err() != nil {
+		t.Fatalf("latched: %v", guard.Err())
+	}
+	if _, err := pool.Exec(t.Context(), "SELECT 1"); err != nil {
+		t.Errorf("pooled connection while unhealthy: %v", err)
+	}
+	failing.Store(false)
+	waitFor("healthy again", func() bool { return guard.Ready() == nil })
+	if guard.Err() != nil {
+		t.Errorf("latched after recovery: %v", guard.Err())
+	}
+}
