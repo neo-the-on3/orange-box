@@ -97,10 +97,10 @@ class AppPreferencesRepositoryTest {
         )
         val defaults = repo.preferences.first().alerts
         assertEquals(io.github.neotheon3.orangebox.core.model.AlertPreferences(), defaults)
-        assertEquals("idling off by default", false, defaults.idling)
+        assertEquals("idling on by default", true, defaults.idling)
         assertEquals("voice off by default", false, defaults.voice)
         val changed = io.github.neotheon3.orangebox.core.model.AlertPreferences(
-            overspeed = false, idling = true, harsh = false, mil = false, sound = false, voice = true,
+            overspeed = false, idling = false, harsh = false, mil = false, sound = false, voice = true,
         )
         repo.setAlerts(changed)
         assertEquals(changed, repo.preferences.first().alerts)

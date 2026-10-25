@@ -5,12 +5,12 @@ enum class AlertKind { OVERSPEED, IDLING, HARSH_ACCEL, HARSH_BRAKE, MIL }
 
 /**
  * Which driving alerts play, and how. Each alert is toggled on its own; [sound] plays a short tone
- * (Orange Box's own sounds), [voice] also speaks it with the device's text-to-speech engine. Long idling
- * is off by default (it nags in traffic jams); voice is off by default.
+ * (Orange Box's own sounds), [voice] also speaks it with the device's text-to-speech engine. Every alert,
+ * long idling included (3 min standing still), is on by default; voice is off by default.
  */
 data class AlertPreferences(
     val overspeed: Boolean = true,
-    val idling: Boolean = false,
+    val idling: Boolean = true,
     val harsh: Boolean = true,
     val mil: Boolean = true,
     val sound: Boolean = true,
