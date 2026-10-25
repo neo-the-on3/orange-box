@@ -77,6 +77,27 @@ class TelemetryEngineTest {
         assertTrue(confirmed.fuelCut)
     }
 
+    @Test fun `drive-by-wire - fuel cut follows the pedal at rest, not the throttle plate (RDF1 drive 2)`() {
+        // Synthetic values shaped like the SX4 log: pedal rests at 13.7 %, the ECU holds the plate at 15-24 % on overrun.
+        val e = TelemetryEngine()
+        e.onSample(s(0, ObdPid.SPEED to 0.0, ObdPid.RPM to 760.0, ObdPid.THROTTLE to 16.1, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 3.5))
+        e.onSample(s(500, ObdPid.SPEED to 0.0, ObdPid.RPM to 750.0, ObdPid.THROTTLE to 14.5, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 3.4))
+        assertEquals(13.7, e.restPedalPercent!!, 1e-9)
+        val overrun = e.onSample(s(1_000, ObdPid.SPEED to 97.0, ObdPid.RPM to 4367.0, ObdPid.THROTTLE to 22.7, ObdPid.ACCELERATOR_PEDAL_D to 13.7,
+            ObdPid.MAF to 14.4, ObdPid.FUEL_SYSTEM_STATUS to FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT.toDouble())).instant
+        assertTrue("plate at 22.7 % but foot off: cut", overrun.fuelCut)
+        assertEquals(0.0, overrun.fuelFlowLph!!, 0.0)
+        val cruise = e.onSample(s(1_500, ObdPid.SPEED to 30.0, ObdPid.RPM to 2008.0, ObdPid.THROTTLE to 19.2, ObdPid.ACCELERATOR_PEDAL_D to 23.9, ObdPid.MAF to 8.5)).instant
+        assertFalse("foot on the pedal", cruise.fuelCut)
+        val closedLoop = e.onSample(s(2_000, ObdPid.SPEED to 22.0, ObdPid.RPM to 1500.0, ObdPid.THROTTLE to 16.9, ObdPid.ACCELERATOR_PEDAL_D to 13.7,
+            ObdPid.MAF to 5.8, ObdPid.FUEL_SYSTEM_STATUS to FuelSystemStatus.CLOSED_LOOP.toDouble())).instant
+        assertFalse("ECU still injecting (closed loop)", closedLoop.fuelCut)
+        val noStatus = e.onSample(s(2_500, ObdPid.SPEED to 40.0, ObdPid.RPM to 1800.0, ObdPid.THROTTLE to 21.0, ObdPid.ACCELERATOR_PEDAL_D to 14.1, ObdPid.MAF to 6.0)).instant
+        assertTrue("within 2 % of rest", noStatus.fuelCut)
+        e.reset()
+        assertNull(e.restPedalPercent)
+    }
+
     @Test fun `without a learned closed position the fixed 8 pct still applies, and a new connection relearns (#194)`() {
         val e = TelemetryEngine()
         assertFalse(e.onSample(s(0, ObdPid.SPEED to 45.0, ObdPid.RPM to 2100.0, ObdPid.THROTTLE to 16.1)).instant.fuelCut)
