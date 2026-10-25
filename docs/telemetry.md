@@ -103,7 +103,8 @@ Intervals between consecutive samples are integrated with the trapezoid rule. In
    `MAF = RPM/120 · V_d[m³] · VE · (MAP[Pa] · M_air / (R · T_intake[K])) · 1000`,
    with M_air = 0.0289647 kg/mol, R = 8.314462618 J/(mol·K), V_d from the vehicle (else 1.6 L) and VE by load
    (#194): 0.70 at MAP/baro ≤ 0.25 (idle, light load), rising linearly to 0.85 at MAP/baro 1.0 (wide open), baro
-   from PID 33 (else 101.3 kPa). A flat 0.85 overstated part-load fuel by up to ~20 %.
+   from PID 33 (else 101.3 kPa). A flat 0.85 overstated part-load fuel by up to ~20 %. (The SX4 reports MAF,
+   so it never uses this path; cars with MAP but no MAF, such as many K-series Suzukis, do.)
 
 Flow is 0 during a fuel cut. The source in use (`fuel_rate`, `maf`, `speed_density`) is logged as `fuel_source`
 whenever it changes, with the fuel type and displacement.
@@ -166,7 +167,7 @@ In debug builds the Simulator's "App readout (debug)" card shows the trip's cumu
 |---|---|---|
 | Stationary | speed < `stationaryKph` | 1 km/h |
 | Idling | stationary and RPM > 0 | – |
-| Fuel cut | speed ≥ 20 km/h, RPM ≥ 1000, and (#194) throttle within 3 % of the closed-throttle position learned per connection (lowest PID 11 while idling, ≤ 25 %), or ≤ 8 % before one is learned, unless PID 03 says closed loop (0x02); with no throttle: load ≤ 8 %, else PID 03 = 0x04. PID 03 is polled every tick | 20 km/h, 1000 rpm, 3 %, 8 %, 25 % (`fuelCutThrottleAboveClosedPercent`, `fuelCutMaxLoadPercent`, `closedThrottleMaxPercent`) |
+| Fuel cut | speed ≥ 20 km/h, RPM ≥ 1000, and: with the accelerator pedal (PID 49/4A) reported, pedal within 2 % of its rest position learned per connection (lowest reading while idling, ≤ 30 %), unless PID 03 says closed loop — drive-by-wire ECUs hold the throttle plate open on overrun (the SX4: 15–24 %); otherwise (#194) throttle within 3 % of the closed-throttle position learned per connection (lowest PID 11 while idling, ≤ 25 %), or ≤ 8 % before one is learned, unless PID 03 says closed loop (0x02); with no throttle: load ≤ 8 %, else PID 03 = 0x04. PID 03 is polled every tick | 20 km/h, 1000 rpm, 3 %, 8 %, 25 % (`fuelCutPedalAboveRestPercent`, `pedalRestMaxPercent`, `fuelCutThrottleAboveClosedPercent`, `fuelCutMaxLoadPercent`, `closedThrottleMaxPercent`) |
 | Eco | moving, RPM ≤ 2500 and abs(accel) ≤ 1.5 m/s² | 2500 rpm, 1.5 m/s² |
 | Overspeed | speed > threshold; ends below threshold − 3 km/h (hysteresis) | Settings → Driving dashboard, 40–200 km/h in 5 km/h steps, default 120; hysteresis 3 km/h |
 | Harsh acceleration | accel ≥ 3.0 m/s² (≈ 0.31 g), counted once per event | 3.0 m/s² |

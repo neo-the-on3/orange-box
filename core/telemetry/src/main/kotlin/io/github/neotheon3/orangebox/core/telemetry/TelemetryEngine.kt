@@ -118,6 +118,7 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
 
     fun reset() {
         closedThrottle = null
+        restPedal = null
         lastFuelSource = null
         last = null
         lastSnapshot = null
@@ -261,6 +262,10 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
      */
     private var closedThrottle: Double? = null
 
+    /** Accelerator pedal at rest, learned per connection as the lowest PID 49 (or 4A) reading while idling (RDF1). */
+    private var restPedal: Double? = null
+    val restPedalPercent: Double? get() = restPedal
+
     /** The learned closed-throttle position, % (null until the engine has idled with throttle data). */
     val closedThrottlePercent: Double? get() = closedThrottle
 
@@ -277,8 +282,18 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         if (throttle != null && idling && throttle <= config.closedThrottleMaxPercent) {
             closedThrottle = closedThrottle?.let { minOf(it, throttle) } ?: throttle
         }
+        val pedal = sample[ObdPid.ACCELERATOR_PEDAL_D] ?: sample[ObdPid.ACCELERATOR_PEDAL_E]
+        if (pedal != null && idling && pedal <= config.pedalRestMaxPercent) {
+            restPedal = restPedal?.let { minOf(it, pedal) } ?: pedal
+        }
         if (speed == null || rpm == null || speed < config.fuelCutMinKph || rpm < config.fuelCutMinRpm) return false
         val status = sample[ObdPid.FUEL_SYSTEM_STATUS]?.toInt()
+        // Drive-by-wire: the throttle plate isn't the driver's foot. The SX4's ECU holds it at 15–24 % on overrun
+        // (a dashpot), so the pedal is the better "foot off" signal when the car reports it (RDF1 drive 2).
+        val rest = restPedal
+        if (pedal != null && rest != null) {
+            return pedal - rest <= config.fuelCutPedalAboveRestPercent && status != FuelSystemStatus.CLOSED_LOOP
+        }
         if (throttle != null) {
             val closed = closedThrottle?.let { throttle - it <= config.fuelCutThrottleAboveClosedPercent }
                 ?: (throttle <= config.fuelCutMaxLoadPercent)

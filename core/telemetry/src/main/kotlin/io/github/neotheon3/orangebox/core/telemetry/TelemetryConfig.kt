@@ -51,6 +51,14 @@ data class TelemetryConfig(
     val fuelCutThrottleAboveClosedPercent: Double = 3.0,
     /** Idle throttle readings above this % aren't learned as "closed" (e.g. a fast idle with the pedal pressed). */
     val closedThrottleMaxPercent: Double = 25.0,
+    /**
+     * When the car reports the accelerator pedal (PID 49/4A): fuel cut needs the pedal within this many % of its
+     * learned rest position; this takes precedence over the throttle-plate rule (RDF1 drive 2: the SX4's pedal
+     * rests at 13.7 % exactly while the throttle plate sits anywhere from 14.5 to 24 % on overrun).
+     */
+    val fuelCutPedalAboveRestPercent: Double = 2.0,
+    /** Idle pedal readings above this % aren't learned as "at rest". */
+    val pedalRestMaxPercent: Double = 30.0,
     /** Eco driving: RPM ≤ this … */
     val ecoMaxRpm: Double = 2_500.0,
     /** … and |acceleration| ≤ this m/s² while moving. */
