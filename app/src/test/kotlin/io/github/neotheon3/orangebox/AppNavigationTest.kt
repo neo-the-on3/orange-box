@@ -78,8 +78,8 @@ class AppNavigationTest {
         walkOnboarding()
         compose.onNodeWithText("Backend: Off").assertIsDisplayed()
         compose.onNodeWithTag("home_settings").performClick()
-        compose.onNodeWithText("Server (advanced)").assertIsDisplayed()
-        compose.onNodeWithTag("settings_mode_fake").performClick()
+        compose.onNodeWithText("Server (advanced)").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("settings_mode_fake").performScrollTo().performClick()
         compose.onNodeWithTag("settings_back").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTextCount("Backend: Fake") > 0

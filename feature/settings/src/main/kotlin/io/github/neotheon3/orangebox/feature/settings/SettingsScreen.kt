@@ -146,66 +146,6 @@ fun SettingsScreen(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.settings_backend_section), style = MaterialTheme.typography.titleMedium)
-            Text(stringResource(R.string.settings_backend_help), style = MaterialTheme.typography.bodyMedium)
-            Column(Modifier.selectableGroup()) {
-                BackendMode.entries.forEach { mode ->
-                    val label = stringResource(
-                        when (mode) {
-                            BackendMode.OFF -> R.string.settings_mode_off
-                            BackendMode.FAKE -> R.string.settings_mode_fake
-                            BackendMode.REMOTE -> R.string.settings_mode_remote
-                        },
-                    )
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = state.config.mode == mode,
-                                onClick = { onModeSelected(mode) },
-                                role = Role.RadioButton,
-                            )
-                            .padding(vertical = 8.dp)
-                            .testTag("settings_mode_${mode.wireName}"),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = state.config.mode == mode, onClick = null)
-                        Text(label, modifier = Modifier.padding(start = 12.dp))
-                    }
-                }
-            }
-            if (state.config.mode == BackendMode.REMOTE) {
-                OutlinedTextField(
-                    value = state.urlDraft,
-                    onValueChange = onUrlChanged,
-                    label = { Text(stringResource(R.string.settings_base_url)) },
-                    placeholder = { Text(stringResource(R.string.settings_base_url_hint)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    isError = state.urlResult == BaseUrlValidator.Result.NotHttps ||
-                        state.urlResult == BaseUrlValidator.Result.Malformed,
-                    supportingText = state.urlResult?.let { result ->
-                        {
-                            Text(
-                                stringResource(
-                                    when (result) {
-                                        BaseUrlValidator.Result.Valid -> R.string.settings_url_saved
-                                        BaseUrlValidator.Result.Empty -> R.string.settings_url_cleared
-                                        BaseUrlValidator.Result.NotHttps -> R.string.settings_url_not_https
-                                        BaseUrlValidator.Result.Malformed -> R.string.settings_url_malformed
-                                    },
-                                ),
-                                modifier = Modifier.testTag("settings_url_result"),
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag("settings_base_url"),
-                )
-                Button(onClick = onSaveUrl, modifier = Modifier.testTag("settings_save_url")) {
-                    Text(stringResource(R.string.settings_save_url))
-                }
-            }
-            HorizontalDivider()
             Text(stringResource(R.string.settings_setup_section), style = MaterialTheme.typography.titleMedium)
             SetupRow(
                 stringResource(R.string.settings_vehicle), state.vehicleName ?: stringResource(R.string.settings_not_set),
@@ -236,6 +176,8 @@ fun SettingsScreen(
             AlertsSettingsSection(state.alerts, actions.onAlertsChanged)
             HorizontalDivider()
             CrashSettingsSection(state.crash, actions.crash)
+            HorizontalDivider()
+            ServerSettingsSection(state, onModeSelected, onUrlChanged, onSaveUrl)
             HorizontalDivider()
             Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
             Text(
@@ -268,4 +210,75 @@ internal fun permissionsSummaryRes(sdk: Int = android.os.Build.VERSION.SDK_INT):
     sdk >= android.os.Build.VERSION_CODES.TIRAMISU -> R.string.settings_permissions_summary
     sdk >= android.os.Build.VERSION_CODES.S -> R.string.settings_permissions_summary_bt_location
     else -> R.string.settings_permissions_summary_location
+}
+
+/** "Server (advanced)" (#62): Off (local only) is the default; Remote takes an https:// base URL only. */
+@Composable
+internal fun ServerSettingsSection(
+    state: SettingsUiState,
+    onModeSelected: (BackendMode) -> Unit,
+    onUrlChanged: (String) -> Unit,
+    onSaveUrl: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(stringResource(R.string.settings_backend_section), style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.settings_backend_help), style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.selectableGroup()) {
+            BackendMode.entries.forEach { mode ->
+                val label = stringResource(
+                    when (mode) {
+                        BackendMode.OFF -> R.string.settings_mode_off
+                        BackendMode.FAKE -> R.string.settings_mode_fake
+                        BackendMode.REMOTE -> R.string.settings_mode_remote
+                    },
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = state.config.mode == mode,
+                            onClick = { onModeSelected(mode) },
+                            role = Role.RadioButton,
+                        )
+                        .padding(vertical = 8.dp)
+                        .testTag("settings_mode_${mode.wireName}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = state.config.mode == mode, onClick = null)
+                    Text(label, modifier = Modifier.padding(start = 12.dp))
+                }
+            }
+        }
+        if (state.config.mode == BackendMode.REMOTE) {
+            OutlinedTextField(
+                value = state.urlDraft,
+                onValueChange = onUrlChanged,
+                label = { Text(stringResource(R.string.settings_base_url)) },
+                placeholder = { Text(stringResource(R.string.settings_base_url_hint)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                isError = state.urlResult == BaseUrlValidator.Result.NotHttps ||
+                    state.urlResult == BaseUrlValidator.Result.Malformed,
+                supportingText = state.urlResult?.let { result ->
+                    {
+                        Text(
+                            stringResource(
+                                when (result) {
+                                    BaseUrlValidator.Result.Valid -> R.string.settings_url_saved
+                                    BaseUrlValidator.Result.Empty -> R.string.settings_url_cleared
+                                    BaseUrlValidator.Result.NotHttps -> R.string.settings_url_not_https
+                                    BaseUrlValidator.Result.Malformed -> R.string.settings_url_malformed
+                                },
+                            ),
+                            modifier = Modifier.testTag("settings_url_result"),
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().testTag("settings_base_url"),
+            )
+            Button(onClick = onSaveUrl, modifier = Modifier.testTag("settings_save_url")) {
+                Text(stringResource(R.string.settings_save_url))
+            }
+        }
+    }
 }

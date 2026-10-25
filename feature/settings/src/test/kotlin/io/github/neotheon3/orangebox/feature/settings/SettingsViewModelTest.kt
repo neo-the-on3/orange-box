@@ -139,6 +139,12 @@ class SettingsViewModelTest {
         assertFalse(vm.uiState.value.diagnosticsPrompt)
     }
 
+    @Test fun `backend mode is off by default (#62)`() = runTest {
+        val vm = vm(FakeBackendConfigRepository())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
+        assertEquals(BackendMode.OFF, vm.uiState.value.config.mode)
+    }
+
     private fun vm(
         repo: FakeBackendConfigRepository,
         prefs: FakeAppPreferencesRepository = FakeAppPreferencesRepository(),
