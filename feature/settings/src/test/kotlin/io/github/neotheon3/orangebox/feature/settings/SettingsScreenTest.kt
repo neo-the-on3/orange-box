@@ -133,9 +133,9 @@ class SettingsScreenTest {
             }
         }
         compose.onNodeWithTag("settings_alert_overspeed").performScrollTo().assertIsOn().performClick()
-        compose.onNodeWithTag("settings_alert_idling").performScrollTo().assertIsOff().performClick()
+        compose.onNodeWithTag("settings_alert_idling").performScrollTo().assertIsOn().performClick()
         compose.onNodeWithTag("settings_alert_voice").performScrollTo().assertIsOff().performClick()
-        assertEquals(listOf(d.copy(overspeed = false), d.copy(idling = true), d.copy(voice = true)), changed)
+        assertEquals(listOf(d.copy(overspeed = false), d.copy(idling = false), d.copy(voice = true)), changed)
     }
 
     @Test fun `crash section toggles detection and edits the emergency contact (#60)`() {

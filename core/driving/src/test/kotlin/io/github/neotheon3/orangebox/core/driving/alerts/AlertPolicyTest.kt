@@ -68,7 +68,8 @@ class AlertPolicyTest {
 
     @Test fun `preferences toggle each alert, and nothing is audible without sound or voice`() {
         val d = AlertPreferences()
-        assertTrue(d.isEnabled(AlertKind.OVERSPEED)); assertFalse(d.isEnabled(AlertKind.IDLING))
+        assertTrue(d.isEnabled(AlertKind.OVERSPEED)); assertTrue("idling on by default", d.isEnabled(AlertKind.IDLING))
+        assertFalse(d.copy(idling = false).isEnabled(AlertKind.IDLING))
         assertTrue(d.isEnabled(AlertKind.HARSH_ACCEL)); assertTrue(d.isEnabled(AlertKind.HARSH_BRAKE)); assertTrue(d.isEnabled(AlertKind.MIL))
         assertFalse(d.copy(harsh = false).isEnabled(AlertKind.HARSH_BRAKE))
         assertTrue(d.audible)

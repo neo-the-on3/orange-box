@@ -80,7 +80,7 @@ class SettingsViewModelTest {
         val prefs = FakeAppPreferencesRepository()
         val vm = vm(FakeBackendConfigRepository(), prefs)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
-        val changed = io.github.neotheon3.orangebox.core.model.AlertPreferences(idling = true, voice = true)
+        val changed = io.github.neotheon3.orangebox.core.model.AlertPreferences(idling = false, voice = true)
         vm.onAlertsChanged(changed)
         assertEquals(changed, prefs.preferences.first().alerts)
         assertEquals(changed, vm.uiState.value.alerts)
