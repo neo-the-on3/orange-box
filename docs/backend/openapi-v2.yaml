@@ -87,7 +87,11 @@ info:
         failover behind the same address), or a cluster it can no longer check, answers `503`
         (`code=service_unavailable`) to every request instead of serving sync, until it is restarted. It
         notices within a bounded time, 20 s by default (the server's check interval, 10–30 s, plus up to 5 s),
-        however busy it is; clients retry, then get `deployment_changed`. (A server configured not to read
+        however busy it is, as long as its check can connect (it reports itself unhealthy, without answering
+        `503` to requests, after 3 failed checks in a row, and healthy again after a good one); clients retry,
+        then get `deployment_changed`. Writes accepted in that window go to the old cluster: the app gets its
+        trips back by re-uploading them after `deployment_changed`, but deletions and vehicle edits made in the
+        window are lost, so trips deleted in it may reappear. (A server configured not to read
         `system_identifier` can't notice this; its operators change the deployment id and restart instead.) Tokens are issued and read on the
         **primary** only, never on a read replica.
       - **Why a token was rejected (`reason`).** A `sync_window_expired` problem carries a machine-readable

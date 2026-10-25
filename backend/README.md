@@ -358,7 +358,23 @@ failover to another cluster behind the same address or pooler:
   connection is busy and still reaches the old cluster (a check on those
   can't see it). Every new pool connection is also checked once
   (`AfterConnect`), so a switch seen by a reconnect is caught at once.
-  There is still no per-request query.
+  There is still no per-request query. The bound assumes the check can
+  connect: a failed check pushes detection to the next good one (one
+  failure: up to 2 × interval + 5 s).
+- **Unchecked: 3 failed checks in a row make it unhealthy.** If the
+  background check fails 3 times in a row (about 45 s at the default; e.g.
+  the endpoint now rejects the server's credentials, `28P01`, or is
+  unreachable), the instance can't tell which cluster its pooled
+  connections reach: one ERROR `CLUSTER UNCHECKED`, and `GET /v1/health`
+  answers `503` so the orchestrator takes it out or restarts it (into a
+  fail-fast startup if the database is still unreachable). This doesn't
+  latch: requests are still served, and the next good check with the
+  pinned identity makes health `200` again (INFO).
+- **Writes in the detection window go to the old cluster.** Uploads,
+  deletions and vehicle edits accepted before the trip are committed to
+  the old cluster; clients get trips back by re-uploading after
+  `deployment_changed`, but deletions and vehicle edits from that window
+  are lost, so trips deleted in it may reappear.
 - **Fails closed.** Another `system_identifier`, or `42501`
   (`pg_control_system()` refused, so the cluster can't be checked: e.g.
   the new cluster revokes it), on a new connection or the background
