@@ -246,9 +246,14 @@ func typeDetail(t reflect.Type) string {
 	}
 }
 
+// statusClientClosedRequest is logged when the client disconnected before
+// the response (nginx's 499); the client never sees it.
+const statusClientClosedRequest = 499
+
 // response handles errors returned by strict handlers: a *problem.Problem is
-// sent as is, ErrNotImplemented becomes 501, a busy or unreachable database
-// a logged 503 (#178) and anything else is a logged 500.
+// sent as is, ErrNotImplemented becomes 501, a client disconnect 499 (INFO),
+// a busy or unreachable database a logged 503 (#178) and anything else is a
+// logged 500.
 func (e errorHandlers) response(w http.ResponseWriter, r *http.Request, err error) {
 	var p *problem.Problem
 	switch {
@@ -257,6 +262,13 @@ func (e errorHandlers) response(w http.ResponseWriter, r *http.Request, err erro
 	case errors.Is(err, api.ErrNotImplemented):
 		problem.Write(w, r, problem.New(http.StatusNotImplemented, problem.CodeNotImplemented,
 			"This operation is not implemented yet."))
+	case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
+		// The client went away mid-request: nobody reads the response, and
+		// it isn't a server error. 499 (nginx's "client closed request")
+		// keeps it out of 5xx alerting; the access log logs it at INFO.
+		e.logger.InfoContext(r.Context(), "client disconnected",
+			slog.String("request_id", reqctx.RequestID(r.Context())))
+		w.WriteHeader(statusClientClosedRequest)
 	default:
 		if sp := storageProblem(e.classify, err); sp != nil {
 			e.logger.WarnContext(r.Context(), "storage busy or unavailable",

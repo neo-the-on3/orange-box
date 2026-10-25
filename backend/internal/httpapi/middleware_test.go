@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/logging"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
+	"github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
 func TestRequestIDMiddleware(t *testing.T) {
@@ -257,5 +259,38 @@ func TestNewRouterRequiresDeps(t *testing.T) {
 	t.Parallel()
 	if _, err := NewRouter(Deps{}); err == nil {
 		t.Error("NewRouter accepted empty deps")
+	}
+}
+
+// TestResponseClientDisconnect: a handler failing with context.Canceled
+// because the client went away is a 499 logged at INFO, not a 500; the
+// same error while the request is still live stays a 500.
+func TestResponseClientDisconnect(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	e := errorHandlers{logger: logging.New(&logs, slog.LevelDebug), classify: func(error) store.Failure { return store.FailureOther }}
+	ctx, cancel := context.WithCancel(reqctx.WithRequestID(context.Background(), "rid"))
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	e.response(rec, req, fmt.Errorf("query: %w", context.Canceled))
+	if rec.Code != statusClientClosedRequest || strings.Contains(logs.String(), `"level":"ERROR"`) {
+		t.Errorf("disconnect: %d / %s", rec.Code, logs.String())
+	}
+
+	// Logged by the access log at INFO too.
+	logs.Reset()
+	h := accessLog(logging.New(&logs, slog.LevelDebug))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.response(w, r, context.Canceled)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !strings.Contains(logs.String(), `"status":499`) || strings.Contains(logs.String(), `"level":"ERROR"`) {
+		t.Errorf("access log: %s", logs.String())
+	}
+
+	rec = httptest.NewRecorder()
+	e.response(rec, req.WithContext(context.Background()), context.Canceled)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("live request: %d", rec.Code)
 	}
 }
