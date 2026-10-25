@@ -184,17 +184,18 @@ through for the Detailed Info grid.
 
 | Field | Rule | Default |
 |---|---|---|
-| `ecoLevel` | Only while moving (else 0). Petrol/LPG: engine load (PID 04) < 50 → 1, < 80 → 2, < 90 → 3, else 4. Diesel: boost = MAP − baro (PID 0B − 33, baro 101.3 kPa if missing) < 50 / < 80 / < 100 kPa. 0 without the PID | `ecoLoadThresholds` 50/80/90 %, `ecoBoostThresholdsKpa` 50/80/100 |
-| `intensityLevel` | RPM-panel tint (#198). Only while moving (else 0): `max(ecoLevel, step)` where step = 4 (red) on rpm > 3500, accel > 2.5 m/s² or a harsh-accel event, else 2 (amber) on rpm > 2500 or accel > 1.5 m/s², else 0. Braking never raises it | `intensity` (`IntensityThresholds`: `amberRpm`, `amberAccelMps2`, `redRpm`, `redAccelMps2`) |
+| `ecoLevel` | CarooLive's `calcEcoLevel`, which also tints the RPM panel (#198). Only while moving with the engine on (rpm not 0), else 0. Petrol/LPG (and here also CNG/other): engine load (PID 04) < 50 → 1, < 80 → 2, < 90 → 3, else 4. Diesel: boost = MAP − baro (PID 0B − 33, baro 100 kPa if missing) < 50 / < 80 / < 100 kPa; a diesel without MAP has no level. 0 without the PID | `ecoLoadThresholds` 50/80/90 %, `ecoBoostThresholdsKpa` 50/80/100, `ecoDefaultBaroKpa` 100 |
 | `coolantWarning` | coolant ≥ 100 °C (the dashboard lamp; `Warning.COOLANT_OVERHEAT` stays at 110 °C) | `coolantWarningC` |
 | `batteryWarning` | engine running (RPM > 0) and voltage outside 13.2–14.8 V | `chargingVoltsRange` |
 | `instantKmPerL` | fuel cut → 30 (full bar); below 5 km/h → 0; else speed / fuel flow, capped at 30; null without speed or flow | `instantKmPerLMax` |
 | `milOn`, `dtcCount` | PID 01 01 bit 7 and A & 0x7F; null if not read | – |
 | `TripTotals.economyKmPerL` | distance / litres once ≥ 0.1 km and some fuel is burned (the dashboard caps it at 99.9) | – |
 
-The panel glows are mapped in `core:dashboard-ui` (`DashboardStateMapper`): the RPM panel is green during fuel cut,
-else tinted by `intensityLevel` with the legacy mapping (1 green, 2–3 amber, 4 red) and untinted only when stopped or
-without data (#198). So 130 km/h at 3,510 rpm is red, never green (#138) or blank. The ECO lamp keeps the stricter eco
+The panel glows are mapped in `core:dashboard-ui` (`DashboardStateMapper`): the RPM panel is tinted by `ecoLevel`
+exactly as CarooLive's `ObdClusterFragment.setClusterBackground` did (1 green, 2–3 amber, 4–5 red, else untinted:
+stopped, engine off or no data). It is a load (petrol) / boost (diesel) indicator, not a fuel-economy one: CarooLive
+showed economy on the instant-km/L bar (`CALC_FUEL_ECONOMY`, full during fuel cut). Fuel cut has no panel tint of its
+own; on overrun the calculated load is low, so the panel is green (#198). The ECO lamp keeps the stricter eco
 rule (moving, rpm ≤ 2500 and |accel| ≤ 1.5 m/s²): it is never lit while no eco time is being counted and load only
 shades it green/yellow (#138); the speed panel is red during overspeed, else orange during a
 harsh accel/brake event (priority overspeed > harsh > none). Glows animate over 300 ms unless "Remove animations" is on.

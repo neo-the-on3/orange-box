@@ -118,7 +118,7 @@ object DashboardStateMapper {
             fuelUsedL = decimal(trip.fuelLitres),
             tripKm = decimal(units.distance(trip.distanceKm)),
             tripTime = elapsed(trip.durationS),
-            leftGlow = leftGlow(i.fuelCut, i.intensityLevel),
+            leftGlow = leftGlow(i.ecoLevel),
             rightGlow = rightGlow(i.overspeed, i.harshAccel || i.harshBrake),
             detailPages = detailPages(snapshot, activePids, units),
             speedUnit = units.speedLabel,
@@ -131,7 +131,7 @@ object DashboardStateMapper {
     private fun capDisplay(v: Double) = v.coerceAtMost(TRIP_KM_PER_L_CAP)
 
     /**
-     * ECO lamp level (#138); the RPM-panel tint follows [InstantTelemetry.intensityLevel] instead (#198). Off whenever eco time is not counted (moving, rpm <= 2500 and
+     * ECO lamp level (#138); the RPM-panel tint follows the plain load/boost level instead (#198, [leftGlow]). Off whenever eco time is not counted (moving, rpm <= 2500 and
      * |accel| <= 1.5 m/s², see docs/telemetry.md), e.g. at 130 km/h / 3,500 rpm even with light load.
      * While eco, the load/boost level only shades it: light load green, moderate or heavy load yellow.
      */
@@ -142,14 +142,15 @@ object DashboardStateMapper {
     }
 
     /**
-     * RPM panel, legacy mapping (1 green, 2–3 amber, 4+ red) of the driving-intensity level (#198);
-     * fuel cut (green, FUEL-CUT lit) wins over the tint.
+     * RPM panel tint, exactly CarooLive's `ObdClusterFragment.setClusterBackground` (#198): eco level 1 green
+     * (`bg_left_green`), 2–3 amber (`bg_left_yellow`), 4–5 red (`bg_left_red`), anything else untinted. The level is
+     * the load/boost band ([InstantTelemetry.ecoLevel]), 0 when stopped. Fuel cut has no tint of its own (legacy:
+     * the FUEL-CUT lamp lights and the instant-economy bar fills; the panel keeps its load colour, normally green).
      */
-    fun leftGlow(fuelCut: Boolean, intensityLevel: Int): PanelGlow = when {
-        fuelCut -> PanelGlow.FUEL_CUT
-        intensityLevel == 1 -> PanelGlow.ECO_GREEN
-        intensityLevel in 2..3 -> PanelGlow.ECO_YELLOW
-        intensityLevel >= 4 -> PanelGlow.ECO_RED
+    fun leftGlow(ecoLevel: Int): PanelGlow = when (ecoLevel) {
+        1 -> PanelGlow.ECO_GREEN
+        2, 3 -> PanelGlow.ECO_YELLOW
+        4, 5 -> PanelGlow.ECO_RED
         else -> PanelGlow.NONE
     }
 

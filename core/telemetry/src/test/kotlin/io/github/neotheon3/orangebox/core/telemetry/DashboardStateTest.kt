@@ -33,44 +33,38 @@ class DashboardStateTest {
         assertEquals(1, instant(moving, ObdPid.INTAKE_MAP to 150.0, ObdPid.BAROMETRIC_PRESSURE to 101.0, ObdPid.ENGINE_LOAD to 99.0, vehicle = diesel).ecoLevel)
         assertEquals(3, instant(moving, ObdPid.INTAKE_MAP to 181.0, ObdPid.BAROMETRIC_PRESSURE to 101.0, vehicle = diesel).ecoLevel)
         assertEquals(4, instant(moving, ObdPid.INTAKE_MAP to 201.0, ObdPid.BAROMETRIC_PRESSURE to 101.0, vehicle = diesel).ecoLevel)
-        // No baro: standard 101.3 kPa → 151.3 − 101.3 = 50 → 2
-        assertEquals(2, instant(moving, ObdPid.INTAKE_MAP to 151.3, vehicle = diesel).ecoLevel)
+        // No baro: legacy default 100 kPa → 150 − 100 = 50 → 2
+        assertEquals(2, instant(moving, ObdPid.INTAKE_MAP to 150.0, vehicle = diesel).ecoLevel)
+        assertEquals("legacy: diesel without MAP has no level (no load fallback)", 0, instant(moving, ObdPid.ENGINE_LOAD to 95.0, vehicle = diesel).ecoLevel)
     }
 
-    @Test fun `intensity level - legacy load bands raised by the rpm and acceleration step, never capped (#198)`() {
+    @Test fun `RPM panel level is exactly the legacy load band, per level including red (#198)`() {
         val moving = ObdPid.SPEED to 40.0
-        val calm = ObdPid.RPM to 1800.0
-        assertEquals(1, instant(moving, calm, ObdPid.ENGINE_LOAD to 30.0).intensityLevel)
-        assertEquals(2, instant(moving, calm, ObdPid.ENGINE_LOAD to 60.0).intensityLevel)
-        assertEquals(3, instant(moving, calm, ObdPid.ENGINE_LOAD to 85.0).intensityLevel)
-        assertEquals("heavy load is red", 4, instant(moving, calm, ObdPid.ENGINE_LOAD to 92.0).intensityLevel)
-        assertEquals("rpm > 2500: at least amber", 2, instant(moving, ObdPid.RPM to 2800.0, ObdPid.ENGINE_LOAD to 30.0).intensityLevel)
-        assertEquals("load band wins when higher", 3, instant(moving, ObdPid.RPM to 2800.0, ObdPid.ENGINE_LOAD to 85.0).intensityLevel)
-        assertEquals("rpm > 3500: red", 4, instant(moving, ObdPid.RPM to 3600.0, ObdPid.ENGINE_LOAD to 30.0).intensityLevel)
-        assertEquals("stopped", 0, instant(ObdPid.SPEED to 0.0, ObdPid.RPM to 4000.0, ObdPid.ENGINE_LOAD to 95.0).intensityLevel)
-        assertEquals("moving, no load or rpm", 0, instant(moving).intensityLevel)
-        assertEquals("rpm only", 4, instant(moving, ObdPid.RPM to 3600.0).intensityLevel)
+        val running = ObdPid.RPM to 1800.0
+        assertEquals("green", 1, instant(moving, running, ObdPid.ENGINE_LOAD to 30.0).ecoLevel)
+        assertEquals("amber", 2, instant(moving, running, ObdPid.ENGINE_LOAD to 60.0).ecoLevel)
+        assertEquals("amber", 3, instant(moving, running, ObdPid.ENGINE_LOAD to 85.0).ecoLevel)
+        assertEquals("red", 4, instant(moving, running, ObdPid.ENGINE_LOAD to 92.0).ecoLevel)
+        assertEquals("red at 100 %", 4, instant(moving, running, ObdPid.ENGINE_LOAD to 100.0).ecoLevel)
+        // No rpm/acceleration step any more: CarooLive had none.
+        assertEquals("high rpm, light load: green", 1, instant(moving, ObdPid.RPM to 4200.0, ObdPid.ENGINE_LOAD to 30.0).ecoLevel)
     }
 
-    @Test fun `intensity level - acceleration escalates, braking does not (#198)`() {
-        fun run(vararg speeds: Double): InstantTelemetry {
-            val e = TelemetryEngine()
-            var last: InstantTelemetry? = null
-            speeds.forEachIndexed { k, v ->
-                last = e.onSample(VehicleSample(k * 500L, mapOf(ObdPid.SPEED to v, ObdPid.RPM to 2000.0, ObdPid.ENGINE_LOAD to 30.0))).instant
-            }
-            return last!!
-        }
-        // +7.2 km/h per s = 2.0 m/s² → amber; +10.8 km/h per s = 3.0 m/s² → red (harsh accel too).
-        assertEquals(2, run(30.0, 33.6, 37.2).intensityLevel)
-        assertEquals(4, run(30.0, 35.4, 40.8).intensityLevel)
-        assertEquals("braking keeps the load band", 1, run(60.0, 50.0, 40.0).intensityLevel)
+    @Test fun `RPM panel level at idle, stopped, engine off and during fuel cut (#198)`() {
+        assertEquals("idle at a light", 0, instant(ObdPid.SPEED to 0.0, ObdPid.RPM to 750.0, ObdPid.ENGINE_LOAD to 35.0).ecoLevel)
+        assertEquals("stopped, revving", 0, instant(ObdPid.SPEED to 0.0, ObdPid.RPM to 4000.0, ObdPid.ENGINE_LOAD to 95.0).ecoLevel)
+        assertEquals("rolling with the engine off", 0, instant(ObdPid.SPEED to 20.0, ObdPid.RPM to 0.0, ObdPid.ENGINE_LOAD to 0.0).ecoLevel)
+        assertEquals("no load PID", 0, instant(ObdPid.SPEED to 40.0, ObdPid.RPM to 1800.0).ecoLevel)
+        // Overrun at closed throttle: a fuel cut, low calculated load → green, like CarooLive.
+        val cut = instant(ObdPid.SPEED to 60.0, ObdPid.RPM to 2500.0, ObdPid.THROTTLE to 5.0, ObdPid.ENGINE_LOAD to 20.0)
+        assertTrue(cut.fuelCut)
+        assertEquals(1, cut.ecoLevel)
     }
 
-    @Test fun `intensity thresholds are configurable (#198)`() {
-        val e = TelemetryEngine(TelemetryConfig(intensity = IntensityThresholds(amberRpm = 2_000.0, redRpm = 3_000.0)))
-        val i = e.onSample(VehicleSample(0, mapOf(ObdPid.SPEED to 50.0, ObdPid.RPM to 3_100.0, ObdPid.ENGINE_LOAD to 20.0))).instant
-        assertEquals(4, i.intensityLevel)
+    @Test fun `load bands are configurable (#198)`() {
+        val e = TelemetryEngine(TelemetryConfig(ecoLoadThresholds = listOf(40.0, 60.0, 75.0)))
+        val i = e.onSample(VehicleSample(0, mapOf(ObdPid.SPEED to 50.0, ObdPid.RPM to 3_100.0, ObdPid.ENGINE_LOAD to 76.0))).instant
+        assertEquals(4, i.ecoLevel)
     }
 
     @Test fun `coolant warning from 100 C`() {
