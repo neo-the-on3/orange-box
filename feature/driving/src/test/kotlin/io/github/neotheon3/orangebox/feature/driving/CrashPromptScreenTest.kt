@@ -123,6 +123,18 @@ class CrashPromptScreenTest {
         assertTrue(body, body.contains("https://www.openstreetmap.org/?mlat=12.97160&mlon=77.59457"))
     }
 
+    @Test fun `sms goes to the emergency contact from Settings (#60)`() {
+        kotlinx.coroutines.runBlocking { prefs.setCrash(CrashPreferences(countdownSeconds = 10, contactNumber = "+91 98765 43210", contactName = "Asha")) }
+        show()
+        monitor.injectImpact()
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithTag("crash_sms").assertTextEquals("Text my location to Asha")
+        compose.onNodeWithTag("crash_sms").performClick()
+        val sms = nextStarted()!!
+        assertEquals("smsto:%2B919876543210", sms.dataString)
+        compose.onNodeWithTag("crash_call").assertIsDisplayed()
+    }
+
     @Test fun `manual prompt from the hazard button has no countdown`() {
         show()
         monitor.showManual()

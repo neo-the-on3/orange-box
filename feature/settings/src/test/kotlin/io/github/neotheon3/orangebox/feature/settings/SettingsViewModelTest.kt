@@ -86,6 +86,49 @@ class SettingsViewModelTest {
         assertEquals(changed, vm.uiState.value.alerts)
     }
 
+    @Test fun `typed emergency contact is validated before it is saved (#60)`() = runTest {
+        val prefs = FakeAppPreferencesRepository()
+        val vm = vm(FakeBackendConfigRepository(), prefs)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
+        vm.onEditContact()
+        assertEquals("", vm.uiState.value.crash.contactDraft)
+        vm.onContactDraftChanged("12")
+        vm.onSaveContact()
+        assertTrue(vm.uiState.value.crash.contactError)
+        assertNull(prefs.preferences.first().crash.contactNumber)
+        vm.onContactDraftChanged("+91 98765-43210")
+        assertFalse(vm.uiState.value.crash.contactError)
+        vm.onSaveContact()
+        assertNull(vm.uiState.value.crash.contactDraft)
+        assertEquals("+919876543210", prefs.preferences.first().crash.contactNumber)
+        assertEquals("+919876543210", vm.uiState.value.crash.prefs.contactNumber)
+    }
+
+    @Test fun `picked contact is stored with its name, and can be removed (#60)`() = runTest {
+        val prefs = FakeAppPreferencesRepository()
+        val vm = vm(FakeBackendConfigRepository(), prefs)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
+        vm.onContactPicked(PickedContact("Asha", "098765 43210"))
+        assertEquals("098765" + "43210", prefs.preferences.first().crash.contactNumber)
+        assertEquals("Asha", prefs.preferences.first().crash.contactName)
+        vm.onContactPicked(PickedContact("Office", "ext. 12"))
+        assertTrue("unusable pick shows an error", vm.uiState.value.crash.contactError)
+        assertEquals("and keeps the old contact", "Asha", prefs.preferences.first().crash.contactName)
+        vm.onClearContact()
+        assertNull(prefs.preferences.first().crash.contactNumber)
+        assertNull(prefs.preferences.first().crash.contactName)
+    }
+
+    @Test fun `crash detection settings keep the contact (#60)`() = runTest {
+        val prefs = FakeAppPreferencesRepository()
+        val vm = vm(FakeBackendConfigRepository(), prefs)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
+        vm.onContactPicked(PickedContact("Asha", "+919876543210"))
+        vm.onCrashChanged(io.github.neotheon3.orangebox.core.model.CrashPreferences(detectionEnabled = false, thresholdG = 6.0, countdownSeconds = 45))
+        val c = prefs.preferences.first().crash
+        assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences(false, 6.0, 45, "+919876543210", "Asha"), c)
+    }
+
     private fun vm(
         repo: FakeBackendConfigRepository,
         prefs: FakeAppPreferencesRepository = FakeAppPreferencesRepository(),

@@ -36,7 +36,7 @@ interface AppPreferencesRepository {
     /** Stores the dashboard settings (overspeed clamped, invalid emergency numbers dropped to the default). */
     suspend fun setDashboard(dashboard: DashboardPreferences)
     suspend fun setMapTilesEnabled(enabled: Boolean)
-    /** Stores the crash-detection settings (threshold and countdown clamped). */
+    /** Stores the crash-detection settings (threshold and countdown clamped, an invalid contact number dropped). */
     suspend fun setCrash(crash: CrashPreferences)
     /** Stores the display units; from then on they no longer follow the device country. */
     suspend fun setUnits(units: UnitPreferences)
@@ -67,6 +67,8 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                 detectionEnabled = p[CRASH_ENABLED] ?: true,
                 thresholdG = CrashPreferences.clampThreshold(p[CRASH_THRESHOLD] ?: CrashPreferences.DEFAULT_THRESHOLD_G),
                 countdownSeconds = CrashPreferences.clampCountdown(p[CRASH_COUNTDOWN] ?: CrashPreferences.DEFAULT_COUNTDOWN_S),
+                contactNumber = p[CRASH_CONTACT_NUMBER],
+                contactName = p[CRASH_CONTACT_NAME],
             ),
             units = p[UNITS_DISTANCE]?.let { d ->
                 UnitPreferences(
@@ -110,6 +112,10 @@ class DataStoreAppPreferencesRepository @Inject constructor(
             it[CRASH_ENABLED] = crash.detectionEnabled
             it[CRASH_THRESHOLD] = CrashPreferences.clampThreshold(crash.thresholdG)
             it[CRASH_COUNTDOWN] = CrashPreferences.clampCountdown(crash.countdownSeconds)
+            val number = CrashPreferences.normalizeContactNumber(crash.contactNumber)
+            val name = crash.contactName?.trim()?.takeIf { n -> n.isNotEmpty() && number != null }
+            if (number == null) it.remove(CRASH_CONTACT_NUMBER) else it[CRASH_CONTACT_NUMBER] = number
+            if (name == null) it.remove(CRASH_CONTACT_NAME) else it[CRASH_CONTACT_NAME] = name
         }
     }
 
@@ -153,6 +159,8 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val CRASH_ENABLED = booleanPreferencesKey("crash_detection_enabled")
         val CRASH_THRESHOLD = doublePreferencesKey("crash_threshold_g")
         val CRASH_COUNTDOWN = intPreferencesKey("crash_countdown_s")
+        val CRASH_CONTACT_NUMBER = stringPreferencesKey("crash_contact_number")
+        val CRASH_CONTACT_NAME = stringPreferencesKey("crash_contact_name")
         val UNITS_DISTANCE = stringPreferencesKey("units_distance")
         val UNITS_ECONOMY = stringPreferencesKey("units_economy")
         val UNITS_TEMPERATURE = stringPreferencesKey("units_temperature")
