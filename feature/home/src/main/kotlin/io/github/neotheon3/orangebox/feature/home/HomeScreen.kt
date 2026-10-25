@@ -45,6 +45,7 @@ fun HomeRoute(
     onOpenDashboard: () -> Unit,
     extraMenuEntries: List<HomeMenuEntry> = emptyList(),
     onOpenTrips: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -54,6 +55,7 @@ fun HomeRoute(
         onOpenDashboard = onOpenDashboard,
         extraMenuEntries = extraMenuEntries,
         onOpenTrips = onOpenTrips,
+        onOpenDiagnostics = onOpenDiagnostics,
         onObdConnect = viewModel::onConnect,
         onObdRetry = viewModel::onRetry,
         onObdDisconnect = viewModel::onDisconnect,
@@ -71,6 +73,7 @@ fun HomeScreen(
     onObdRetry: () -> Unit = {},
     onObdDisconnect: () -> Unit = {},
     onOpenTrips: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -79,6 +82,12 @@ fun HomeScreen(
                 actions = {
                     IconButton(onClick = onOpenTrips, modifier = Modifier.testTag("home_trips")) {
                         Icon(Icons.Filled.DateRange, contentDescription = stringResource(R.string.home_open_trips))
+                    }
+                    IconButton(onClick = onOpenDiagnostics, modifier = Modifier.testTag("home_diagnostics")) {
+                        Icon(
+                            io.github.neotheon3.orangebox.core.dashboardui.DashboardIcons.MilEngine,
+                            contentDescription = stringResource(R.string.home_open_diagnostics),
+                        )
                     }
                     IconButton(onClick = onOpenSettings, modifier = Modifier.testTag("home_settings")) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.home_open_settings))

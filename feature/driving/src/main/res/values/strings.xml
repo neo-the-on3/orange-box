@@ -15,8 +15,4 @@
     <string name="emergency_no_dialer">No phone app found on this device</string>
     <string name="dialog_close">Close</string>
 
-    <string name="diagnostics_mil_on">on</string>
-    <string name="diagnostics_mil_off">off</string>
-    <string name="diagnostics_unknown">unknown</string>
-    <string name="diagnostics_body">Check-engine lamp (MIL): %1$s\nStored trouble codes: %2$s\n\nThe full Diagnostics screen with code details comes in a later update.</string>
 </resources>
