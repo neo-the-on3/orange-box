@@ -93,8 +93,8 @@ Modules are added when a milestone first needs them. M0 creates only the ones it
 | **M4** | `DrivingService` FGS + notification "Start driving" (no background activity launch; full-screen intent only if permitted), driving dashboard **mimicking the legacy CarooLive dashboard** (clusters, centre FUEL/TRIP cards, Detailed Info. grid; own artwork, see `docs/ui/LEGACY_OBD_UI.md`), Home Live data card as a mini dashboard, trip recording (Room) |
 | **M5** | Trips: history (calendar, **Material 3**), detail (keyless map, metrics, speed-zone chart), aggregate stats (local; Material 3 with legacy hierarchy) |
 | **M6** | Diagnostics **mimicking the legacy screen** (10 DTC-group lamps, vehicle illustration, message bar), group detail, clear with confirmation, "Car Diagnosing…" prompt at drive start |
-| **M7** | Crash prompt: accelerometer impact detection while driving → countdown prompt → dialer / SMS app intents (no CALL_PHONE/SEND_SMS) |
-| **M8** | Settings: units, alerts/sounds (new assets)/TTS, crash contact, Server (advanced) |
+| **M7** | Crash prompt: accelerometer impact detection while driving → countdown prompt → dialer / SMS app intents (no CALL_PHONE/SEND_SMS). See `docs/crash.md` |
+| **M8** | Settings: units, alerts/sounds (new assets)/TTS, crash contact, vehicle management, drive-start diagnostics toggle, Server (advanced). See `docs/settings.md` |
 | **M9** *(optional)* | Remote/Fake backend: Retrofit per `openapi.yaml`, upload queue + WorkManager, rankings/points screens (Remote only) |
 | **M10** | Polish: a11y, dark theme, localisation scaffold, R8 release build, secret scan in CI |
 

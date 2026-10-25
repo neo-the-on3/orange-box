@@ -10,3 +10,17 @@ Things CI and the simulator cannot prove. Tick them on a real phone + ELM327 don
 - [ ] Turn the dongle off while connected: the card goes to *Retry 1/5 in 2 s* and reconnects when the dongle comes back.
 - [ ] Leave the dongle off: after 5 retries (2, 4, 8, 16, 30 s) the card shows *Failed* with a Retry button; Retry starts again at the first attempt.
 - [ ] Ignition off / no vehicle: probe reports an error, no crash.
+
+## Crash prompt (M7)
+- [ ] Knock the phone on a table while connected and parked: no prompt (not moving).
+- [ ] Drop the phone onto a cushion while driving (passenger): no prompt (free fall is rejected).
+- [ ] Simulator → "Inject impact": the countdown shows over every screen; with the app in the background a full-screen notification appears.
+- [ ] Countdown reaching 0 opens the dialer with the number filled in; nothing is called.
+- [ ] "Text my location" opens the SMS app with the emergency contact and an OpenStreetMap link; nothing is sent.
+
+## Settings (M8)
+- [ ] Choose an emergency contact with the system picker: no contacts permission prompt appears.
+- [ ] Units: switch to mi / mpg / °F and check the dashboard, Home card, trips and notification.
+- [ ] Alerts: overspeed tone plays over music; with voice on, the TTS engine speaks it.
+- [ ] Turn off "Check the car when a drive starts": the next drive shows no Car Diagnosing prompt.
+

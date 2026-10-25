@@ -42,7 +42,7 @@ from a real car. The real-device checklist asks for a phone-drop and pothole che
   open the dialer by itself, so a tap is needed.
 
 The emergency number is the dashboard setting (country default: 112, 911, 999 and so on). The SMS
-recipient is the crash contact from Settings (M8); without one, the SMS app asks for it.
+recipient is the emergency contact from Settings → Crash detection (M8 #60, see `docs/settings.md`); without one, the SMS app asks for it.
 
 ## Debug
 
