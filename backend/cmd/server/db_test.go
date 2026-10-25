@@ -284,3 +284,38 @@ func accessToken(t *testing.T, base, email string) string {
 	}
 	return tok.AccessToken
 }
+
+// TestIdentityCommand: `server identity` prints the digest the server logs
+// at startup (and nothing raw), for deploy checks.
+func TestIdentityCommand(t *testing.T) {
+	t.Parallel()
+	url := dbtest.NewDatabase(t)
+	env := map[string]string{"ENV": "ci", "DATABASE_URL": url, "SYNC_DEPLOYMENT_ID": "prod-check-1"}
+	getenv := func(k string) string { return env[k] }
+	var out bytes.Buffer
+	if code := identityCommand(nil, getenv, &out); code != 0 {
+		t.Fatalf("exit %d: %s", code, out.String())
+	}
+	got := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(got, "identity=d1:") || !strings.HasSuffix(got, " source=cluster_and_deployment_id") || strings.Contains(got, "prod-check-1") {
+		t.Fatalf("output %q", got)
+	}
+	// The running server logs the same digest.
+	var logs syncBuffer
+	startServer(t, dbConfig(t, url, map[string]string{"SYNC_DEPLOYMENT_ID": "prod-check-1", "MIGRATE_ON_START": "true"}), &logs)
+	digest := strings.Fields(strings.TrimPrefix(got, "identity="))[0]
+	if !strings.Contains(logs.String(), `"identity":"`+digest+`"`) {
+		t.Errorf("server logs don't show %s: %s", digest, logs.String())
+	}
+	env["SYNC_IDENTITY_SOURCE"] = "deployment_id_only"
+	out.Reset()
+	if code := identityCommand(nil, getenv, &out); code != 0 || strings.Contains(out.String(), digest) || !strings.Contains(out.String(), "source=deployment_id_only") {
+		t.Errorf("deployment_id_only: %d %q", code, out.String())
+	}
+	if code := identityCommand([]string{"x"}, getenv, &out); code != 2 {
+		t.Errorf("usage: exit %d", code)
+	}
+	if code := identityCommand(nil, func(k string) string { return map[string]string{"ENV": "ci"}[k] }, &out); code != 1 {
+		t.Errorf("no DATABASE_URL: exit %d", code)
+	}
+}
