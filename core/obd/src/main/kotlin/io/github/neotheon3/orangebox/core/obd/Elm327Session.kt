@@ -47,11 +47,26 @@ enum class ObdProtocol(val code: Char, val label: String, val isCan: Boolean) {
 class Elm327Session(
     private val transport: ObdTransport,
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MS,
+    /**
+     * Polling speed-ups for real dongles (#193): `ATAT2` (aggressive adaptive timing) after the protocol is
+     * known and, on CAN with a single answering ECU, the expected-response count (`010D1`) so the adapter
+     * returns as soon as the reply arrives instead of waiting out its receive timeout. Falls back to plain
+     * requests if the adapter rejects the count with `?`.
+     */
+    private val fastPolling: Boolean = false,
 ) {
     private val mutex = Mutex()
 
     var info: Elm327Info? = null
         private set
+
+    /** ECUs that answered the `0100` probe (lines with a `41 00` header). */
+    private var probeResponders = 0
+    @Volatile private var countHintRejected = false
+
+    /** Whether mode 01 requests currently carry the response-count hint. */
+    val usesResponseCount: Boolean
+        get() = fastPolling && !countHintRejected && info?.protocol?.isCan == true && probeResponders == 1
 
     /** Resets and configures the adapter, then probes the vehicle with `0100`. */
     suspend fun initialize(): Elm327Info {
@@ -60,7 +75,11 @@ class Elm327Session(
         val voltage = parseVoltage(command("ATRV"))
         probe()
         val protocol = detectProtocol()
-        OrangeLog.i(OrangeLog.Areas.OBD, "protocol_detected", "protocol" to protocol.name, "can" to protocol.isCan, "adapter" to id)
+        if (fastPolling) command("ATAT2")
+        OrangeLog.i(
+            OrangeLog.Areas.OBD, "protocol_detected", "protocol" to protocol.name, "can" to protocol.isCan, "adapter" to id,
+            "ecus" to probeResponders, "response_count" to (fastPolling && protocol.isCan && probeResponders == 1),
+        )
         return Elm327Info(id, protocol, voltage).also { info = it }
     }
 
@@ -88,7 +107,10 @@ class Elm327Session(
                 raw.contains("BUS INIT", ignoreCase = true) && raw.contains("ERROR", ignoreCase = true) ->
                     throw ObdError.UnsupportedProtocol("Bus init failed")
             }
-            if (parseResponse(raw, 0x01, 0x00, minBytes = 4) != null) return
+            if (parseResponse(raw, 0x01, 0x00, minBytes = 4) != null) {
+                probeResponders = raw.lines().count { line -> hexBytes(line.trim())?.let { it.size >= 6 && it[0] == 0x41 && it[1] == 0x00 } == true }
+                return
+            }
         }
         throw ObdError.Io("Probe response unreadable")
     }
@@ -106,6 +128,12 @@ class Elm327Session(
     /** Requests a mode 01 PID and returns its data bytes, or null for NO DATA / `?` / garbled frames. */
     suspend fun requestPid(pid: Int, minBytes: Int = 1): IntArray? {
         val cmd = "01%02X".format(pid)
+        if (usesResponseCount) {
+            val raw = command(cmd + "1")
+            if (raw.trim() != "?") return parseResponse(raw, 0x01, pid, minBytes)
+            countHintRejected = true
+            OrangeLog.w(OrangeLog.Areas.OBD, "response_count_rejected", "command" to cmd)
+        }
         return parseResponse(command(cmd), 0x01, pid, minBytes)
     }
 

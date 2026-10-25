@@ -30,7 +30,8 @@ class SimulatedElm327(private val controller: SimulatorController) {
             cmd == "0A" -> dtcResponse(0x4A, s.permanentDtcs)
             cmd == "04" -> { controller.clearDtcs(); "44" }
             cmd == "0902" -> if (s.vin.isEmpty()) "NO DATA" else vinResponse(s.vin)
-            cmd.length == 4 && cmd.startsWith("01") -> mode01(cmd.substring(2), s)
+            // Optional trailing response-count digit (`010D1`), like a real ELM327 v1.3+.
+            cmd.startsWith("01") && (cmd.length == 4 || (cmd.length == 5 && cmd[4].isDigit())) -> mode01(cmd.substring(2, 4), s)
             else -> "?"
         }
     }

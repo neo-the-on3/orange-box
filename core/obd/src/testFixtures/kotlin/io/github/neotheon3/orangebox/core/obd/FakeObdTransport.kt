@@ -19,6 +19,8 @@ class FakeObdTransport(
         private set
     /** When set, the next write fails with this error (e.g. to simulate a mid-session drop). */
     var writeError: ObdError? = null
+    /** Virtual-time round trip added to every reply, to model a real Bluetooth dongle (#193). */
+    var latencyMillis: Long = 0
     private var pending: String? = null
 
     override suspend fun open() {
@@ -36,6 +38,7 @@ class FakeObdTransport(
     override suspend fun readUntilPrompt(timeoutMillis: Long): String {
         val r = pending
         pending = null
+        if (latencyMillis > 0) delay(latencyMillis)
         if (r == null) {
             delay(timeoutMillis)
             throw ObdError.Timeout()
