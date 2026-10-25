@@ -143,6 +143,10 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
             Section("App readout (debug)")
             AppReadout(state, actions)
 
+            Section("Crash prompt (M7)")
+            Text("Raises the crash prompt as a ${'$'}{io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor.SIMULATED_PEAK_G} g impact, without the sensor or the speed check.")
+            Button(onClick = actions::injectImpact, modifier = Modifier.testTag("sim_impact")) { Text("Inject impact") }
+
             Section("Failures")
             ToggleRow("Connection failure", sim.connectionFailure, "sim_fail_connection") { v -> actions.update { it.copy(connectionFailure = v) } }
             ToggleRow("Unsupported protocol", sim.unsupportedProtocol, "sim_fail_protocol") { v -> actions.update { it.copy(unsupportedProtocol = v) } }

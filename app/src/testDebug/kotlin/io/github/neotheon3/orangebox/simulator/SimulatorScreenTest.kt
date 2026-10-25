@@ -57,6 +57,7 @@ class SimulatorScreenTest {
         override fun setBackendMode(mode: BackendMode) { ui = ui.copy(backendMode = mode) }
         override fun startScript(id: String) { calls += "script=$id"; controller.update { it.copy(runningScript = id) }; ui = ui.copy(sim = controller.state.value) }
         override fun stopScript() { calls += "stop"; controller.update { it.copy(runningScript = null) }; ui = ui.copy(sim = controller.state.value) }
+        override fun injectImpact() { calls += "impact" }
         override fun reset() { controller.reset(); ui = ui.copy(sim = controller.state.value); calls += "reset" }
     }
 
@@ -70,6 +71,7 @@ class SimulatorScreenTest {
     private fun slide(tag: String, v: Float) =
         compose.onNodeWithTag(tag).performScrollTo().performSemanticsAction(SemanticsActions.SetProgress) { it(v) }
 
+    @Test fun `inject impact`() { click("sim_impact"); assertEquals(listOf("impact"), calls) }
     @Test fun `use simulated dongle`() { click("sim_use_simulated"); assertEquals(listOf("use=true"), calls) }
     @Test fun `paired toggle`() { click("sim_paired"); assertFalse(sim.paired) }
     @Test fun `bt connected and disconnected buttons`() {

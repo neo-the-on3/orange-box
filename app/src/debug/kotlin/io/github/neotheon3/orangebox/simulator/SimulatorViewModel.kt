@@ -62,6 +62,8 @@ interface SimulatorActions {
     fun setBackendMode(mode: BackendMode)
     fun startScript(id: String)
     fun stopScript()
+    /** Raises the crash prompt as if the accelerometer had detected an impact (M7, #56). */
+    fun injectImpact()
     fun reset()
 }
 
@@ -74,6 +76,7 @@ class SimulatorViewModel @Inject constructor(
     private val manager: ObdConnectionManager,
     private val player: DriveScriptPlayer,
     telemetry: TelemetrySource,
+    private val crash: io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor,
 ) : ViewModel(), SimulatorActions {
     private val readout = MutableStateFlow<DiagnosticsReadout?>(null)
 
@@ -121,6 +124,8 @@ class SimulatorViewModel @Inject constructor(
 
     override fun startScript(id: String) { DriveScript.byId(id)?.let(player::start) }
     override fun stopScript() = player.stop()
+
+    override fun injectImpact() = crash.injectImpact()
 
     override fun reset() {
         player.stop()
