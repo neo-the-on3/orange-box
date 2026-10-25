@@ -38,9 +38,72 @@ class TelemetryEngineTest {
     @Test fun `speed density fallback`() {
         // MAF = 3000/120 · 0.0016 · 0.85 · (60000 · 0.0289647 / (8.314462618 · 303.15)) · 1000
         //     = 25 · 0.0016 · 0.85 · 0.68950 · 1000 = 23.443 g/s
+        // (baro = MAP, i.e. wide open throttle, so VE is the full-load 0.85)
         val e = TelemetryEngine()
-        assertEquals(23.443, e.speedDensityMaf(s(0, ObdPid.INTAKE_MAP to 60.0, ObdPid.INTAKE_TEMP to 30.0), 3000.0)!!, 1e-3)
+        assertEquals(23.443, e.speedDensityMaf(s(0, ObdPid.INTAKE_MAP to 60.0, ObdPid.INTAKE_TEMP to 30.0, ObdPid.BAROMETRIC_PRESSURE to 60.0), 3000.0)!!, 1e-3)
         assertNull(e.speedDensityMaf(s(0, ObdPid.INTAKE_MAP to 60.0), 3000.0))
+    }
+
+    @Test fun `speed density VE depends on load - 0_70 at idle up to 0_85 at wide open throttle (#194)`() {
+        val e = TelemetryEngine()
+        assertEquals(0.70, e.volumetricEfficiency(0.20), 1e-9)
+        assertEquals(0.70, e.volumetricEfficiency(0.25), 1e-9)
+        assertEquals(0.775, e.volumetricEfficiency(0.625), 1e-9)
+        assertEquals(0.85, e.volumetricEfficiency(1.0), 1e-9)
+        assertEquals(0.85, e.volumetricEfficiency(1.6), 1e-9) // boost: capped
+        // Kiran's SX4 at idle: 749 rpm, MAP ~30 kPa, IAT 61 °C, 1.586 L → about 0.75 L/h (it was 0.87 L/h with a flat 0.85).
+        e.vehicle = VehicleProfile(null, 1.586)
+        val idle = e.onSample(s(0, ObdPid.SPEED to 0.0, ObdPid.RPM to 749.0, ObdPid.INTAKE_MAP to 30.0, ObdPid.INTAKE_TEMP to 61.0, ObdPid.BAROMETRIC_PRESSURE to 99.0)).instant
+        assertEquals(0.75, idle.fuelFlowLph!!, 0.03)
+        assertEquals("speed_density", e.fuelSource)
+    }
+
+    @Test fun `fuel cut relative to the learned closed-throttle position (#194)`() {
+        // Kiran's SX4: absolute throttle reads 16.1 % with the pedal released.
+        val e = TelemetryEngine()
+        e.onSample(s(0, ObdPid.SPEED to 0.0, ObdPid.RPM to 750.0, ObdPid.THROTTLE to 16.5, ObdPid.MAF to 2.4))
+        e.onSample(s(500, ObdPid.SPEED to 0.0, ObdPid.RPM to 749.0, ObdPid.THROTTLE to 16.1, ObdPid.MAF to 2.4))
+        assertEquals(16.1, e.closedThrottlePercent!!, 1e-9)
+        val coast = e.onSample(s(1_000, ObdPid.SPEED to 45.0, ObdPid.RPM to 2100.0, ObdPid.THROTTLE to 16.1, ObdPid.MAF to 4.0)).instant
+        assertTrue("overrun at closed throttle is a cut", coast.fuelCut)
+        assertEquals(0.0, coast.fuelFlowLph!!, 0.0)
+        val light = e.onSample(s(1_500, ObdPid.SPEED to 46.0, ObdPid.RPM to 2100.0, ObdPid.THROTTLE to 20.0, ObdPid.MAF to 8.0)).instant
+        assertFalse("pedal pressed", light.fuelCut)
+        val veto = e.onSample(s(2_000, ObdPid.SPEED to 45.0, ObdPid.RPM to 1200.0, ObdPid.THROTTLE to 16.1, ObdPid.MAF to 3.0,
+            ObdPid.FUEL_SYSTEM_STATUS to FuelSystemStatus.CLOSED_LOOP.toDouble())).instant
+        assertFalse("ECU still in closed loop: injecting", veto.fuelCut)
+        val confirmed = e.onSample(s(2_500, ObdPid.SPEED to 44.0, ObdPid.RPM to 1900.0, ObdPid.THROTTLE to 17.0,
+            ObdPid.FUEL_SYSTEM_STATUS to FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT.toDouble())).instant
+        assertTrue(confirmed.fuelCut)
+    }
+
+    @Test fun `without a learned closed position the fixed 8 pct still applies, and a new connection relearns (#194)`() {
+        val e = TelemetryEngine()
+        assertFalse(e.onSample(s(0, ObdPid.SPEED to 45.0, ObdPid.RPM to 2100.0, ObdPid.THROTTLE to 16.1)).instant.fuelCut)
+        assertTrue(e.onSample(s(500, ObdPid.SPEED to 45.0, ObdPid.RPM to 2100.0, ObdPid.THROTTLE to 6.0)).instant.fuelCut)
+        e.onSample(s(1_000, ObdPid.SPEED to 0.0, ObdPid.RPM to 750.0, ObdPid.THROTTLE to 14.0))
+        assertEquals("learned only while idling", 14.0, e.closedThrottlePercent!!, 1e-9)
+        e.reset()
+        assertNull(e.closedThrottlePercent)
+        e.onSample(s(0, ObdPid.SPEED to 0.0, ObdPid.RPM to 750.0, ObdPid.THROTTLE to 40.0))
+        assertNull("fast idle with the pedal pressed isn't learned", e.closedThrottlePercent)
+    }
+
+    @Test fun `coasting at closed throttle adds no trip fuel once the closed position is learned (#194)`() {
+        // 20 s idle, 20 s cruise at 30 % throttle, 20 s coast at closed throttle (16 %); speed density, SX4.
+        val e = TelemetryEngine().apply { vehicle = VehicleProfile(null, 1.586) }
+        var t = 0L
+        fun step(speed: Double, rpm: Double, thr: Double, map: Double): TripTotals = e.onSample(
+            s(t, ObdPid.SPEED to speed, ObdPid.RPM to rpm, ObdPid.THROTTLE to thr, ObdPid.INTAKE_MAP to map,
+                ObdPid.INTAKE_TEMP to 40.0, ObdPid.BAROMETRIC_PRESSURE to 99.0),
+        ).trip.also { t += 500 }
+        repeat(40) { step(0.0, 750.0, 16.0, 30.0) }
+        var trip = TripTotals()
+        repeat(40) { trip = step(40.0, 2000.0, 30.0, 55.0) }
+        val afterCruise = trip.fuelLitres
+        repeat(40) { trip = step(35.0, 1800.0, 16.0, 22.0) }
+        assertEquals("only the transition interval", afterCruise, trip.fuelLitres, 0.0005)
+        assertEquals(19.5, trip.fuelCutS, 0.6)
     }
 
     @Test fun `no economy when stationary`() {

@@ -117,6 +117,8 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
     }
 
     fun reset() {
+        closedThrottle = null
+        lastFuelSource = null
         last = null
         lastSnapshot = null
         trip = emptyTrip()
@@ -164,15 +166,10 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val newBrake = harshBrakeEvent.update(t, accel?.let { -it })
         applyOverspeedThreshold()
         val newOverspeed = overspeedEvent.update(t, speed)
-        val load = sample[ObdPid.THROTTLE] ?: sample[ObdPid.ENGINE_LOAD]
-        val status = sample[ObdPid.FUEL_SYSTEM_STATUS]?.toInt()
-        // Low pedal/load when known; otherwise trust the ECU's "open loop / decel fuel cut" status.
-        val lowLoad = load?.let { it <= config.fuelCutMaxLoadPercent }
-        val fuelCut = speed != null && rpm != null && speed >= config.fuelCutMinKph && rpm >= config.fuelCutMinRpm &&
-            (lowLoad ?: (status == FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT))
-        val flow = if (fuelCut) 0.0 else fuelFlowLph(sample, rpm)
         val moving = speed != null && speed >= config.stationaryKph
         val idling = speed != null && !moving && rpm != null && rpm > 0
+        val fuelCut = fuelCut(sample, speed, rpm, idling)
+        val flow = if (fuelCut) 0.0 else fuelFlowLph(sample, rpm)
         val eco = moving && rpm != null && rpm <= config.ecoMaxRpm && (accel == null || abs(accel) <= config.ecoMaxAccel)
         val overspeed = overspeedEvent.active
         val economy = if (speed != null && flow != null && speed >= config.economyMinKph) flow / speed * 100.0 else null
@@ -257,6 +254,40 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         return 1 + bounds.count { value >= it }
     }
 
+    /**
+     * Closed-throttle position (PID 11), learned per connection as the lowest reading while idling (#194).
+     * Absolute throttle often reads 12–20 % with the pedal released (16.1 % on Kiran's SX4), so a fixed
+     * "≤ 8 %" never saw a fuel cut on such cars.
+     */
+    private var closedThrottle: Double? = null
+
+    /** The learned closed-throttle position, % (null until the engine has idled with throttle data). */
+    val closedThrottlePercent: Double? get() = closedThrottle
+
+    /**
+     * Decel fuel cut (#194): moving ≥ [TelemetryConfig.fuelCutMinKph] at ≥ [TelemetryConfig.fuelCutMinRpm] and
+     * - throttle (PID 11) within [TelemetryConfig.fuelCutThrottleAboveClosedPercent] of the learned closed
+     *   position (before one is learned: ≤ [TelemetryConfig.fuelCutMaxLoadPercent]), unless the ECU's fuel
+     *   system status (PID 03) says closed loop (it is still injecting);
+     * - without throttle: engine load ≤ [TelemetryConfig.fuelCutMaxLoadPercent], else the ECU's
+     *   "open loop / decel fuel cut" status.
+     */
+    private fun fuelCut(sample: VehicleSample, speed: Double?, rpm: Double?, idling: Boolean): Boolean {
+        val throttle = sample[ObdPid.THROTTLE]
+        if (throttle != null && idling && throttle <= config.closedThrottleMaxPercent) {
+            closedThrottle = closedThrottle?.let { minOf(it, throttle) } ?: throttle
+        }
+        if (speed == null || rpm == null || speed < config.fuelCutMinKph || rpm < config.fuelCutMinRpm) return false
+        val status = sample[ObdPid.FUEL_SYSTEM_STATUS]?.toInt()
+        if (throttle != null) {
+            val closed = closedThrottle?.let { throttle - it <= config.fuelCutThrottleAboveClosedPercent }
+                ?: (throttle <= config.fuelCutMaxLoadPercent)
+            return closed && status != FuelSystemStatus.CLOSED_LOOP
+        }
+        val load = sample[ObdPid.ENGINE_LOAD]
+        return load?.let { it <= config.fuelCutMaxLoadPercent } ?: (status == FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT)
+    }
+
     /** Legacy load/boost level raised to amber/red by rpm or acceleration ([TelemetryConfig.intensity]). */
     private fun intensityLevel(loadLevel: Int, rpm: Double?, accel: Double?, harshAccel: Boolean): Int {
         val t = config.intensity
@@ -292,9 +323,10 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
      */
     internal fun fuelFlowLph(sample: VehicleSample, rpm: Double?): Double? {
         sample[ObdPid.FUEL_TYPE]?.let { reportedFuelType = FuelType.fromCode(it.toInt()) ?: reportedFuelType }
-        sample[ObdPid.FUEL_RATE]?.let { return it }
+        sample[ObdPid.FUEL_RATE]?.let { noteFuelSource("fuel_rate"); return it }
         val fuel = props()
-        val maf = sample[ObdPid.MAF] ?: speedDensityMaf(sample, rpm) ?: return null
+        val maf = sample[ObdPid.MAF]?.also { noteFuelSource("maf") }
+            ?: speedDensityMaf(sample, rpm)?.also { noteFuelSource("speed_density") } ?: return null
         val lambda = sample[ObdPid.COMMANDED_EQUIVALENCE_RATIO]?.takeIf { it in 0.5..2.0 } ?: 1.0
         return maf * 3600.0 / (fuel.stoichAfr * lambda * fuel.densityGramsPerLitre)
     }
@@ -306,7 +338,37 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val r = rpm ?: return null
         val displacementM3 = (vehicle?.displacementLitres ?: config.displacementLitres) / 1000.0
         val airDensity = map * 1000.0 * MOLAR_MASS_AIR / (GAS_CONSTANT * (iat + 273.15)) // kg/m³
-        return r / 120.0 * displacementM3 * config.volumetricEfficiency * airDensity * 1000.0
+        val baro = sample[ObdPid.BAROMETRIC_PRESSURE] ?: STANDARD_BARO_KPA
+        return r / 120.0 * displacementM3 * volumetricEfficiency(map / baro) * airDensity * 1000.0
+    }
+
+    /**
+     * Volumetric efficiency for speed-density (#194): [TelemetryConfig.volumetricEfficiencyLight] at or below
+     * [TelemetryConfig.veLightLoadMapRatio] (idle / light load, MAP/baro), rising linearly to
+     * [TelemetryConfig.volumetricEfficiency] at wide open throttle (MAP/baro 1.0).
+     */
+    internal fun volumetricEfficiency(mapRatio: Double): Double {
+        val light = config.volumetricEfficiencyLight
+        val full = config.volumetricEfficiency
+        val lo = config.veLightLoadMapRatio
+        val f = ((mapRatio - lo) / (1.0 - lo)).coerceIn(0.0, 1.0)
+        return light + (full - light) * f
+    }
+
+    /** Fuel-flow source in use, logged when it changes so feedback can be triaged from the connection log. */
+    @Volatile var fuelSource: String? = null
+        private set
+    private var lastFuelSource: String? = null
+
+    private fun noteFuelSource(source: String) {
+        fuelSource = source
+        if (source != lastFuelSource) {
+            lastFuelSource = source
+            OrangeLog.i(
+                OrangeLog.Areas.TELEMETRY, "fuel_source", "source" to source, "fuel" to (reportedFuelType ?: vehicle?.fuelType ?: config.defaultFuelType).name,
+                "displacement_l" to (vehicle?.displacementLitres ?: config.displacementLitres),
+            )
+        }
     }
 
     private fun warnings(s: VehicleSample): Set<Warning> = buildSet {
