@@ -41,6 +41,7 @@ interface AppPreferencesRepository {
     /** Stores the display units; from then on they no longer follow the device country. */
     suspend fun setUnits(units: UnitPreferences)
     suspend fun setAlerts(alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences)
+    suspend fun setDiagnosticsPromptEnabled(enabled: Boolean)
 }
 
 @Singleton
@@ -87,6 +88,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                     voice = p[ALERT_VOICE] ?: d.voice,
                 )
             },
+            diagnosticsPromptEnabled = p[DIAGNOSTICS_PROMPT] ?: true,
         )
     }.distinctUntilChanged()
 
@@ -138,6 +140,8 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         }
     }
 
+    override suspend fun setDiagnosticsPromptEnabled(enabled: Boolean) { dataStore.edit { it[DIAGNOSTICS_PROMPT] = enabled } }
+
     override suspend fun setDashboard(dashboard: DashboardPreferences) {
         dataStore.edit {
             it[DASH_BUTTON] = dashboard.button.name
@@ -170,6 +174,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val ALERT_MIL = booleanPreferencesKey("alert_mil")
         val ALERT_SOUND = booleanPreferencesKey("alert_sound")
         val ALERT_VOICE = booleanPreferencesKey("alert_voice")
+        val DIAGNOSTICS_PROMPT = booleanPreferencesKey("diagnostics_prompt_enabled")
         val ONBOARDING_STEP = stringPreferencesKey("onboarding_step")
         val ONBOARDING = booleanPreferencesKey("onboarding_complete")
         val DISCLAIMER = booleanPreferencesKey("disclaimer_accepted")

@@ -129,6 +129,16 @@ class SettingsViewModelTest {
         assertEquals(io.github.neotheon3.orangebox.core.model.CrashPreferences(false, 6.0, 45, "+919876543210", "Asha"), c)
     }
 
+    @Test fun `drive-start diagnostics prompt toggle persists`() = runTest {
+        val prefs = FakeAppPreferencesRepository()
+        val vm = vm(FakeBackendConfigRepository(), prefs)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
+        assertTrue(vm.uiState.value.diagnosticsPrompt)
+        vm.onDiagnosticsPromptChanged(false)
+        assertFalse(prefs.preferences.first().diagnosticsPromptEnabled)
+        assertFalse(vm.uiState.value.diagnosticsPrompt)
+    }
+
     private fun vm(
         repo: FakeBackendConfigRepository,
         prefs: FakeAppPreferencesRepository = FakeAppPreferencesRepository(),

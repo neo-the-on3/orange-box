@@ -20,4 +20,6 @@ data class AppPreferences(
     val units: UnitPreferences? = null,
     /** Driving alerts: which play, with sound and/or voice (M8). */
     val alerts: AlertPreferences = AlertPreferences(),
+    /** Read trouble codes when a drive starts and show the "Car Diagnosing…" prompt (M6). On by default. */
+    val diagnosticsPromptEnabled: Boolean = true,
 )

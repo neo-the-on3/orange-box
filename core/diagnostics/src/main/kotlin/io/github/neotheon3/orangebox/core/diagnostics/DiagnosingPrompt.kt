@@ -13,6 +13,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,11 +37,20 @@ sealed interface DiagnosingPrompt {
  * The prompt is non-blocking: [dismiss] hides it at any point, and a failed scan just hides it.
  */
 @Singleton
-class DiagnosingPromptController @Inject constructor(
-    @ApplicationScope private val scope: CoroutineScope,
+class DiagnosingPromptController(
+    private val scope: CoroutineScope,
     private val connection: ObdConnection,
     private val diagnostics: DiagnosticsRepository,
+    /** Settings → "Check the car when a drive starts" (M8); read when a drive starts. */
+    private val enabled: Flow<Boolean> = flowOf(true),
 ) {
+    @Inject constructor(
+        @ApplicationScope scope: CoroutineScope,
+        connection: ObdConnection,
+        diagnostics: DiagnosticsRepository,
+        prefs: AppPreferencesRepository,
+    ) : this(scope, connection, diagnostics, prefs.preferences.map { it.diagnosticsPromptEnabled })
+
     private val _prompt = MutableStateFlow<DiagnosingPrompt>(DiagnosingPrompt.Hidden)
     val prompt: StateFlow<DiagnosingPrompt> = _prompt.asStateFlow()
 
@@ -54,7 +68,10 @@ class DiagnosingPromptController @Inject constructor(
                 when (state) {
                     is ObdConnectionState.Connected -> if (!promptedThisDrive) {
                         promptedThisDrive = true
-                        job = scope.launch { run() }
+                        // Turned off in Settings: no scan and no prompt for this drive.
+                        job = scope.launch {
+                            if (enabled.first()) run() else OrangeLog.i(OrangeLog.Areas.OBD, "drive_start_diagnosis", "result" to "disabled")
+                        }
                     }
                     ObdConnectionState.Idle, is ObdConnectionState.Failed -> {
                         promptedThisDrive = false

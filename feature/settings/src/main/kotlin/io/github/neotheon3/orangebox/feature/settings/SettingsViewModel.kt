@@ -50,6 +50,8 @@ data class SettingsUiState(
     val units: io.github.neotheon3.orangebox.core.model.UnitPreferences = io.github.neotheon3.orangebox.core.model.UnitPreferences(),
     val alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences = io.github.neotheon3.orangebox.core.model.AlertPreferences(),
     val crash: CrashSettingsState = CrashSettingsState(),
+    /** M6's drive-start "Car Diagnosing…" prompt. */
+    val diagnosticsPrompt: Boolean = true,
 )
 
 /** The "Driving dashboard" section. */
@@ -103,7 +105,7 @@ class SettingsViewModel @Inject constructor(
     private val contactError = MutableStateFlow(false)
 
     private val general = combine(prefs.preferences, contactDraft, contactError) { p, draft, error ->
-        SettingsUiState(units = country.units(p), alerts = p.alerts, crash = CrashSettingsState(p.crash, draft, error))
+        SettingsUiState(units = country.units(p), alerts = p.alerts, crash = CrashSettingsState(p.crash, draft, error), diagnosticsPrompt = p.diagnosticsPromptEnabled)
     }.distinctUntilChanged()
 
     private val backend = combine(repository.config, urlDraft, urlResult) { config, draft, result -> Triple(config, draft, result) }
@@ -181,6 +183,10 @@ class SettingsViewModel @Inject constructor(
             val crash = prefs.preferences.first().crash
             prefs.setCrash(crash.copy(contactNumber = number, contactName = name))
         }
+    }
+
+    fun onDiagnosticsPromptChanged(enabled: Boolean) {
+        viewModelScope.launch { prefs.setDiagnosticsPromptEnabled(enabled) }
     }
 
     fun onAutoStartChanged(enabled: Boolean) {
