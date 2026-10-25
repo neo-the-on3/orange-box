@@ -18,6 +18,15 @@
     <!-- Crash prompt (M7): the dialer / SMS app are opened with ACTION_DIAL / ACTION_SENDTO, so there is
          deliberately no CALL_PHONE or SEND_SMS (ManifestPermissionsTest and lint enforce this). -->
 
+    <!-- Voice alerts (M8 #59): Android 11+ hides other apps unless declared, so this lets the platform
+         android.speech.tts.TextToSpeech find the text-to-speech engine already on the phone. No TTS SDK,
+         cloud service or specific engine is used; whichever engine the phone has set as default speaks. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".OrangeBoxApplication"
         android:allowBackup="false"
