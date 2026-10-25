@@ -42,16 +42,17 @@ func tripNotFound() *problem.Problem {
 	return problem.New(http.StatusNotFound, problem.CodeNotFound, "No such trip.")
 }
 
-// Reasons of a sync_window_expired problem (spec: Incremental sync).
+// Reasons of a sync_window_expired problem (spec: Incremental sync;
+// Problem.reason lists them in x-extensible-enum).
 const (
 	// reasonDeploymentChanged: the token or cursor was issued under another
 	// deployment identity; the database was restored or replaced, so the
 	// app re-uploads local trips the server lost after its full sync.
-	reasonDeploymentChanged = string(api.ProblemReasonDeploymentChanged)
+	reasonDeploymentChanged = "deployment_changed"
 	// reasonPurged: tombstones the token depends on were purged.
-	reasonPurged = string(api.ProblemReasonPurged)
+	reasonPurged = "purged"
 	// reasonInvalid: the token does not decode or verify.
-	reasonInvalid = string(api.ProblemReasonInvalid)
+	reasonInvalid = "invalid"
 )
 
 func syncWindowExpired(reason string) *problem.Problem {

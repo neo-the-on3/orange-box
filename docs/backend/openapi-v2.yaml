@@ -84,9 +84,11 @@ info:
         filter than the one it came from. That way a restore from backup, dump/restore or migration to a new cluster,
         where transaction ids mean something else, can never silently skip writes. A server instance whose
         database endpoint starts reaching another cluster while it runs (e.g. a blue/green switchover or a
-        failover behind the same address) answers `503` (`code=service_unavailable`) instead of serving sync,
-        until it is restarted; clients retry, then get `deployment_changed`. (A server configured not to read
-        `system_identifier` can't notice this; its operators change the deployment id instead.) Tokens are issued and read on the
+        failover behind the same address), or a cluster it can no longer check, answers `503`
+        (`code=service_unavailable`) to every request instead of serving sync, until it is restarted. It
+        notices within a bounded time, 20 s by default (the server's check interval, 10–30 s, plus up to 5 s),
+        however busy it is; clients retry, then get `deployment_changed`. (A server configured not to read
+        `system_identifier` can't notice this; its operators change the deployment id and restart instead.) Tokens are issued and read on the
         **primary** only, never on a read replica.
       - **Why a token was rejected (`reason`).** A `sync_window_expired` problem carries a machine-readable
         `reason`: `deployment_changed` when the token or cursor was issued under another deployment identity (the
@@ -1648,9 +1650,8 @@ components:
               detail: {type: string}
         reason:
           type: string
-          enum: [deployment_changed, purged, invalid]
-          x-extensible-enum: true
-          description: 'Why the request failed, where `code` alone is not enough; only sent with `code=sync_window_expired`. **Extensible:** later versions may add values, so clients must decode it leniently (e.g. a string, or an enum with an unknown fallback, never a closed enum that fails to parse) and treat any unknown value like `invalid`. `deployment_changed`: the token or cursor is from before a database restore or replacement (full sync, then re-upload local trips the server lost; see Conventions → Incremental sync). `purged`: tombstones the token needed were purged. `invalid`: the token or cursor does not verify or belongs to another endpoint, walk or filter.'
+          x-extensible-enum: [deployment_changed, purged, invalid]
+          description: 'Why the request failed, where `code` alone is not enough; only sent with `code=sync_window_expired`. An **open** set of strings (deliberately no closed `enum`): the known values are listed in `x-extensible-enum`, later versions may add more, and clients must decode it as a string (or an enum with an unknown fallback) and treat any unknown value like `invalid`. `deployment_changed`: the token or cursor is from before a database restore or replacement (full sync, then re-upload local trips the server lost; see Conventions → Incremental sync). `purged`: tombstones the token needed were purged. `invalid`: the token or cursor does not verify or belongs to another endpoint, walk or filter.'
 
     Health:
       type: object
