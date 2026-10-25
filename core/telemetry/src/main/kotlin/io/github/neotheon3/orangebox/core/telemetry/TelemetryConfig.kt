@@ -32,8 +32,11 @@ data class TelemetryConfig(
     val defaultFuelType: FuelType = FuelType.GASOLINE,
     /** Engine displacement for the speed-density fallback (no MAF), litres. */
     val displacementLitres: Double = 1.6,
-    /** Volumetric efficiency for the speed-density fallback. */
+    /** Volumetric efficiency for the speed-density fallback at wide open throttle (MAP/baro 1.0). */
     val volumetricEfficiency: Double = 0.85,
+    /** … and at idle / light load (MAP/baro ≤ [veLightLoadMapRatio]); linear in between (#194). */
+    val volumetricEfficiencyLight: Double = 0.70,
+    val veLightLoadMapRatio: Double = 0.25,
     /** Below this speed the car counts as stationary, km/h. */
     val stationaryKph: Double = 1.0,
     /** Instant economy is only computed above this speed, km/h. */
@@ -42,8 +45,12 @@ data class TelemetryConfig(
     val fuelCutMinKph: Double = 20.0,
     /** … RPM ≥ this … */
     val fuelCutMinRpm: Double = 1_000.0,
-    /** … and throttle/engine load ≤ this %. Or the ECU reports open loop / decel fuel cut. */
+    /** … and throttle/engine load ≤ this % (throttle: until a closed position is learned). Or the ECU reports open loop / decel fuel cut. */
     val fuelCutMaxLoadPercent: Double = 8.0,
+    /** … or throttle within this many % of the learned closed-throttle position (#194). */
+    val fuelCutThrottleAboveClosedPercent: Double = 3.0,
+    /** Idle throttle readings above this % aren't learned as "closed" (e.g. a fast idle with the pedal pressed). */
+    val closedThrottleMaxPercent: Double = 25.0,
     /** Eco driving: RPM ≤ this … */
     val ecoMaxRpm: Double = 2_500.0,
     /** … and |acceleration| ≤ this m/s² while moving. */

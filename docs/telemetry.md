@@ -91,9 +91,16 @@ Intervals between consecutive samples are integrated with the trapezoid rule. In
 2. MAF: `flow = MAF[g/s] · 3600 / (AFR_stoich · λ · ρ_fuel[g/L])`, where λ comes from PID 44 (default 1).
 3. Speed-density, when there is no MAF:
    `MAF = RPM/120 · V_d[m³] · VE · (MAP[Pa] · M_air / (R · T_intake[K])) · 1000`,
-   with M_air = 0.0289647 kg/mol, R = 8.314462618 J/(mol·K), and V_d, VE from the config.
+   with M_air = 0.0289647 kg/mol, R = 8.314462618 J/(mol·K), V_d from the vehicle (else 1.6 L) and VE by load
+   (#194): 0.70 at MAP/baro ≤ 0.25 (idle, light load), rising linearly to 0.85 at MAP/baro 1.0 (wide open), baro
+   from PID 33 (else 101.3 kPa). A flat 0.85 overstated part-load fuel by up to ~20 %.
 
-Flow is 0 during a fuel cut.
+Flow is 0 during a fuel cut. The source in use (`fuel_rate`, `maf`, `speed_density`) is logged as `fuel_source`
+whenever it changes, with the fuel type and displacement.
+
+**CNG (not handled yet).** Bi-fuel CNG cars are computed with petrol properties and reported in litres. Proper
+support needs CNG properties (AFR ≈ 17.2, mass-based), km/kg and kg in the UI, trips and exports, and decoding the
+bi-fuel PID 51 codes (0x09–0x0D) to know which fuel is in use. That touches several modules, so it is a follow-up.
 
 | Fuel | AFR_stoich | ρ (g/L) | CO₂ (g/L) |
 |---|---|---|---|
@@ -149,7 +156,7 @@ In debug builds the Simulator's "App readout (debug)" card shows the trip's cumu
 |---|---|---|
 | Stationary | speed < `stationaryKph` | 1 km/h |
 | Idling | stationary and RPM > 0 | – |
-| Fuel cut | speed ≥ 20 km/h, RPM ≥ 1000, and throttle (or load) ≤ 8 %; with no throttle/load, PID 03 = 0x04 | 20 km/h, 1000 rpm, 8 % |
+| Fuel cut | speed ≥ 20 km/h, RPM ≥ 1000, and (#194) throttle within 3 % of the closed-throttle position learned per connection (lowest PID 11 while idling, ≤ 25 %), or ≤ 8 % before one is learned, unless PID 03 says closed loop (0x02); with no throttle: load ≤ 8 %, else PID 03 = 0x04. PID 03 is polled every tick | 20 km/h, 1000 rpm, 3 %, 8 %, 25 % (`fuelCutThrottleAboveClosedPercent`, `fuelCutMaxLoadPercent`, `closedThrottleMaxPercent`) |
 | Eco | moving, RPM ≤ 2500 and abs(accel) ≤ 1.5 m/s² | 2500 rpm, 1.5 m/s² |
 | Overspeed | speed > threshold; ends below threshold − 3 km/h (hysteresis) | Settings → Driving dashboard, 40–200 km/h in 5 km/h steps, default 120; hysteresis 3 km/h |
 | Harsh acceleration | accel ≥ 3.0 m/s² (≈ 0.31 g), counted once per event | 3.0 m/s² |
