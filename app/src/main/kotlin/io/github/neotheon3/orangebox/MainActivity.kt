@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var debugEntries: DebugEntries
     @Inject lateinit var appPreferences: AppPreferencesRepository
     @Inject lateinit var driveSession: io.github.neotheon3.orangebox.core.driving.DriveSession
+    @Inject lateinit var diagnosingPrompt: io.github.neotheon3.orangebox.core.diagnostics.DiagnosingPromptController
 
     /** Bumped by every "Start driving" / driving-notification tap; the NavHost opens the dashboard. */
     private val openDashboard = kotlinx.coroutines.flow.MutableStateFlow(0)
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
                         driveSession = driveSession,
                         openDashboardRequests = dashboardRequests,
                         onDashboardRequestIgnored = { setLockScreenFlags(false) },
+                        diagnosingPrompt = diagnosingPrompt,
                     )
                 }
             }
