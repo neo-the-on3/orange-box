@@ -5,7 +5,14 @@ import io.github.neotheon3.orangebox.core.obd.Elm327Info
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import io.github.neotheon3.orangebox.core.obd.ObdError
 import io.github.neotheon3.orangebox.core.obd.ObdProtocol
+import io.github.neotheon3.orangebox.core.obd.Elm327Session
+import io.github.neotheon3.orangebox.core.simulator.SimulatedElm327Transport
+import io.github.neotheon3.orangebox.core.simulator.SimulatorController
+import io.github.neotheon3.orangebox.core.simulator.SimulatorState
+import io.github.neotheon3.orangebox.core.testing.FakeDtcHistoryRepository
 import io.github.neotheon3.orangebox.core.testing.FakeObdConnection
+import io.github.neotheon3.orangebox.core.testing.FakeTelemetrySource
+import io.github.neotheon3.orangebox.core.testing.FakeVehicleRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -99,5 +106,27 @@ class DiagnosingPromptControllerTest {
         connection.state.value = connected
         advanceTimeBy(10_000)
         assertEquals(DiagnosingPrompt.Hidden, controller.prompt.value)
+    }
+
+    @Test fun `simulator MIL toggle drives the prompt end to end`() = runTest {
+        val sim = SimulatorController(SimulatorState(engineOn = true, milOn = true))
+        val connection = FakeObdConnection()
+        val repo = ObdDiagnosticsRepository(connection, FakeDtcHistoryRepository(), FakeVehicleRepository(), FakeTelemetrySource())
+        val controller = DiagnosingPromptController(backgroundScope, connection, repo).apply { install() }
+        val session = Elm327Session(SimulatedElm327Transport(sim).also { it.open() })
+        val info = session.initialize()
+        connection.session = session
+        connection.state.value = ObdConnectionState.Connected(info)
+        advanceTimeBy(DiagnosingPromptController.MIN_SCAN_MILLIS + 1)
+        assertEquals(DiagnosingPrompt.Warning(0, milOn = true), controller.prompt.value)
+        controller.dismiss()
+
+        // Next drive with the MIL off: No Troubles.
+        sim.update { it.copy(milOn = false) }
+        connection.state.value = ObdConnectionState.Idle
+        runCurrent()
+        connection.state.value = ObdConnectionState.Connected(info)
+        advanceTimeBy(DiagnosingPromptController.MIN_SCAN_MILLIS + 1)
+        assertEquals(DiagnosingPrompt.NoTroubles, controller.prompt.value)
     }
 }
