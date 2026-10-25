@@ -86,37 +86,20 @@ data class TelemetryConfig(
     val lowBatteryVolts: Double = 11.8,
     val overVoltageVolts: Double = 15.0,
     val lowFuelPercent: Double = 10.0,
-    /** Eco level bounds on engine load, %: below the first is level 1, at/above the last is level 4. */
+    /**
+     * Eco level bounds on engine load, %: below the first is level 1, at/above the last is level 4. The eco level
+     * tints the RPM panel exactly as CarooLive did (#198): 1 green, 2–3 amber, 4 red, only while moving with the
+     * engine on (legacy `DrivingActivity.calcEcoLevel`, petrol/LPG: load < 50 / < 80 / < 90 / ≥ 90 %).
+     */
     val ecoLoadThresholds: List<Double> = listOf(50.0, 80.0, 90.0),
-    /** Diesel eco level bounds on boost (MAP − baro), kPa. */
+    /** Diesel eco level bounds on boost (MAP − baro), kPa (legacy: < 50 / < 80 / < 100 / ≥ 100). Diesel without MAP: no level. */
     val ecoBoostThresholdsKpa: List<Double> = listOf(50.0, 80.0, 100.0),
+    /** Baro assumed for the diesel boost level when PID 33 is missing, kPa (legacy default 100). */
+    val ecoDefaultBaroKpa: Double = 100.0,
     /** Dashboard coolant lamp turns to warning at this temperature, °C (earlier than [coolantOverheatC]). */
     val coolantWarningC: Double = 100.0,
     /** Normal charging voltage with the engine running; outside it the battery lamp warns. */
     val chargingVoltsRange: ClosedFloatingPointRange<Double> = 13.2..14.8,
     /** Instant km/L scale maximum (and the value shown during fuel cut). */
     val instantKmPerLMax: Double = 30.0,
-    /** RPM-panel tint escalation (#198). */
-    val intensity: IntensityThresholds = IntensityThresholds(),
 )
-
-/**
- * The rpm/acceleration step that raises the legacy load/boost tint level (#198). The load/boost bands
- * themselves are [TelemetryConfig.ecoLoadThresholds] / [TelemetryConfig.ecoBoostThresholdsKpa].
- * Acceleration is the engine's windowed value; braking (negative) never raises the tint.
- */
-data class IntensityThresholds(
-    /** Above this rpm the panel is at least amber. */
-    val amberRpm: Double = 2_500.0,
-    /** Above this acceleration, m/s², the panel is at least amber. */
-    val amberAccelMps2: Double = 1.5,
-    /** Above this rpm the panel is red. */
-    val redRpm: Double = 3_500.0,
-    /** Above this acceleration, m/s², the panel is red (a harsh-acceleration event also turns it red). */
-    val redAccelMps2: Double = 2.5,
-) {
-    companion object {
-        const val AMBER = 2
-        const val RED = 4
-    }
-}

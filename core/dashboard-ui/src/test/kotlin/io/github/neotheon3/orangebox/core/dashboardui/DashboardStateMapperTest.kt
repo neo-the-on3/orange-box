@@ -18,13 +18,12 @@ class DashboardStateMapperTest {
     private fun instant(
         speed: Double? = 59.0, rpm: Double? = 1698.0, fuelCut: Boolean = false, overspeed: Boolean = false,
         harshAccel: Boolean = false, harshBrake: Boolean = false, eco: Int = 1, ecoRule: Boolean = true, coolantWarning: Boolean = false,
-        batteryWarning: Boolean = false, kmPerL: Double? = 8.9, mil: Boolean? = false, dtc: Int? = 0, intensity: Int? = null,
+        batteryWarning: Boolean = false, kmPerL: Double? = 8.9, mil: Boolean? = false, dtc: Int? = 0,
     ) = InstantTelemetry(
         speedKph = speed, rpm = rpm, coolantC = 64.0, fuelLevelPercent = null, voltage = 14.0, fuelFlowLph = 2.0,
         economyLPer100Km = null, accelMps2 = null, fuelCut = fuelCut, idling = false, eco = ecoRule, overspeed = overspeed,
         warnings = emptySet(), harshAccel = harshAccel, harshBrake = harshBrake, ecoLevel = eco,
         coolantWarning = coolantWarning, batteryWarning = batteryWarning, instantKmPerL = kmPerL, milOn = mil, dtcCount = dtc,
-        intensityLevel = intensity ?: eco,
     )
 
     private val trip = TripTotals(durationS = 269.4, distanceKm = 2.04, fuelLitres = 0.229, co2Grams = 529.0, ecoS = 91.0)
@@ -59,20 +58,24 @@ class DashboardStateMapperTest {
         assertEquals(IndicatorLevel.NORMAL, s.battery)
     }
 
-    @Test fun `left glow - fuel cut wins over eco tint`() {
-        assertEquals(PanelGlow.FUEL_CUT, DashboardStateMapper.map(connected, snap(instant(fuelCut = true, eco = 4))).leftGlow)
-        assertEquals(PanelGlow.ECO_GREEN, DashboardStateMapper.leftGlow(false, 1))
-        assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(false, 2))
-        assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(false, 3))
-        assertEquals(PanelGlow.ECO_RED, DashboardStateMapper.leftGlow(false, 4))
-        assertEquals(PanelGlow.NONE, DashboardStateMapper.leftGlow(false, 0))
+    @Test fun `left glow - legacy mapping, fuel cut has no tint of its own (#198)`() {
+        assertEquals(PanelGlow.ECO_GREEN, DashboardStateMapper.leftGlow(1))
+        assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(2))
+        assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(3))
+        assertEquals(PanelGlow.ECO_RED, DashboardStateMapper.leftGlow(4))
+        assertEquals(PanelGlow.ECO_RED, DashboardStateMapper.leftGlow(5))
+        assertEquals(PanelGlow.NONE, DashboardStateMapper.leftGlow(0))
+        // Legacy: the FUEL-CUT lamp lights, the panel keeps its load colour (low load on overrun: green).
+        val cut = DashboardStateMapper.map(connected, snap(instant(fuelCut = true, eco = 1)))
+        assertEquals(PanelGlow.ECO_GREEN, cut.leftGlow)
+        assertTrue(cut.fuelCut)
     }
 
-    @Test fun `eco lamp is off and the panel is red at 130 kmh and 3510 rpm while overspeeding (#138, #198)`() {
+    @Test fun `eco lamp is off and the panel follows load at 130 kmh and 3510 rpm while overspeeding (#138, #198)`() {
         // Simulator cruise: light load (level 1) but rpm above 2500, so the eco rule is false and no eco time is counted.
-        val s = DashboardStateMapper.map(connected, snap(instant(speed = 130.0, rpm = 3510.0, overspeed = true, eco = 1, ecoRule = false, intensity = 4)))
+        val s = DashboardStateMapper.map(connected, snap(instant(speed = 130.0, rpm = 3510.0, overspeed = true, eco = 1, ecoRule = false)))
         assertEquals(0, s.ecoLevel)
-        assertEquals(PanelGlow.ECO_RED, s.leftGlow)
+        assertEquals("light load is green, as in CarooLive (#198)", PanelGlow.ECO_GREEN, s.leftGlow)
         assertFalse(s.fuelCut)
         assertEquals(PanelGlow.OVERSPEED, s.rightGlow)
     }
@@ -92,10 +95,9 @@ class DashboardStateMapperTest {
         assertFalse(snap.instant.eco)
         assertEquals(0.0, snap.trip.ecoS, 0.0)
         assertEquals("load alone would be green", 1, snap.instant.ecoLevel)
-        assertEquals("rpm above 3500 escalates to red (#198)", 4, snap.instant.intensityLevel)
         val s = DashboardStateMapper.map(connected, snap)
         assertEquals(0, s.ecoLevel)
-        assertEquals("never green or blank (#138, #198)", PanelGlow.ECO_RED, s.leftGlow)
+        assertEquals("tinted by load, never blank while moving (#138, #198)", PanelGlow.ECO_GREEN, s.leftGlow)
         assertEquals(PanelGlow.OVERSPEED, s.rightGlow)
     }
 
@@ -108,15 +110,14 @@ class DashboardStateMapperTest {
         assertEquals(PanelGlow.ECO_GREEN, DashboardStateMapper.map(connected, snap(instant(eco = 1))).leftGlow)
     }
 
-    @Test fun `RPM panel follows the intensity level, not the eco rule (#198)`() {
+    @Test fun `RPM panel follows the legacy load level, not the eco rule (#198)`() {
         assertEquals(PanelGlow.ECO_GREEN, DashboardStateMapper.map(connected, snap(instant(eco = 1))).leftGlow)
         assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.map(connected, snap(instant(eco = 2))).leftGlow)
         assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.map(connected, snap(instant(eco = 3))).leftGlow)
         assertEquals(PanelGlow.ECO_RED, DashboardStateMapper.map(connected, snap(instant(eco = 4))).leftGlow)
         // Not eco (hard driving) still tints: this used to drop to NONE ("blank panel").
         for (level in 1..4) assertTrue(DashboardStateMapper.map(connected, snap(instant(eco = level, ecoRule = false))).leftGlow != PanelGlow.NONE)
-        assertEquals(PanelGlow.ECO_RED, DashboardStateMapper.map(connected, snap(instant(eco = 1, ecoRule = false, intensity = 4))).leftGlow)
-        assertEquals("stopped / no data", PanelGlow.NONE, DashboardStateMapper.map(connected, snap(instant(eco = 0, intensity = 0))).leftGlow)
+        assertEquals("stopped / no data", PanelGlow.NONE, DashboardStateMapper.map(connected, snap(instant(eco = 0))).leftGlow)
     }
 
     @Test fun `trip and fuel tiles use the recorded trip totals carried over a reconnect (#144)`() {
