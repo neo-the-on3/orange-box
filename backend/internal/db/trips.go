@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db/dbgen"
@@ -31,41 +32,145 @@ import (
 type Trips struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
-	// deploymentID is SYNC_DEPLOYMENT_ID, part of the deployment identity.
-	deploymentID string
-	// systemID is whether the role may read pg_control_system(); without
-	// it the identity binds deploymentID only.
-	systemID bool
+	// identity is the deployment identity sync tokens and cursors carry,
+	// fixed at startup (NewTrips).
+	identity string
+	source   IdentitySource
 	// hook, if set (tests), runs at named points inside a walk.
 	hook func(stage string)
 }
 
-// NewTrips returns a trip store on pool. The deployment identity sync
-// tokens and cursors carry combines the cluster's system_identifier (read
-// in every walk's transaction) with deploymentID (SYNC_DEPLOYMENT_ID,
-// required): a change of either expires them all (ErrDeploymentChanged).
-// system_identifier catches a new cluster (dump/restore, migration);
-// deploymentID, which operators change after any restore, PITR or branch
-// reset, catches restores that keep the cluster's identifier. If the role
-// can't read pg_control_system(), the identity binds deploymentID only
-// (and NewTrips logs nothing: the caller should warn).
-func NewTrips(ctx context.Context, pool *pgxpool.Pool, deploymentID string) (*Trips, error) {
-	if deploymentID == "" {
-		return nil, errors.New("trips: a deployment id (SYNC_DEPLOYMENT_ID) is required")
-	}
-	s := &Trips{pool: pool, q: dbgen.New(pool), deploymentID: deploymentID}
-	if _, err := s.q.SystemIdentifier(ctx); err == nil {
-		s.systemID = true
-	}
-	return s, nil
+// IdentitySource says what the deployment identity binds
+// (SYNC_IDENTITY_SOURCE). Every instance of a deployment must use the
+// same one, or their tokens and cursors are incompatible.
+type IdentitySource string
+
+const (
+	// IdentityClusterAndDeploymentID (the default) binds the cluster's
+	// system_identifier and SYNC_DEPLOYMENT_ID. The role must be allowed
+	// to run pg_control_system(), or the server doesn't start.
+	IdentityClusterAndDeploymentID IdentitySource = "cluster_and_deployment_id"
+	// IdentityDeploymentIDOnly binds SYNC_DEPLOYMENT_ID only, for roles
+	// that may not run pg_control_system(). system_identifier isn't read
+	// at all, so instances agree whatever their privileges; a restore is
+	// then detected only by changing SYNC_DEPLOYMENT_ID.
+	IdentityDeploymentIDOnly IdentitySource = "deployment_id_only"
+)
+
+// TripsOptions configures NewTripsWith.
+type TripsOptions struct {
+	// DeploymentID is SYNC_DEPLOYMENT_ID (required).
+	DeploymentID string
+	// IdentitySource is SYNC_IDENTITY_SOURCE; empty means
+	// IdentityClusterAndDeploymentID.
+	IdentitySource IdentitySource
+	// Backoff are the waits between attempts to read system_identifier;
+	// nil means DefaultIdentityBackoff.
+	Backoff []time.Duration
+
+	// readSystemID replaces the system_identifier query (tests).
+	readSystemID func(context.Context) (int64, error)
 }
 
-// ReadsSystemIdentifier reports whether the identity includes the
-// cluster's system_identifier.
-func (s *Trips) ReadsSystemIdentifier() bool { return s.systemID }
+// DefaultIdentityBackoff bounds the startup read of system_identifier:
+// seven attempts over about 6 s, then NewTrips fails.
+var DefaultIdentityBackoff = []time.Duration{
+	100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond,
+	800 * time.Millisecond, 1600 * time.Millisecond, 3200 * time.Millisecond,
+}
+
+// identityAttemptTimeout bounds one attempt to read system_identifier.
+const identityAttemptTimeout = 5 * time.Second
+
+// NewTrips is NewTripsWith with the default identity source.
+func NewTrips(ctx context.Context, pool *pgxpool.Pool, deploymentID string) (*Trips, error) {
+	return NewTripsWith(ctx, pool, TripsOptions{DeploymentID: deploymentID})
+}
+
+// NewTripsWith returns a trip store on pool. The deployment identity sync
+// tokens and cursors carry is computed once, here, and cached for the
+// store's lifetime: a digest of the cluster's system_identifier (unless
+// opts.IdentitySource is IdentityDeploymentIDOnly) and
+// opts.DeploymentID. A token or cursor carrying another identity is
+// ErrDeploymentChanged. system_identifier catches a new cluster
+// (dump/restore, migration); SYNC_DEPLOYMENT_ID, which operators change
+// after any restore, PITR or branch reset, catches restores that keep
+// the cluster's identifier.
+//
+// Reading system_identifier is retried with opts.Backoff; then, or at
+// once on 42501 insufficient_privilege, NewTripsWith fails. It never
+// falls back to another identity by itself, so every instance of a
+// deployment computes the same one.
+func NewTripsWith(ctx context.Context, pool *pgxpool.Pool, opts TripsOptions) (*Trips, error) {
+	if opts.DeploymentID == "" {
+		return nil, errors.New("trips: a deployment id (SYNC_DEPLOYMENT_ID) is required")
+	}
+	if opts.IdentitySource == "" {
+		opts.IdentitySource = IdentityClusterAndDeploymentID
+	}
+	if opts.Backoff == nil {
+		opts.Backoff = DefaultIdentityBackoff
+	}
+	q := dbgen.New(pool)
+	sysID := ""
+	switch opts.IdentitySource {
+	case IdentityClusterAndDeploymentID:
+		read := q.SystemIdentifier
+		if opts.readSystemID != nil {
+			read = opts.readSystemID
+		}
+		id, err := readSystemIdentifier(ctx, read, opts.Backoff)
+		if err != nil {
+			return nil, err
+		}
+		sysID = strconv.FormatInt(id, 10)
+	case IdentityDeploymentIDOnly:
+	default:
+		return nil, fmt.Errorf("trips: unknown identity source %q", opts.IdentitySource)
+	}
+	return &Trips{pool: pool, q: q, identity: DeploymentIdentity(sysID, opts.DeploymentID), source: opts.IdentitySource}, nil
+}
+
+// ErrSystemIdentifierForbidden is returned when the database role may not
+// run pg_control_system().
+var ErrSystemIdentifierForbidden = errors.New("trips: the database role may not run pg_control_system() " +
+	"(42501 insufficient_privilege); grant it (GRANT EXECUTE ON FUNCTION pg_control_system() TO <role>) " +
+	"or set SYNC_IDENTITY_SOURCE=deployment_id_only on every instance")
+
+// readSystemIdentifier runs read until it succeeds, waiting backoff[i]
+// after the i-th failure; 42501 fails at once.
+func readSystemIdentifier(ctx context.Context, read func(context.Context) (int64, error), backoff []time.Duration) (int64, error) {
+	for attempt := 0; ; attempt++ {
+		actx, cancel := context.WithTimeout(ctx, identityAttemptTimeout)
+		id, err := read(actx)
+		cancel()
+		if err == nil {
+			return id, nil
+		}
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "42501" {
+			return 0, fmt.Errorf("%w: %w", ErrSystemIdentifierForbidden, err)
+		}
+		if attempt >= len(backoff) || ctx.Err() != nil {
+			return 0, fmt.Errorf("trips: read system_identifier (pg_control_system()), %d attempts: %w", attempt+1, err)
+		}
+		select {
+		case <-time.After(backoff[attempt]):
+		case <-ctx.Done():
+			return 0, fmt.Errorf("trips: read system_identifier (pg_control_system()): %w (then %w)", err, ctx.Err())
+		}
+	}
+}
+
+// Identity is the deployment identity digest tokens and cursors carry
+// (safe to log: it reveals neither system_identifier nor the id).
+func (s *Trips) Identity() string { return s.identity }
+
+// IdentitySource is the source the identity was computed from.
+func (s *Trips) IdentitySource() IdentitySource { return s.source }
 
 // DeploymentIdentity is the identity sync tokens carry for
-// system_identifier sysID (empty when unreadable) and deploymentID: a
+// system_identifier sysID (empty when not bound) and deploymentID: a
 // 25-character digest of both, so tokens and cursors stay short.
 func DeploymentIdentity(sysID, deploymentID string) string {
 	h := sha256.New()
@@ -80,18 +185,6 @@ func (s *Trips) at(stage string) {
 	if s.hook != nil {
 		s.hook(stage)
 	}
-}
-
-// identity returns the deployment identity, read in q's transaction.
-func (s *Trips) identity(ctx context.Context, q *dbgen.Queries) (string, error) {
-	if !s.systemID {
-		return DeploymentIdentity("", s.deploymentID), nil
-	}
-	id, err := q.SystemIdentifier(ctx)
-	if err != nil {
-		return "", fmt.Errorf("read system identifier: %w", err)
-	}
-	return DeploymentIdentity(strconv.FormatInt(id, 10), s.deploymentID), nil
 }
 
 // walk runs read in a read-only REPEATABLE READ transaction. With snapshot
@@ -114,10 +207,7 @@ func (s *Trips) walk(ctx context.Context, member uuid.UUID, since *store.SyncPoi
 			}
 		}
 		s.at("snapshot")
-		var err error
-		if identity, err = s.identity(ctx, q); err != nil {
-			return err
-		}
+		identity = s.identity
 		if since != nil && since.Identity != identity || cursor != "" && cursor != identity {
 			return store.ErrDeploymentChanged
 		}

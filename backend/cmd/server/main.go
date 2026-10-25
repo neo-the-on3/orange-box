@@ -156,16 +156,21 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		pool.Close()
 		return store{}, err
 	}
-	trips, err := db.NewTrips(ctx, pool, cfg.SyncDeploymentID)
+	trips, err := db.NewTripsWith(ctx, pool, db.TripsOptions{
+		DeploymentID: cfg.SyncDeploymentID, IdentitySource: db.IdentitySource(cfg.SyncIdentitySource),
+	})
 	if err != nil {
 		pool.Close()
 		return store{}, err
 	}
-	if !trips.ReadsSystemIdentifier() {
-		logger.Warn("pg_control_system() is not readable: sync tokens bind SYNC_DEPLOYMENT_ID only, so change it after every database restore",
-			slog.String("sync_deployment_id", cfg.SyncDeploymentID))
+	// The digest only (no system_identifier or deployment id): every
+	// instance of a deployment must log the same one.
+	logger.Info("sync identity", slog.String("identity", trips.Identity()), slog.String("source", string(trips.IdentitySource())))
+	if cfg.SyncDeploymentIDDefaulted {
+		logger.Warn("SYNC_DEPLOYMENT_ID is unset: using the dev-only default, which never changes; " +
+			"set a new SYNC_DEPLOYMENT_ID after restoring this database, or old sync tokens stay valid")
 	}
-	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns), slog.String("sync_deployment_id", cfg.SyncDeploymentID))
+	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
 	return store{
 		trips:       trips,
 		members:     db.NewMembers(pool),

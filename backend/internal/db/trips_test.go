@@ -398,3 +398,46 @@ func TestSyncPurgeBoundaryExpiry(t *testing.T) {
 		t.Fatalf("member without purges: %v", err)
 	}
 }
+
+// TestTripsInstancesAgree: instances of a deployment (same database and
+// SYNC_DEPLOYMENT_ID) compute the same identity, so tokens and cursors
+// move freely between them; the identity is read once, at startup.
+func TestTripsInstancesAgree(t *testing.T) {
+	t.Parallel()
+	pool := dbtest.New(t)
+	q := dbgen.New(pool)
+	a, b := newTrips(t, pool), newTrips(t, pool)
+	if a.Identity() != b.Identity() || a.Identity() != identity(t, q, "test-deployment") || a.IdentitySource() != db.IdentityClusterAndDeploymentID {
+		t.Fatalf("instances disagree: %q, %q", a.Identity(), b.Identity())
+	}
+	only, err := db.NewTripsWith(t.Context(), pool, db.TripsOptions{DeploymentID: "test-deployment", IdentitySource: db.IdentityDeploymentIDOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if only.Identity() == a.Identity() || only.Identity() != db.DeploymentIdentity("", "test-deployment") {
+		t.Errorf("deployment_id_only identity %q", only.Identity())
+	}
+	member := newMember(t, q)
+	vehicle := insertVehicle(t, q, member, nil)
+	for i := range 4 {
+		if _, err := q.UpsertTrip(t.Context(), tripParams(member, vehicle, newID(), "completed", time.Date(2026, 10, 1+i, 8, 0, 0, 0, time.UTC))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A walk alternating between the instances, page by page.
+	page, err := a.ListTripHistory(t.Context(), member, store.TripHistoryQuery{Snapshot: true, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := len(page.Trips)
+	for i, s := 0, []*db.Trips{b, a}; seen < 4; i++ {
+		last := page.Trips[len(page.Trips)-1]
+		if page, err = s[i%2].ListTripHistory(t.Context(), member, store.TripHistoryQuery{Identity: page.Identity, After: &store.HistoryPos{StartedAt: last.StartedAt, ID: last.ID}, Limit: 1}); err != nil {
+			t.Fatalf("page %d: %v", seen+1, err)
+		}
+		seen += len(page.Trips)
+	}
+	if _, err := b.ListTripChanges(t.Context(), member, store.TripChangesQuery{Since: origin(t, q), Limit: 10}); err != nil {
+		t.Errorf("a token on another instance: %v", err)
+	}
+}

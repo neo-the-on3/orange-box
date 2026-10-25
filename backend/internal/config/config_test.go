@@ -222,3 +222,30 @@ func TestLoadSyncDeploymentIDRequired(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadSyncIdentitySource(t *testing.T) {
+	t.Parallel()
+	prod := map[string]string{"ENV": "production", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob",
+		"SYNC_TOKEN_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "SYNC_DEPLOYMENT_ID": "prod-1"}
+	with := func(v string) map[string]string {
+		m := map[string]string{"SYNC_IDENTITY_SOURCE": v}
+		for k, x := range prod {
+			m[k] = x
+		}
+		return m
+	}
+	for v, want := range map[string]string{"": "cluster_and_deployment_id", "cluster_and_deployment_id": "cluster_and_deployment_id", "deployment_id_only": "deployment_id_only", "\tdeployment_id_only\n": "deployment_id_only"} {
+		c, err := Load(env(with(v)))
+		if err != nil || c.SyncIdentitySource != want || c.SyncDeploymentIDDefaulted {
+			t.Errorf("SYNC_IDENTITY_SOURCE=%q: %q, defaulted %v, %v", v, c.SyncIdentitySource, c.SyncDeploymentIDDefaulted, err)
+		}
+	}
+	for _, bad := range []string{"cluster", "Deployment_ID_Only", "true", "system_identifier"} {
+		if _, err := Load(env(with(bad))); err == nil || !strings.Contains(err.Error(), "SYNC_IDENTITY_SOURCE must be") {
+			t.Errorf("SYNC_IDENTITY_SOURCE=%q: %v", bad, err)
+		}
+	}
+	if c, err := Load(env(map[string]string{"ENV": "sandbox"})); err != nil || !c.SyncDeploymentIDDefaulted {
+		t.Errorf("sandbox default id not flagged: %v, %v", c.SyncDeploymentIDDefaulted, err)
+	}
+}

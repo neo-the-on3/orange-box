@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -204,5 +205,66 @@ func TestTripSyncAfterRestore(t *testing.T) {
 	ids2, _ := m2.walk("/v1/trips?since=" + url.QueryEscape(newSince))
 	if len(ids2) < 3 {
 		t.Errorf("incremental walk after recovery: %d trips, want the 3 re-created", len(ids2))
+	}
+}
+
+// TestTripWalkAcrossInstances: two instances of one deployment (same
+// database, SYNC_TOKEN_KEY and SYNC_DEPLOYMENT_ID) behind a round-robin
+// load balancer: every page of a full walk, a sync walk and a deletions
+// walk may land on either, and all of them finish.
+func TestTripWalkAcrossInstances(t *testing.T) {
+	t.Parallel()
+	pool := dbtest.New(t)
+	key := synctoken.GenerateKey()
+	envs := []*member{
+		deploymentEnv(t, pool, "prod-1", key).member("rr"),
+		deploymentEnv(t, pool, "prod-1", key).member("rr"),
+	}
+	a := envs[0]
+	v := a.vehicle()
+	var ids []uuid.UUID
+	for i := range 6 {
+		id := uuid.New()
+		ids = append(ids, id)
+		a.upload(tripJSON(id, v, "completed", "2026-10-0"+string(rune('1'+i))+"T08:00:00Z", "2026-10-10T00:00:00Z"))
+	}
+	walk := func(path string) (n int, since string) {
+		t.Helper()
+		p := path
+		for i := 0; ; i++ {
+			pg, r := envs[i%2].page(p)
+			if r.status != 0 && r.status != http.StatusOK {
+				t.Fatalf("%s on instance %d: %d %s", p, i%2, r.status, r.body)
+			}
+			n += len(pg.items)
+			if pg.nextCursor == nil {
+				s, _ := pg.nextSince.(string)
+				return n, s
+			}
+			sep := "&"
+			if !strings.Contains(path, "?") {
+				sep = "?"
+			}
+			p = path + sep + "cursor=" + url.QueryEscape(pg.nextCursor.(string))
+		}
+	}
+	n, since := walk("/v1/trips?limit=1")
+	if n != 6 || since == "" {
+		t.Fatalf("full walk: %d trips, since %q", n, since)
+	}
+	byClient, _ := a.fullWalk()
+	for _, id := range ids[:3] {
+		if r := envs[1].call(http.MethodDelete, "/v1/trips/"+byClient[id.String()]["id"].(string), ""); r.status != http.StatusNoContent {
+			t.Fatalf("delete: %d %s", r.status, r.body)
+		}
+	}
+	if n, _ := walk("/v1/trips/deletions?limit=1&since=" + url.QueryEscape(since)); n < 3 {
+		t.Errorf("deletions walk: %d, want at least 3", n)
+	}
+	for range 3 {
+		a.upload(tripJSON(uuid.New(), v, "completed", "2026-10-09T08:00:00Z", "2026-10-11T00:00:00Z"))
+	}
+	if n, _ := walk("/v1/trips?limit=1&since=" + url.QueryEscape(since)); n < 3 {
+		t.Errorf("changes walk: %d, want at least 3", n)
 	}
 }

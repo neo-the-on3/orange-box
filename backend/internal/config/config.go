@@ -86,6 +86,16 @@ type Config struct {
 	// reason=deployment_changed. Required unless Env is a dev environment,
 	// where it defaults to "dev-<ENV>".
 	SyncDeploymentID string
+	// SyncDeploymentIDDefaulted is whether SyncDeploymentID is the dev
+	// default "dev-<ENV>", which never changes: a restore that keeps the
+	// cluster (PITR, branch reset) then goes undetected.
+	SyncDeploymentIDDefaulted bool
+	// SyncIdentitySource (SYNC_IDENTITY_SOURCE) is what the deployment
+	// identity binds: "cluster_and_deployment_id" (default:
+	// system_identifier and SYNC_DEPLOYMENT_ID; startup fails if the role
+	// can't read pg_control_system()) or "deployment_id_only". Every
+	// instance must use the same value.
+	SyncIdentitySource string
 }
 
 // IsDevEnvironment reports whether Env is one of local, ci or sandbox.
@@ -192,11 +202,16 @@ func Load(getenv func(string) string) (Config, error) {
 	c.SyncDeploymentID = strings.TrimSpace(getenv("SYNC_DEPLOYMENT_ID"))
 	switch {
 	case c.SyncDeploymentID == "" && c.IsDevEnvironment():
-		c.SyncDeploymentID = "dev-" + c.Env
+		c.SyncDeploymentID, c.SyncDeploymentIDDefaulted = "dev-"+c.Env, true
 	case c.SyncDeploymentID == "":
 		errs = append(errs, errors.New("SYNC_DEPLOYMENT_ID is required unless ENV is local, ci or sandbox (e.g. prod-2026-10-25; change it after every database restore)"))
 	case !validDeploymentID(c.SyncDeploymentID):
 		errs = append(errs, errors.New("SYNC_DEPLOYMENT_ID must be at most 64 characters from A-Z, a-z, 0-9, '.', '_', ':' and '-'"))
+	}
+	switch c.SyncIdentitySource = orDefault(strings.TrimSpace(getenv("SYNC_IDENTITY_SOURCE")), "cluster_and_deployment_id"); c.SyncIdentitySource {
+	case "cluster_and_deployment_id", "deployment_id_only":
+	default:
+		errs = append(errs, errors.New(`SYNC_IDENTITY_SOURCE must be "cluster_and_deployment_id" (default) or "deployment_id_only"`))
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))
