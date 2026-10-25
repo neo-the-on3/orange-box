@@ -123,7 +123,7 @@ func TestGzipBombAuthenticated(t *testing.T) {
 	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 24<<20 {
 		t.Errorf("allocated %d MiB", alloc>>20)
 	}
-	if elapsed > 3*time.Second {
+	if elapsed > bombTimeLimit {
 		t.Errorf("took %v", elapsed)
 	}
 }
@@ -260,7 +260,7 @@ func TestArrayBombMaxItems(t *testing.T) {
 	if alloc > 40<<20 {
 		t.Errorf("allocated %d MiB", alloc>>20)
 	}
-	if elapsed > 2*time.Second {
+	if elapsed > bombTimeLimit {
 		t.Errorf("took %v", elapsed)
 	}
 }
