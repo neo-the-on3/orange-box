@@ -3,13 +3,20 @@ package io.github.neotheon3.orangebox.feature.trips
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,10 +47,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -79,10 +88,14 @@ fun TripDetailScreen(
     charts: @Composable (TripDetail) -> Unit = { d ->
         TripCharts(d.speedZones, d.speedSeries.map { (t, v) -> SeriesPoint(t, v) }, d.economySeries, locale, durationS = d.metrics.durationS)
     },
+    /** System bars and cutouts to keep clear of; in landscape 3-button navigation sits on a side (#188). */
+    contentInsets: WindowInsets = WindowInsets.safeDrawing,
 ) {
     Scaffold(
+        contentWindowInsets = contentInsets,
         topBar = {
             TopAppBar(
+                windowInsets = contentInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top),
                 title = {
                     Column {
                         Text(stringResource(R.string.trip_detail_title))
@@ -110,51 +123,60 @@ fun TripDetailScreen(
             detail == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text(stringResource(R.string.trip_detail_not_found), modifier = Modifier.testTag("trip_detail_not_found"))
             }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().testTag("trip_detail_list"),
-                contentPadding = PaddingValues(
-                    start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 8.dp,
-                    bottom = padding.calculateBottomPadding() + 16.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item(key = "map") { MapCard(detail, if (state.tilesEnabled) tiles else null) }
-                item(key = "metrics") { MetricsGrid(detail.metrics, locale) }
-                item(key = "gps") {
-                    Text(
-                        stringResource(R.string.trip_detail_gps_points, detail.route.size, detail.speedSeries.size),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 4.dp).testTag("trip_detail_gps_points"),
-                    )
-                }
-                item(key = "charts") { charts(detail) }
-                item(key = "events_header") {
-                    Text(stringResource(R.string.trip_detail_events), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp))
-                }
-                if (detail.events.isEmpty()) {
-                    item(key = "no_events") {
+            else -> BoxWithConstraints(Modifier.fillMaxSize()) {
+                val direction = LocalLayoutDirection.current
+                val top = padding.calculateTopPadding() + 8.dp
+                val bottom = padding.calculateBottomPadding() + 16.dp
+                // In landscape a 260 dp map would fill the viewport, so every vertical swipe would pan it and
+                // the page could not scroll: cap it at half the visible height (#188).
+                val mapHeight = mapHeight(maxHeight - top - bottom)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().testTag("trip_detail_list"),
+                    // The side insets too: in landscape the navigation bar is on the right (#188, like #119).
+                    contentPadding = PaddingValues(
+                        start = padding.calculateStartPadding(direction) + 16.dp, end = padding.calculateEndPadding(direction) + 16.dp,
+                        top = top, bottom = bottom,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    item(key = "map") { MapCard(detail, if (state.tilesEnabled) tiles else null, mapHeight) }
+                    item(key = "metrics") { MetricsGrid(detail.metrics, locale) }
+                    item(key = "gps") {
                         Text(
-                            stringResource(R.string.trip_detail_no_events),
+                            stringResource(R.string.trip_detail_gps_points, detail.route.size, detail.speedSeries.size),
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.testTag("trip_detail_no_events"),
+                            modifier = Modifier.padding(start = 4.dp).testTag("trip_detail_gps_points"),
                         )
                     }
-                }
-                items(detail.events.withIndex().toList(), key = { "event_${it.index}" }) { (i, e) -> EventRow(i, e, locale) }
-                // Fuel cut saves fuel: its own section, not counted as an event (#165).
-                if (detail.fuelCuts.isNotEmpty()) {
-                    item(key = "fuel_cut_header") {
-                        Column(Modifier.padding(top = 4.dp)) {
-                            Text(stringResource(R.string.trip_detail_fuel_cuts), style = MaterialTheme.typography.titleMedium)
+                    item(key = "charts") { charts(detail) }
+                    item(key = "events_header") {
+                        Text(stringResource(R.string.trip_detail_events), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    if (detail.events.isEmpty()) {
+                        item(key = "no_events") {
                             Text(
-                                stringResource(R.string.trip_detail_fuel_cuts_hint),
-                                style = MaterialTheme.typography.bodySmall,
+                                stringResource(R.string.trip_detail_no_events),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("trip_detail_no_events"),
                             )
                         }
                     }
-                    items(detail.fuelCuts.withIndex().toList(), key = { "fuel_cut_${it.index}" }) { (i, e) -> EventRow(i, e, locale, tag = "trip_fuel_cut_$i") }
+                    items(detail.events.withIndex().toList(), key = { "event_${it.index}" }) { (i, e) -> EventRow(i, e, locale) }
+                    // Fuel cut saves fuel: its own section, not counted as an event (#165).
+                    if (detail.fuelCuts.isNotEmpty()) {
+                        item(key = "fuel_cut_header") {
+                            Column(Modifier.padding(top = 4.dp)) {
+                                Text(stringResource(R.string.trip_detail_fuel_cuts), style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    stringResource(R.string.trip_detail_fuel_cuts_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        items(detail.fuelCuts.withIndex().toList(), key = { "fuel_cut_${it.index}" }) { (i, e) -> EventRow(i, e, locale, tag = "trip_fuel_cut_$i") }
+                    }
                 }
             }
         }
@@ -182,9 +204,15 @@ private fun MapMenu(tilesEnabled: Boolean, onTilesChanged: (Boolean) -> Unit) {
     }
 }
 
+/** The route map's height: [MAP_HEIGHT], but no more than half of the [viewport] height (and at least [MIN_MAP_HEIGHT]). */
+internal fun mapHeight(viewport: Dp): Dp = minOf(MAP_HEIGHT, viewport * 0.5f).coerceAtLeast(MIN_MAP_HEIGHT)
+
+private val MAP_HEIGHT = 260.dp
+private val MIN_MAP_HEIGHT = 120.dp
+
 @Composable
-private fun MapCard(detail: TripDetail, tiles: TileStreamProvider?) {
-    OutlinedCard(Modifier.fillMaxWidth()) {
+private fun MapCard(detail: TripDetail, tiles: TileStreamProvider?, height: Dp) {
+    OutlinedCard(Modifier.fillMaxWidth().testTag("trip_detail_map_card")) {
         if (detail.hasRoute) {
             val markers = detail.events.withIndex().mapNotNull { (i, e) ->
                 e.position?.let { RouteMarker("event_$i", it, eventLetter(e.type), eventColor(e.type), eventLabel(e.type)) }
@@ -194,7 +222,7 @@ private fun MapCard(detail: TripDetail, tiles: TileStreamProvider?) {
                 markers = markers,
                 tiles = tiles,
                 routeDescription = stringResource(R.string.trip_detail_map_description, detail.route.size),
-                modifier = Modifier.fillMaxWidth().height(260.dp),
+                modifier = Modifier.fillMaxWidth().height(height),
             )
         } else {
             ListItem(
