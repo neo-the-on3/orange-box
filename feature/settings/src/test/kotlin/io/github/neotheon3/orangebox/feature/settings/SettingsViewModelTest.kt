@@ -76,6 +76,16 @@ class SettingsViewModelTest {
         assertEquals(picked, vm.uiState.value.units)
     }
 
+    @Test fun `alert toggles persist (#59)`() = runTest {
+        val prefs = FakeAppPreferencesRepository()
+        val vm = vm(FakeBackendConfigRepository(), prefs)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
+        val changed = io.github.neotheon3.orangebox.core.model.AlertPreferences(idling = true, voice = true)
+        vm.onAlertsChanged(changed)
+        assertEquals(changed, prefs.preferences.first().alerts)
+        assertEquals(changed, vm.uiState.value.alerts)
+    }
+
     private fun vm(
         repo: FakeBackendConfigRepository,
         prefs: FakeAppPreferencesRepository = FakeAppPreferencesRepository(),

@@ -23,6 +23,7 @@ class OrangeBoxApplication : Application() {
     @Inject lateinit var crashMonitor: io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor
     @Inject lateinit var crashNotifier: io.github.neotheon3.orangebox.crash.CrashNotifier
     @Inject lateinit var appVisibility: io.github.neotheon3.orangebox.crash.AppVisibility
+    @Inject lateinit var alertMonitor: io.github.neotheon3.orangebox.core.driving.alerts.AlertMonitor
 
     override fun onCreate() {
         AndroidLogSink.install(debug = BuildConfig.DEBUG)
@@ -38,6 +39,8 @@ class OrangeBoxApplication : Application() {
         appVisibility.install(this)
         crashMonitor.install()
         crashNotifier.install(this)
+        // Overspeed / idling / harsh / check-engine alerts while connected (M8).
+        alertMonitor.install()
         appScope.launch {
             backendConfig.config.map { it.mode }.distinctUntilChanged().collect {
                 OrangeLog.i(OrangeLog.Areas.BACKEND, "mode", "mode" to it.wireName)

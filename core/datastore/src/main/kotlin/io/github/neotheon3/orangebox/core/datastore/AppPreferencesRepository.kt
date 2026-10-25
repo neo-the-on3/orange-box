@@ -40,6 +40,7 @@ interface AppPreferencesRepository {
     suspend fun setCrash(crash: CrashPreferences)
     /** Stores the display units; from then on they no longer follow the device country. */
     suspend fun setUnits(units: UnitPreferences)
+    suspend fun setAlerts(alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences)
 }
 
 @Singleton
@@ -72,6 +73,16 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                     distance = DistanceUnit.entries.firstOrNull { it.name == d } ?: DistanceUnit.KM,
                     economy = EconomyUnit.entries.firstOrNull { it.name == p[UNITS_ECONOMY] } ?: EconomyUnit.KM_PER_L,
                     temperature = TemperatureUnit.entries.firstOrNull { it.name == p[UNITS_TEMPERATURE] } ?: TemperatureUnit.CELSIUS,
+                )
+            },
+            alerts = io.github.neotheon3.orangebox.core.model.AlertPreferences().let { d ->
+                io.github.neotheon3.orangebox.core.model.AlertPreferences(
+                    overspeed = p[ALERT_OVERSPEED] ?: d.overspeed,
+                    idling = p[ALERT_IDLING] ?: d.idling,
+                    harsh = p[ALERT_HARSH] ?: d.harsh,
+                    mil = p[ALERT_MIL] ?: d.mil,
+                    sound = p[ALERT_SOUND] ?: d.sound,
+                    voice = p[ALERT_VOICE] ?: d.voice,
                 )
             },
         )
@@ -110,6 +121,17 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         }
     }
 
+    override suspend fun setAlerts(alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences) {
+        dataStore.edit {
+            it[ALERT_OVERSPEED] = alerts.overspeed
+            it[ALERT_IDLING] = alerts.idling
+            it[ALERT_HARSH] = alerts.harsh
+            it[ALERT_MIL] = alerts.mil
+            it[ALERT_SOUND] = alerts.sound
+            it[ALERT_VOICE] = alerts.voice
+        }
+    }
+
     override suspend fun setDashboard(dashboard: DashboardPreferences) {
         dataStore.edit {
             it[DASH_BUTTON] = dashboard.button.name
@@ -134,6 +156,12 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val UNITS_DISTANCE = stringPreferencesKey("units_distance")
         val UNITS_ECONOMY = stringPreferencesKey("units_economy")
         val UNITS_TEMPERATURE = stringPreferencesKey("units_temperature")
+        val ALERT_OVERSPEED = booleanPreferencesKey("alert_overspeed")
+        val ALERT_IDLING = booleanPreferencesKey("alert_idling")
+        val ALERT_HARSH = booleanPreferencesKey("alert_harsh")
+        val ALERT_MIL = booleanPreferencesKey("alert_mil")
+        val ALERT_SOUND = booleanPreferencesKey("alert_sound")
+        val ALERT_VOICE = booleanPreferencesKey("alert_voice")
         val ONBOARDING_STEP = stringPreferencesKey("onboarding_step")
         val ONBOARDING = booleanPreferencesKey("onboarding_complete")
         val DISCLAIMER = booleanPreferencesKey("disclaimer_accepted")

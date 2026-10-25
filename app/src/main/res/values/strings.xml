@@ -24,4 +24,9 @@
     <string name="notif_crash_ok">I\'m OK</string>
     <string name="notif_crash_call">Call %1$s</string>
     <string name="notif_crash_sms">SMS location</string>
+    <string name="alert_voice_overspeed">Slow down. You are over your speed limit.</string>
+    <string name="alert_voice_idling">The engine has been idling for a while.</string>
+    <string name="alert_voice_harsh_accel">Harsh acceleration.</string>
+    <string name="alert_voice_harsh_brake">Harsh braking.</string>
+    <string name="alert_voice_mil">Check engine light is on.</string>
 </resources>

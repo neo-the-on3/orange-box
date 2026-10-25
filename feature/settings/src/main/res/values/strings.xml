@@ -58,4 +58,18 @@
     <string name="settings_units_distance">Distance and speed</string>
     <string name="settings_units_economy">Fuel economy</string>
     <string name="settings_units_temperature">Temperature</string>
+
+    <string name="settings_alerts_section">Driving alerts</string>
+    <string name="settings_alert_overspeed">Overspeed</string>
+    <string name="settings_alert_overspeed_summary">When you go over the overspeed warning speed</string>
+    <string name="settings_alert_harsh">Harsh acceleration and braking</string>
+    <string name="settings_alert_harsh_summary">At most once every 10 seconds</string>
+    <string name="settings_alert_idling">Long idling</string>
+    <string name="settings_alert_idling_summary">After 3 minutes with the engine running and the car standing still</string>
+    <string name="settings_alert_mil">Check-engine light</string>
+    <string name="settings_alert_mil_summary">Once per drive, when the car reports it on</string>
+    <string name="settings_alert_sound">Play a tone</string>
+    <string name="settings_alert_sound_summary">Short tones made for Orange Box, played over your music</string>
+    <string name="settings_alert_voice">Speak alerts</string>
+    <string name="settings_alert_voice_summary">Uses your phone\'s text-to-speech engine</string>
 </resources>

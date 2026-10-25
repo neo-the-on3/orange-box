@@ -48,6 +48,7 @@ data class SettingsUiState(
     val dashboard: DashboardSettingsState = DashboardSettingsState(),
     /** Display units in effect (#58): the user's choice, else the country's defaults. */
     val units: io.github.neotheon3.orangebox.core.model.UnitPreferences = io.github.neotheon3.orangebox.core.model.UnitPreferences(),
+    val alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences = io.github.neotheon3.orangebox.core.model.AlertPreferences(),
 )
 
 /** The "Driving dashboard" section. */
@@ -97,7 +98,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** The sections M7/M8 added, all from AppPreferences, as a partial state merged below. */
-    private val general = prefs.preferences.map { p -> SettingsUiState(units = country.units(p)) }.distinctUntilChanged()
+    private val general = prefs.preferences.map { p -> SettingsUiState(units = country.units(p), alerts = p.alerts) }.distinctUntilChanged()
 
     private val backend = combine(repository.config, urlDraft, urlResult) { config, draft, result -> Triple(config, draft, result) }
 
@@ -115,6 +116,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onUnitsChanged(units: io.github.neotheon3.orangebox.core.model.UnitPreferences) {
         viewModelScope.launch { prefs.setUnits(units) }
+    }
+
+    fun onAlertsChanged(alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences) {
+        viewModelScope.launch { prefs.setAlerts(alerts) }
     }
 
     fun onAutoStartChanged(enabled: Boolean) {
