@@ -26,6 +26,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		os.Exit(migrateCommand(os.Args[2:], os.Getenv, os.Stdout))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "identity" {
+		os.Exit(identityCommand(os.Args[2:], os.Getenv, os.Stdout))
+	}
 	os.Exit(serve())
 }
 
