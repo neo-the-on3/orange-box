@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- "Start driving" full screen on connect; gated by NotificationManager.canUseFullScreenIntent() on API 34+. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Crash prompt (M7): the dialer / SMS app are opened with ACTION_DIAL / ACTION_SENDTO, so there is
+         deliberately no CALL_PHONE or SEND_SMS (ManifestPermissionsTest and lint enforce this). -->
 
     <application
         android:name=".OrangeBoxApplication"
@@ -44,5 +46,10 @@
             android:name=".driving.DrivingService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
+
+        <!-- "I'm OK" on the crash notification (M7). -->
+        <receiver
+            android:name=".crash.CrashCancelReceiver"
+            android:exported="false" />
     </application>
 </manifest>

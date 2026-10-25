@@ -61,6 +61,8 @@ fun OrangeBoxNavHost(
     onDashboardRequestIgnored: () -> Unit = {},
     /** "Car Diagnosing…" at drive start (#50); null in tests that don't need it. */
     diagnosingPrompt: DiagnosingPromptController? = null,
+    /** Crash / emergency prompt (M7), drawn above everything; null in tests that don't need it. */
+    crashPrompt: io.github.neotheon3.orangebox.feature.driving.CrashPromptController? = null,
 ) {
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
@@ -117,6 +119,8 @@ fun OrangeBoxNavHost(
             snackbar,
             Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing).testTag("app_snackbar"),
         )
+        // Also during onboarding: a manual prompt can't be opened there, but an impact always shows.
+        crashPrompt?.let { io.github.neotheon3.orangebox.feature.driving.CrashPromptOverlay(it) }
     }
 }
 

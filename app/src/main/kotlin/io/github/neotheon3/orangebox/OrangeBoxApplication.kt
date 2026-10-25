@@ -20,6 +20,9 @@ class OrangeBoxApplication : Application() {
     @Inject @ApplicationScope lateinit var appScope: CoroutineScope
     @Inject lateinit var drivingController: io.github.neotheon3.orangebox.driving.DrivingController
     @Inject lateinit var diagnosingPrompt: io.github.neotheon3.orangebox.core.diagnostics.DiagnosingPromptController
+    @Inject lateinit var crashMonitor: io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor
+    @Inject lateinit var crashNotifier: io.github.neotheon3.orangebox.crash.CrashNotifier
+    @Inject lateinit var appVisibility: io.github.neotheon3.orangebox.crash.AppVisibility
 
     override fun onCreate() {
         AndroidLogSink.install(debug = BuildConfig.DEBUG)
@@ -31,6 +34,10 @@ class OrangeBoxApplication : Application() {
         drivingController.install(this)
         // One "Car Diagnosing…" scan per drive (M6, #50).
         diagnosingPrompt.install()
+        // Impact detection while driving -> crash prompt, with a notification when not on screen (M7).
+        appVisibility.install(this)
+        crashMonitor.install()
+        crashNotifier.install(this)
         appScope.launch {
             backendConfig.config.map { it.mode }.distinctUntilChanged().collect {
                 OrangeLog.i(OrangeLog.Areas.BACKEND, "mode", "mode" to it.wireName)
