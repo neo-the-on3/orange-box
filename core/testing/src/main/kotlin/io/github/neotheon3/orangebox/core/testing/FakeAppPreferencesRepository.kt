@@ -37,6 +37,7 @@ class FakeAppPreferencesRepository(initial: AppPreferences = AppPreferences()) :
         )
     }
     override suspend fun setAlerts(alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences) { state.value = state.value.copy(alerts = alerts) }
+    override suspend fun setDiagnosticsPromptEnabled(enabled: Boolean) { state.value = state.value.copy(diagnosticsPromptEnabled = enabled) }
     override suspend fun setUnits(units: io.github.neotheon3.orangebox.core.model.UnitPreferences) { state.value = state.value.copy(units = units) }
     override suspend fun markPermissionsAsked(permissions: Collection<String>) {
         state.value = state.value.copy(askedPermissions = state.value.askedPermissions + permissions)

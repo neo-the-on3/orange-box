@@ -95,4 +95,7 @@
     <string name="settings_crash_contact_picked_invalid">That contact has no usable phone number</string>
     <string name="settings_crash_contact_save">Save</string>
     <string name="settings_crash_contact_privacy">Only the number you choose is read; Orange Box cannot see your other contacts.</string>
+
+    <string name="settings_diagnostics_prompt">Check the car when a drive starts</string>
+    <string name="settings_diagnostics_prompt_summary">Reads trouble codes after connecting and shows the result for a moment.</string>
 </resources>

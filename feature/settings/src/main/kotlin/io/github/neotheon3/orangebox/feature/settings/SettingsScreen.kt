@@ -89,6 +89,7 @@ fun SettingsRoute(
         actions = SettingsActions(
             onUnitsChanged = viewModel::onUnitsChanged,
             onAlertsChanged = viewModel::onAlertsChanged,
+            onDiagnosticsPromptChanged = viewModel::onDiagnosticsPromptChanged,
             crash = CrashSettingsActions(
                 onChanged = viewModel::onCrashChanged,
                 onPickContact = {
@@ -110,6 +111,7 @@ data class SettingsActions(
     val onUnitsChanged: (io.github.neotheon3.orangebox.core.model.UnitPreferences) -> Unit = {},
     val onAlertsChanged: (io.github.neotheon3.orangebox.core.model.AlertPreferences) -> Unit = {},
     val crash: CrashSettingsActions = CrashSettingsActions(),
+    val onDiagnosticsPromptChanged: (Boolean) -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -221,6 +223,10 @@ fun SettingsScreen(
                 modifier = Modifier
                     .toggleable(value = state.autoStart, onValueChange = onAutoStartChanged, role = Role.Switch)
                     .testTag("settings_auto_start"),
+            )
+            SwitchRow(
+                R.string.settings_diagnostics_prompt, R.string.settings_diagnostics_prompt_summary, state.diagnosticsPrompt,
+                "settings_diagnostics_prompt", actions.onDiagnosticsPromptChanged,
             )
             HorizontalDivider()
             DashboardSettingsSection(state.dashboard, launchableApps, dashboardActions, state.units)

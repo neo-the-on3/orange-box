@@ -167,4 +167,18 @@ class SettingsScreenTest {
         compose.onNodeWithTag("settings_crash_contact_save").performScrollTo().performClick()
         assertEquals(listOf("pick", "edit", "clear", "save"), events)
     }
+
+    @Test fun `drive-start diagnostics prompt has its own switch`() {
+        var enabled: Boolean? = null
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                    actions = SettingsActions(onDiagnosticsPromptChanged = { enabled = it }),
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_diagnostics_prompt").performScrollTo().assertIsOn().performClick()
+        assertEquals(false, enabled)
+    }
 }

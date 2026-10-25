@@ -82,6 +82,15 @@ class AppPreferencesRepositoryTest {
         assertEquals(chosen, repo.preferences.first().units)
     }
 
+    @Test fun `drive-start diagnostics prompt is on by default and can be turned off`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = DataStoreAppPreferencesRepository(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("d.preferences_pb").also { it.delete() } },
+        )
+        assertEquals(true, repo.preferences.first().diagnosticsPromptEnabled)
+        repo.setDiagnosticsPromptEnabled(false)
+        assertEquals(false, repo.preferences.first().diagnosticsPromptEnabled)
+    }
+
     @Test fun `alert toggles default and persist (#59)`() = runTest(UnconfinedTestDispatcher()) {
         val repo = DataStoreAppPreferencesRepository(
             PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("a.preferences_pb").also { it.delete() } },

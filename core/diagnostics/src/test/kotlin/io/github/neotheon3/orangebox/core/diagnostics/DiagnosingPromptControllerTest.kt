@@ -57,6 +57,25 @@ class DiagnosingPromptControllerTest {
         assertEquals(DiagnosingPrompt.Hidden, controller.prompt.value)
     }
 
+    @Test fun `turned off in Settings, a drive starts without a scan or prompt`() = runTest {
+        val connection = FakeObdConnection()
+        val diagnostics = ScriptedDiagnostics(report("P0300"))
+        val enabled = MutableStateFlow(false)
+        val controller = DiagnosingPromptController(backgroundScope, connection, diagnostics, enabled).apply { install() }
+        runCurrent()
+        connection.state.value = connected
+        runCurrent()
+        advanceTimeBy(DiagnosingPromptController.MIN_SCAN_MILLIS + 1)
+        assertEquals(DiagnosingPrompt.Hidden, controller.prompt.value)
+        assertEquals(0, diagnostics.scans)
+        // Back on: the next drive prompts again.
+        enabled.value = true
+        connection.state.value = ObdConnectionState.Idle; runCurrent()
+        connection.state.value = connected; runCurrent()
+        assertEquals(DiagnosingPrompt.Scanning, controller.prompt.value)
+        assertEquals(1, diagnostics.scans)
+    }
+
     @Test fun `codes give a warning that stays until dismissed`() = runTest {
         val (connection, _, controller) = setUp(report("P0300", "P0420", "U0100"))
         connection.state.value = connected
