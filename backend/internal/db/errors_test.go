@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
@@ -101,5 +104,56 @@ func TestClassifyLockTimeout(t *testing.T) {
 	_, err = pool.Exec(qctx, `SELECT pg_sleep(5)`)
 	if got := db.Classify(err); got != store.FailureBusy {
 		t.Fatalf("deadline: %v → %d, want busy", err, got)
+	}
+}
+
+// TestClassifyConnectErrors: errors at connect time (and from a closed
+// pool) are FailureUnavailable (503 with Retry-After), not 500, including
+// ones that carry a Postgres error code.
+func TestClassifyConnectErrors(t *testing.T) {
+	t.Parallel()
+	base, err := url.Parse(dbtest.BaseURL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	connect := func(u *url.URL) error {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		conn, err := pgx.Connect(ctx, u.String())
+		if err == nil {
+			_ = conn.Close(ctx)
+		}
+		return err
+	}
+	wrongPassword := *base
+	wrongPassword.User = url.UserPassword(base.User.Username(), "definitely-not-the-password")
+	noDatabase := *base
+	noDatabase.Path = "/ob_no_such_database_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	unreachable := *base
+	unreachable.Host = "127.0.0.1:1"
+	cases := map[string]*url.URL{"unknown database": &noDatabase, "unreachable": &unreachable}
+	if _, hasPassword := base.User.Password(); hasPassword {
+		cases["wrong password"] = &wrongPassword // trust auth would let it in
+	}
+	for name, u := range cases {
+		err := connect(u)
+		if err == nil {
+			t.Errorf("%s: connected", name)
+			continue
+		}
+		if got := db.Classify(err); got != store.FailureUnavailable {
+			t.Errorf("%s: %v classified as %v", name, err, got)
+		}
+	}
+	pool := dbtest.Open(t, dbtest.NewDatabase(t))
+	pool.Close()
+	_, err = pool.Exec(t.Context(), "SELECT 1")
+	if got := db.Classify(err); err == nil || got != store.FailureUnavailable {
+		t.Errorf("closed pool: %v classified as %v", err, got)
+	}
+	for code, want := range map[string]store.Failure{"28P01": store.FailureUnavailable, "28000": store.FailureUnavailable, "53300": store.FailureUnavailable, "3D000": store.FailureUnavailable} {
+		if got := db.Classify(&pgconn.PgError{Code: code}); got != want {
+			t.Errorf("%s: %v", code, got)
+		}
 	}
 }
