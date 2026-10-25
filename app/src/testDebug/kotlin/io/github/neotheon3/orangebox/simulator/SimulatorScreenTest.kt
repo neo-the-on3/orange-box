@@ -91,6 +91,10 @@ class SimulatorScreenTest {
         click("sim_dtc_clear")
         assertTrue(sim.dtcs.isEmpty()); assertFalse(sim.milOn)
     }
+    @Test fun `demo button injects the M6 acceptance codes`() {
+        click("sim_dtc_demo")
+        assertEquals(listOf("P0300", "P0420", "U0100"), sim.dtcs); assertTrue(sim.milOn)
+    }
     @Test fun `pending and permanent dtc injection`() {
         click("sim_dtc_kind_pending")
         compose.onNodeWithTag("sim_dtc_input").performScrollTo().performTextReplacement("P0300")
