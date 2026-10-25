@@ -24,6 +24,8 @@ import androidx.navigation.compose.rememberNavController
 import io.github.neotheon3.orangebox.DebugEntries
 import io.github.neotheon3.orangebox.R
 import io.github.neotheon3.orangebox.core.driving.DriveSession
+import io.github.neotheon3.orangebox.feature.diagnostics.DiagnosticsDestination
+import io.github.neotheon3.orangebox.feature.diagnostics.diagnosticsScreen
 import io.github.neotheon3.orangebox.feature.driving.DashboardDestination
 import io.github.neotheon3.orangebox.feature.driving.dashboardScreen
 import io.github.neotheon3.orangebox.feature.home.HomeDestination
@@ -71,6 +73,7 @@ fun OrangeBoxNavHost(
                 onOpenDashboard = { navController.openDashboard() },
                 extraMenuEntries = { debugEntries.homeMenuEntries(navController) },
                 onOpenTrips = { navController.navigate(TripsDestination) { launchSingleTop = true } },
+                onOpenDiagnostics = { navController.openDiagnostics() },
             )
             tripsScreen(
                 onBack = { navController.popBackStack() },
@@ -80,7 +83,9 @@ fun OrangeBoxNavHost(
             dashboardScreen(
                 onEndDriving = { navController.returnHome() },
                 onBack = { navController.returnHome() },
+                onOpenDiagnostics = { navController.openDiagnostics() },
             )
+            diagnosticsScreen(onBack = { navController.popBackStack() })
             settingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenVehicle = { navController.navigate(VehicleSetupDestination) { launchSingleTop = true } },
@@ -123,6 +128,8 @@ private fun EndDriveSnackbar(session: DriveSession, host: SnackbarHostState, onU
         }
     }
 }
+
+private fun NavHostController.openDiagnostics() = navigate(DiagnosticsDestination) { launchSingleTop = true }
 
 private fun NavHostController.openDashboard() = navigate(DashboardDestination) { launchSingleTop = true }
 

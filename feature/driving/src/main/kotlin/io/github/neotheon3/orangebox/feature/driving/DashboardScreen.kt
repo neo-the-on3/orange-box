@@ -54,7 +54,11 @@ import io.github.neotheon3.orangebox.core.dashboardui.rememberReduceMotion
 const val DETAIL_TRANSITION_MILLIS = 500
 
 @Composable
-fun DashboardRoute(onEndDriving: () -> Unit, onBack: () -> Unit, viewModel: DashboardViewModel = hiltViewModel()) {
+fun DashboardRoute(
+    onEndDriving: () -> Unit,
+    onBack: () -> Unit,
+    onOpenDiagnostics: () -> Unit = {},
+    viewModel: DashboardViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val controls by viewModel.controls.collectAsStateWithLifecycle()
     KeepScreenOn()
@@ -65,6 +69,7 @@ fun DashboardRoute(onEndDriving: () -> Unit, onBack: () -> Unit, viewModel: Dash
         onEndDriving = { viewModel.endDriving(); onEndDriving() },
         leftButton = controls.leftButton,
         onQuickLaunch = viewModel::quickLaunch,
+        onOpenDiagnostics = onOpenDiagnostics,
     )
 }
 
@@ -77,7 +82,7 @@ private fun KeepScreenOn() {
     }
 }
 
-private enum class DashboardDialog { EMERGENCY, DIAGNOSTICS }
+private enum class DashboardDialog { EMERGENCY }
 
 /**
  * Driving dashboard (docs/ui/LEGACY_OBD_UI.md §4): RPM cluster, centre column (MIL/OBD, FUEL, TRIP) and
@@ -93,6 +98,8 @@ fun DashboardScreen(
     settings: DashboardSettings = DashboardSettings(reduceMotion = rememberReduceMotion()),
     leftButton: LeftButton = LeftButton.Hazard(EMERGENCY_NUMBER),
     onQuickLaunch: (String) -> Unit = {},
+    /** The Diagnostics shortcut (legacy map-launcher slot) opens the M6 Diagnostics screen. */
+    onOpenDiagnostics: () -> Unit = {},
 ) {
     var showDetail by rememberSaveable { mutableStateOf(initialShowDetail) }
     var dialog by rememberSaveable { mutableStateOf<DashboardDialog?>(null) }
@@ -108,7 +115,7 @@ fun DashboardScreen(
                         landscape = landscape,
                         onToggleDetail = { showDetail = !showDetail },
                         onEmergency = { dialog = DashboardDialog.EMERGENCY },
-                        onDiagnostics = { dialog = DashboardDialog.DIAGNOSTICS },
+                        onDiagnostics = onOpenDiagnostics,
                         onEndDriving = onEndDriving,
                         leftButton = leftButton,
                         onQuickLaunch = onQuickLaunch,
@@ -120,7 +127,6 @@ fun DashboardScreen(
                     onDismiss = { dialog = null },
                     number = (leftButton as? LeftButton.Hazard)?.number ?: EMERGENCY_NUMBER,
                 )
-                DashboardDialog.DIAGNOSTICS -> DiagnosticsStubDialog(state, onDismiss = { dialog = null })
                 null -> Unit
             }
         }

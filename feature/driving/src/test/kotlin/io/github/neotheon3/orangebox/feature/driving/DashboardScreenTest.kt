@@ -35,12 +35,16 @@ class DashboardScreenTest {
     @get:Rule val compose = createComposeRule()
 
     private var ended = 0
+    private var diagnostics = 0
 
     private fun show(state: DashboardUiState = SampleStates.fuelCut(), fontScale: Float = 1f, reduceMotion: Boolean = true) {
         compose.setContent {
             val d = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(d.density, fontScale)) {
-                DashboardScreen(state, onEndDriving = { ended++ }, settings = DashboardSettings(reduceMotion = reduceMotion))
+                DashboardScreen(
+                    state, onEndDriving = { ended++ }, settings = DashboardSettings(reduceMotion = reduceMotion),
+                    onOpenDiagnostics = { diagnostics++ },
+                )
             }
         }
     }
@@ -138,7 +142,7 @@ class DashboardScreenTest {
         compose.onNodeWithTag("detail_grid").assertExists()
     }
 
-    @Config(qualifiers = "w640dp-h360dp-land") @Test fun `hazard opens the emergency prompt, diagnostics the stub, power ends the drive`() {
+    @Config(qualifiers = "w640dp-h360dp-land") @Test fun `hazard opens the emergency prompt, diagnostics the Diagnostics screen, power ends the drive`() {
         show()
         compose.onNodeWithContentDescription("Emergency").performClick()
         compose.onNodeWithTag("emergency_dialog").assertIsDisplayed()
@@ -146,8 +150,7 @@ class DashboardScreenTest {
         compose.onNodeWithText("Close").performClick()
         compose.onNodeWithTag("emergency_dialog").assertDoesNotExist()
         compose.onNodeWithContentDescription("Diagnostics").performClick()
-        compose.onNodeWithTag("diagnostics_dialog").assertIsDisplayed()
-        compose.onNodeWithText("Close").performClick()
+        assertEquals(1, diagnostics)
         compose.onNodeWithContentDescription("End driving").performClick()
         assertEquals(1, ended)
     }

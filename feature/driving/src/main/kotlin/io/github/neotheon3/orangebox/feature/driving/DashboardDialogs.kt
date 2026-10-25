@@ -15,7 +15,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import io.github.neotheon3.orangebox.core.dashboardui.DashboardColors
 import io.github.neotheon3.orangebox.core.dashboardui.DashboardIcons
-import io.github.neotheon3.orangebox.core.dashboardui.DashboardUiState
 
 /** Fallback number pre-filled in the dialer (112: India, the EU, and GSM phones elsewhere). Settings can change it. */
 const val EMERGENCY_NUMBER = "112"
@@ -49,20 +48,5 @@ fun EmergencyPromptDialog(onDismiss: () -> Unit, number: String = EMERGENCY_NUMB
             ) { Text(stringResource(R.string.emergency_dial, number)) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_close)) } },
-    )
-}
-
-/** Diagnostics shortcut: MIL state and stored-code count now; the full Diagnostics screen comes in M6. */
-@Composable
-fun DiagnosticsStubDialog(state: DashboardUiState, onDismiss: () -> Unit) {
-    val mil = stringResource(if (state.milOn) R.string.diagnostics_mil_on else R.string.diagnostics_mil_off)
-    val codes = state.dtcCount?.toString() ?: stringResource(R.string.diagnostics_unknown)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.testTag("diagnostics_dialog"),
-        icon = { Icon(DashboardIcons.MilEngine, contentDescription = null) },
-        title = { Text(stringResource(R.string.dashboard_diagnostics)) },
-        text = { Text(stringResource(R.string.diagnostics_body, mil, codes)) },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_close)) } },
     )
 }
