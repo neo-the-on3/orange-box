@@ -70,6 +70,7 @@ fun DashboardRoute(
         leftButton = controls.leftButton,
         onQuickLaunch = viewModel::quickLaunch,
         onOpenDiagnostics = onOpenDiagnostics,
+        onEmergency = viewModel::openEmergency,
     )
 }
 
@@ -81,8 +82,6 @@ private fun KeepScreenOn() {
         onDispose { view.keepScreenOn = false }
     }
 }
-
-private enum class DashboardDialog { EMERGENCY }
 
 /**
  * Driving dashboard (docs/ui/LEGACY_OBD_UI.md §4): RPM cluster, centre column (MIL/OBD, FUEL, TRIP) and
@@ -100,9 +99,10 @@ fun DashboardScreen(
     onQuickLaunch: (String) -> Unit = {},
     /** The Diagnostics shortcut (legacy map-launcher slot) opens the M6 Diagnostics screen. */
     onOpenDiagnostics: () -> Unit = {},
+    /** Hazard: the crash prompt in manual mode (M7), shown by the app over every screen. */
+    onEmergency: () -> Unit = {},
 ) {
     var showDetail by rememberSaveable { mutableStateOf(initialShowDetail) }
-    var dialog by rememberSaveable { mutableStateOf<DashboardDialog?>(null) }
     LightSystemBarIcons()
     DashboardTheme(settings) {
         BezelBackground(modifier.fillMaxSize().testTag("dashboard")) {
@@ -114,20 +114,13 @@ fun DashboardScreen(
                         showDetail = showDetail,
                         landscape = landscape,
                         onToggleDetail = { showDetail = !showDetail },
-                        onEmergency = { dialog = DashboardDialog.EMERGENCY },
+                        onEmergency = onEmergency,
                         onDiagnostics = onOpenDiagnostics,
                         onEndDriving = onEndDriving,
                         leftButton = leftButton,
                         onQuickLaunch = onQuickLaunch,
                     )
                 }
-            }
-            when (dialog) {
-                DashboardDialog.EMERGENCY -> EmergencyPromptDialog(
-                    onDismiss = { dialog = null },
-                    number = (leftButton as? LeftButton.Hazard)?.number ?: EMERGENCY_NUMBER,
-                )
-                null -> Unit
             }
         }
     }

@@ -9,10 +9,22 @@
     <string name="dashboard_end_driving">End driving</string>
     <string name="detail_page">Detailed info page %1$d of %2$d</string>
 
-    <string name="emergency_title">Emergency</string>
-    <string name="emergency_body">Automatic crash detection and emergency contacts come in a later update.\n\nIf you need help now, stop safely and call %1$s or your local emergency number.</string>
-    <string name="emergency_dial">Open dialer (%1$s)</string>
     <string name="emergency_no_dialer">No phone app found on this device</string>
-    <string name="dialog_close">Close</string>
 
+    <!-- Crash prompt (M7). Nothing is called or sent automatically. -->
+    <string name="crash_title_impact">Crash detected</string>
+    <string name="crash_title_manual">Emergency</string>
+    <string name="crash_body_impact">Are you OK? If you don\'t answer, the phone\'s dialer opens with %1$s ready to call.</string>
+    <string name="crash_body_timed_out">No answer. Opening the dialer with %1$s.</string>
+    <string name="crash_body_manual">Stop safely first. Open the dialer with %1$s ready to call, or text someone your location.</string>
+    <string name="crash_im_ok">I\'m OK</string>
+    <string name="crash_close">Close</string>
+    <string name="crash_call">Call %1$s</string>
+    <string name="crash_sms">Send my location by SMS</string>
+    <string name="crash_sms_to">Text my location to %1$s</string>
+    <string name="crash_never_automatic">Orange Box never calls or texts by itself: you press call or send.</string>
+    <string name="crash_no_sms_app">No SMS app found on this device</string>
+    <string name="crash_sms_intro">Orange Box: I may have been in a car accident.</string>
+    <string name="crash_sms_location">Last known location (%1$s): %2$s</string>
+    <string name="crash_sms_no_location">My location is not available.</string>
 </resources>

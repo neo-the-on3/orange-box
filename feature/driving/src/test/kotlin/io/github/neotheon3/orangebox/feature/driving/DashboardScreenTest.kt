@@ -36,6 +36,7 @@ class DashboardScreenTest {
 
     private var ended = 0
     private var diagnostics = 0
+    private var emergencies = 0
 
     private fun show(state: DashboardUiState = SampleStates.fuelCut(), fontScale: Float = 1f, reduceMotion: Boolean = true) {
         compose.setContent {
@@ -44,6 +45,7 @@ class DashboardScreenTest {
                 DashboardScreen(
                     state, onEndDriving = { ended++ }, settings = DashboardSettings(reduceMotion = reduceMotion),
                     onOpenDiagnostics = { diagnostics++ },
+                    onEmergency = { emergencies++ },
                 )
             }
         }
@@ -145,10 +147,7 @@ class DashboardScreenTest {
     @Config(qualifiers = "w640dp-h360dp-land") @Test fun `hazard opens the emergency prompt, diagnostics the Diagnostics screen, power ends the drive`() {
         show()
         compose.onNodeWithContentDescription("Emergency").performClick()
-        compose.onNodeWithTag("emergency_dialog").assertIsDisplayed()
-        compose.onNodeWithTag("emergency_dial").assertIsDisplayed()
-        compose.onNodeWithText("Close").performClick()
-        compose.onNodeWithTag("emergency_dialog").assertDoesNotExist()
+        assertEquals(1, emergencies) // the app draws the manual crash prompt over the dashboard (CrashPromptScreenTest)
         compose.onNodeWithContentDescription("Diagnostics").performClick()
         assertEquals(1, diagnostics)
         compose.onNodeWithContentDescription("End driving").performClick()

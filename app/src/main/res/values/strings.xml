@@ -15,4 +15,13 @@
     <string name="notif_drive_start_title">Your car is connected</string>
     <string name="notif_drive_start_text">Tap to open the driving dashboard.</string>
     <string name="notif_allow_full_screen">Allow full screen</string>
+
+    <string name="channel_crash">Crash prompt</string>
+    <string name="channel_crash_desc">When a possible crash is detected while Orange Box is not on screen.</string>
+    <string name="notif_crash_title">Crash detected: are you OK?</string>
+    <string name="notif_crash_text">If you don\'t answer, tap to call %1$s. Nothing is called automatically.</string>
+    <string name="notif_crash_timed_out">No answer. Tap to open the dialer with %1$s.</string>
+    <string name="notif_crash_ok">I\'m OK</string>
+    <string name="notif_crash_call">Call %1$s</string>
+    <string name="notif_crash_sms">SMS location</string>
 </resources>

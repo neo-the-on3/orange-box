@@ -21,6 +21,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var appPreferences: AppPreferencesRepository
     @Inject lateinit var driveSession: io.github.neotheon3.orangebox.core.driving.DriveSession
     @Inject lateinit var diagnosingPrompt: io.github.neotheon3.orangebox.core.diagnostics.DiagnosingPromptController
+    @Inject lateinit var crashPrompt: io.github.neotheon3.orangebox.feature.driving.CrashPromptController
 
     /** Bumped by every "Start driving" / driving-notification tap; the NavHost opens the dashboard. */
     private val openDashboard = kotlinx.coroutines.flow.MutableStateFlow(0)
@@ -31,6 +32,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) {
             launchOverrides.apply(intent)
             handleOpenDashboard(intent)
+            io.github.neotheon3.orangebox.crash.CrashNotifier.handle(this, intent, crashPrompt)
         }
         setContent {
             OrangeBoxTheme {
@@ -45,6 +47,7 @@ class MainActivity : ComponentActivity() {
                         openDashboardRequests = dashboardRequests,
                         onDashboardRequestIgnored = { setLockScreenFlags(false) },
                         diagnosingPrompt = diagnosingPrompt,
+                        crashPrompt = crashPrompt,
                     )
                 }
             }
@@ -56,6 +59,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         launchOverrides.apply(intent)
         handleOpenDashboard(intent)
+        io.github.neotheon3.orangebox.crash.CrashNotifier.handle(this, intent, crashPrompt)
     }
 
     internal fun handleOpenDashboard(intent: Intent?) {

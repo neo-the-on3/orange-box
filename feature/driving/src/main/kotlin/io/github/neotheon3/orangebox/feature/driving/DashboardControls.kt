@@ -11,9 +11,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 
+/** Fallback number pre-filled in the dialer (112: India, the EU, and GSM phones elsewhere). Settings can change it. */
+const val EMERGENCY_NUMBER = "112"
+
 /** The bottom-left dashboard button, from Settings. */
 sealed interface LeftButton {
-    /** Emergency prompt that pre-fills [number] in the dialer. */
+    /** Opens the emergency prompt (manual mode), which pre-fills [number] in the dialer. */
     data class Hazard(val number: String) : LeftButton
 
     /** Launches [packageName] (the user's chosen app) and shows its icon. */

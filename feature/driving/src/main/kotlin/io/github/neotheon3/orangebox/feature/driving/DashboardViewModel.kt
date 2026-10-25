@@ -36,6 +36,7 @@ class DashboardViewModel @Inject constructor(
     private val country: DeviceCountry,
     private val apps: QuickLaunchApps,
     recorded: RecordedTripTotals,
+    private val crash: io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor,
 ) : ViewModel() {
     val state: StateFlow<DashboardUiState> = combine(connection.state, telemetry.latest, recorded.totals()) { c, s, trip ->
         DashboardStateMapper.map(c, s, poller.activePids, recordedTrip = trip)
@@ -55,6 +56,9 @@ class DashboardViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardControls())
 
     fun endDriving() = session.requestEnd()
+
+    /** Hazard button: the emergency prompt without a countdown. */
+    fun openEmergency() = crash.showManual()
 
     fun quickLaunch(packageName: String) {
         if (!apps.launch(packageName)) OrangeLog.w(OrangeLog.Areas.APP, "quick_launch_failed", "package" to packageName)
