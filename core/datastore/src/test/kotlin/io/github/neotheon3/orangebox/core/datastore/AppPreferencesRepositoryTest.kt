@@ -81,4 +81,19 @@ class AppPreferencesRepositoryTest {
         repo.setUnits(chosen)
         assertEquals(chosen, repo.preferences.first().units)
     }
+
+    @Test fun `alert toggles default and persist (#59)`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = DataStoreAppPreferencesRepository(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("a.preferences_pb").also { it.delete() } },
+        )
+        val defaults = repo.preferences.first().alerts
+        assertEquals(io.github.neotheon3.orangebox.core.model.AlertPreferences(), defaults)
+        assertEquals("idling off by default", false, defaults.idling)
+        assertEquals("voice off by default", false, defaults.voice)
+        val changed = io.github.neotheon3.orangebox.core.model.AlertPreferences(
+            overspeed = false, idling = true, harsh = false, mil = false, sound = false, voice = true,
+        )
+        repo.setAlerts(changed)
+        assertEquals(changed, repo.preferences.first().alerts)
+    }
 }

@@ -2,6 +2,7 @@ package io.github.neotheon3.orangebox.feature.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -116,5 +117,22 @@ class SettingsScreenTest {
             ),
             changed,
         )
+    }
+
+    @Test fun `each driving alert has its own switch (#59)`() {
+        val changed = mutableListOf<io.github.neotheon3.orangebox.core.model.AlertPreferences>()
+        val d = io.github.neotheon3.orangebox.core.model.AlertPreferences()
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(alerts = d), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                    actions = SettingsActions(onAlertsChanged = { changed += it }),
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_alert_overspeed").performScrollTo().assertIsOn().performClick()
+        compose.onNodeWithTag("settings_alert_idling").performScrollTo().assertIsOff().performClick()
+        compose.onNodeWithTag("settings_alert_voice").performScrollTo().assertIsOff().performClick()
+        assertEquals(listOf(d.copy(overspeed = false), d.copy(idling = true), d.copy(voice = true)), changed)
     }
 }

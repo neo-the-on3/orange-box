@@ -18,4 +18,6 @@ data class AppPreferences(
     val crash: CrashPreferences = CrashPreferences(),
     /** Display units (M8). Null until the user picks them: then the device country's defaults apply. */
     val units: UnitPreferences? = null,
+    /** Driving alerts: which play, with sound and/or voice (M8). */
+    val alerts: AlertPreferences = AlertPreferences(),
 )

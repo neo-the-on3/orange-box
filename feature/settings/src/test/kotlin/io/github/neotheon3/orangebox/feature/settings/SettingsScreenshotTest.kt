@@ -39,4 +39,6 @@ class SettingsScreenshotTest {
     @Test fun units() = shot("settings_units") { UnitsSettingsSection(UnitPreferences.forCountry("US")) {} }
 
     @Test fun unitsDark() = shot("settings_units_dark", dark = true) { UnitsSettingsSection(UnitPreferences()) {} }
+
+    @Test fun alerts() = shot("settings_alerts") { AlertsSettingsSection(io.github.neotheon3.orangebox.core.model.AlertPreferences()) {} }
 }
