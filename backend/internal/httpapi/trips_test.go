@@ -260,7 +260,7 @@ func TestTripMemberScope(t *testing.T) {
 		t.Errorf("owner's token used by the stranger for deletions: %d %s", r.status, r.body)
 	}
 	first, _ := m.page("/v1/trips?limit=2")
-	if r := stranger.call(http.MethodGet, "/v1/trips?cursor="+q(first.nextCursor), ""); r.status != http.StatusBadRequest || r.problemCode(t) != "bad_request" {
+	if r := stranger.call(http.MethodGet, "/v1/trips?cursor="+q(first.nextCursor), ""); r.status != http.StatusBadRequest || r.problemCode(t) != "sync_window_expired" || r.problemReason(t) != "invalid" {
 		t.Errorf("owner's cursor used by the stranger: %d %s", r.status, r.body)
 	}
 	if r := stranger.call(http.MethodGet, "/v1/trips/days?from=2026-10-01&to=2026-10-31", ""); r.status != http.StatusOK || len(r.json(t)["items"].([]any)) != 1 {
@@ -370,13 +370,13 @@ func TestTripPagingRules(t *testing.T) {
 	}{
 		"since with vehicleId":        {"/v1/trips?vehicleId=" + v1 + "&since=" + q(s), "bad_request"},
 		"since with from":             {"/v1/trips?from=2026-10-12T00:00:00Z&since=" + q(s), "bad_request"},
-		"cursor with other filter":    {"/v1/trips?vehicleId=" + v1 + "&cursor=" + url.QueryEscape(cur), "bad_request"},
-		"history cursor with since":   {"/v1/trips?since=" + q(s) + "&cursor=" + url.QueryEscape(cur), "bad_request"},
-		"tampered cursor":             {"/v1/trips?cursor=" + url.QueryEscape(tamper(cur)), "bad_request"},
+		"cursor with other filter":    {"/v1/trips?vehicleId=" + v1 + "&cursor=" + url.QueryEscape(cur), "sync_window_expired"},
+		"history cursor with since":   {"/v1/trips?since=" + q(s) + "&cursor=" + url.QueryEscape(cur), "sync_window_expired"},
+		"tampered cursor":             {"/v1/trips?cursor=" + url.QueryEscape(tamper(cur)), "sync_window_expired"},
 		"tampered token":              {"/v1/trips?since=" + url.QueryEscape(tamper(s.(string))), "sync_window_expired"},
 		"garbage token":               {"/v1/trips?since=abc", "sync_window_expired"},
 		"garbage deletions token":     {"/v1/trips/deletions?since=abc", "sync_window_expired"},
-		"history cursor on deletions": {"/v1/trips/deletions?since=" + q(s) + "&cursor=" + url.QueryEscape(cur), "bad_request"},
+		"history cursor on deletions": {"/v1/trips/deletions?since=" + q(s) + "&cursor=" + url.QueryEscape(cur), "sync_window_expired"},
 		"limit out of range":          {"/v1/trips?limit=101", ""},
 		"deletions without since":     {"/v1/trips/deletions", ""},
 	} {

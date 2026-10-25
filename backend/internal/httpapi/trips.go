@@ -47,11 +47,11 @@ const (
 	// reasonDeploymentChanged: the token or cursor was issued under another
 	// deployment identity; the database was restored or replaced, so the
 	// app re-uploads local trips the server lost after its full sync.
-	reasonDeploymentChanged = "deployment_changed"
+	reasonDeploymentChanged = string(api.ProblemReasonDeploymentChanged)
 	// reasonPurged: tombstones the token depends on were purged.
-	reasonPurged = "purged"
+	reasonPurged = string(api.ProblemReasonPurged)
 	// reasonInvalid: the token does not decode or verify.
-	reasonInvalid = "invalid"
+	reasonInvalid = string(api.ProblemReasonInvalid)
 )
 
 func syncWindowExpired(reason string) *problem.Problem {
@@ -76,8 +76,14 @@ func walkFailed(err error) error {
 	return err
 }
 
+// badCursor answers a cursor that doesn't decode or verify (edited,
+// another member's, an old format), or doesn't belong to this request
+// (another endpoint, walk kind or filter): sync_window_expired with
+// reason invalid, so the client has one rule, restart the walk.
 func badCursor() *problem.Problem {
-	return problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The cursor is invalid or has expired.")
+	return problem.New(http.StatusBadRequest, problem.CodeSyncWindowExpired,
+		"The cursor is invalid or has expired; restart the walk from its first page.").
+		WithTitle("Sync window expired").WithReason(reasonInvalid)
 }
 
 func badRequest(detail string) *problem.Problem {
