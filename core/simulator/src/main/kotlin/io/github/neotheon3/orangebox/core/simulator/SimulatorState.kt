@@ -18,6 +18,8 @@ data class SimulatorState(
     val pendingDtcs: List<String> = emptyList(),
     /** Permanent DTCs (mode 0A). Like a real ECU, mode 04 does not clear them. */
     val permanentDtcs: List<String> = emptyList(),
+    /** The ECU doesn't implement mode 0A: answers `7F 0A 11` like many pre-2010 / BS-IV cars (#196). */
+    val permanentUnsupported: Boolean = false,
     /** VIN answered to 09 02. Not validated, so invalid VIN handling can be tested. */
     val vin: String = VIN,
     val milOn: Boolean = false,

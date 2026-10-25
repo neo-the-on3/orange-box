@@ -7,7 +7,9 @@
     <string name="diagnostics_clear">Clear stored DTC</string>
     <string name="diagnostics_vin">VIN %1$s</string>
     <string name="diagnostics_last_read">Read at %1$s</string>
-    <string name="diagnostics_unreadable">The car didn\'t answer: %1$s</string>
+    <string name="diagnostics_unreadable">Couldn\'t read %1$s codes. Tap Refresh to try again.</string>
+    <!-- Quiet note: the car doesn't implement this list (e.g. permanent codes on pre-2010 cars), not a fault. -->
+    <string name="diagnostics_unsupported">This car doesn\'t report %1$s codes.</string>
 
     <!-- Message bar (legacy wording, §5.1). -->
     <string name="diagnostics_msg_good">Car status is good.</string>

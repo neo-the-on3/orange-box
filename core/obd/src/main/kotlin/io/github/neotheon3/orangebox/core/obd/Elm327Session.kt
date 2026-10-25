@@ -113,6 +113,20 @@ class Elm327Session(
     suspend fun readDtcs(kind: DtcKind = DtcKind.STORED): List<String>? =
         DtcDecoder.decode(command(kind.command), kind, isCan = info?.protocol?.isCan ?: true)
 
+    /** Like [readDtcs], telling an unsupported mode apart from an unreadable reply (#196). */
+    suspend fun readDtcResult(kind: DtcKind): DtcRead {
+        val raw = command(kind.command)
+        val result = DtcDecoder.read(raw, kind, isCan = info?.protocol?.isCan ?: true)
+        if (result !is DtcRead.Codes) {
+            OrangeLog.i(
+                OrangeLog.Areas.OBD, "dtc_reply", "mode" to kind.command,
+                "result" to if (result is DtcRead.Unsupported) "unsupported" else "unreadable",
+                "reply" to raw.replace('\n', ' ').take(32),
+            )
+        }
+        return result
+    }
+
     /** VIN via mode 09 PID 02. */
     suspend fun readVin(): VinDecoder.Result = VinDecoder.decode(command("0902")).also { r ->
         when (r) {

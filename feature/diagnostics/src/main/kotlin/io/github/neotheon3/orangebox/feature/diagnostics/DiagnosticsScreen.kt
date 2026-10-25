@@ -300,7 +300,15 @@ private class DiagnosticsContent(
             Text(stringResource(R.string.diagnostics_last_read, formatTime(report.readAtMillis)), color = grey, fontSize = 12.sp)
             if (report.unreadable.isNotEmpty()) {
                 val lists = DtcStatus.entries.filter { it in report.unreadable }.map { stringResource(it.labelRes).lowercase() }.joinToString(", ")
-                Text(stringResource(R.string.diagnostics_unreadable, lists), color = grey, fontSize = 12.sp)
+                Text(stringResource(R.string.diagnostics_unreadable, lists), color = grey, fontSize = 12.sp, modifier = Modifier.testTag("diagnostics_unreadable"))
+            }
+            // A list the car doesn't implement (usually permanent codes on older cars) isn't a fault (#196).
+            if (report.unsupported.isNotEmpty()) {
+                val lists = DtcStatus.entries.filter { it in report.unsupported }.map { stringResource(it.labelRes).lowercase() }.joinToString(", ")
+                Text(
+                    stringResource(R.string.diagnostics_unsupported, lists), color = grey.copy(alpha = 0.7f), fontSize = 11.sp,
+                    modifier = Modifier.testTag("diagnostics_unsupported"),
+                )
             }
         }
     }

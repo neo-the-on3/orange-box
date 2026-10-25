@@ -7,6 +7,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DtcDecoderTest {
+    @Test fun `negative response or question mark means the mode is unsupported (#196)`() {
+        assertEquals(DtcRead.Unsupported, DtcDecoder.read("7F 0A 11", DtcKind.PERMANENT, isCan = true))
+        assertEquals(DtcRead.Unsupported, DtcDecoder.read("7F0A12", DtcKind.PERMANENT, isCan = false))
+        assertEquals(DtcRead.Unsupported, DtcDecoder.read("?", DtcKind.PERMANENT, isCan = true))
+        assertEquals("NO DATA stays an empty list", DtcRead.Codes(emptyList()), DtcDecoder.read("NO DATA", DtcKind.PERMANENT, isCan = true))
+        assertEquals(DtcRead.Codes(listOf("C0035")), DtcDecoder.read("4A01 4035", DtcKind.PERMANENT, isCan = true))
+    }
+
+    @Test fun `garbled or other negative responses stay unreadable (#196)`() {
+        assertEquals(DtcRead.Unreadable, DtcDecoder.read("4#01", DtcKind.PERMANENT, isCan = true))
+        assertEquals("other mode's NRC", DtcRead.Unreadable, DtcDecoder.read("7F 03 11", DtcKind.PERMANENT, isCan = true))
+        assertEquals("busy, not unsupported", DtcRead.Unreadable, DtcDecoder.read("7F 0A 21", DtcKind.PERMANENT, isCan = true))
+        assertEquals(DtcRead.Unreadable, DtcDecoder.read("", DtcKind.STORED, isCan = true))
+        assertEquals("decode keeps returning null", null, DtcDecoder.decode("7F 0A 11", DtcKind.PERMANENT, isCan = true))
+    }
+
     @Test fun `CAN single frame`() =
         assertEquals(listOf("P0133", "P0420"), DtcDecoder.decode("430201330420", DtcKind.STORED, isCan = true))
 

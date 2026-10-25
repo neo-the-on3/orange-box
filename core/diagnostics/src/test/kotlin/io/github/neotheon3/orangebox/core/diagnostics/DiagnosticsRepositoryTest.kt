@@ -29,8 +29,14 @@ class DiagnosticsRepositoryTest {
     private val telemetry = FakeTelemetrySource()
     private val repo = ObdDiagnosticsRepository(connection, history, FakeVehicleRepository(), telemetry).apply { clock = { 42_000L } }
 
+    private val sent = mutableListOf<String>()
+
     private suspend fun connect() {
-        val session = Elm327Session(SimulatedElm327Transport(sim).also { it.open() })
+        val sim327 = SimulatedElm327Transport(sim).also { it.open() }
+        val counting = object : io.github.neotheon3.orangebox.core.obd.ObdTransport by sim327 {
+            override suspend fun writeLine(line: String) { sent += line; sim327.writeLine(line) }
+        }
+        val session = Elm327Session(counting)
         val info = session.initialize()
         connection.session = session
         connection.state.value = ObdConnectionState.Connected(info)
@@ -59,6 +65,21 @@ class DiagnosticsRepositoryTest {
         val (lists, _) = history.readings.single()
         assertEquals(listOf("P0300", "P0420", "U0100"), lists[DtcRecordEntity.KIND_STORED])
         assertEquals(listOf("P0420"), lists[DtcRecordEntity.KIND_PERMANENT])
+    }
+
+    @Test fun `unsupported permanent codes are not a failure, and are skipped on the next scan (#196)`() = runTest {
+        sim.injectDtc("P0300")
+        sim.update { it.copy(permanentUnsupported = true) }
+        connect()
+        val report = (repo.scan() as ScanResult.Success).report
+        assertEquals(setOf(DtcStatus.PERMANENT), report.unsupported)
+        assertTrue(report.unreadable.isEmpty())
+        assertEquals(listOf("P0300"), report.codes.map { it.code })
+        assertEquals(1, sent.count { it == "0A" })
+        val again = (repo.scan() as ScanResult.Success).report
+        assertEquals(setOf(DtcStatus.PERMANENT), again.unsupported)
+        assertEquals("cached per vehicle: 0A not sent again", 1, sent.count { it == "0A" })
+        assertEquals(2, sent.count { it == "03" })
     }
 
     @Test fun `MIL toggle alone is a trouble without codes`() = runTest {
