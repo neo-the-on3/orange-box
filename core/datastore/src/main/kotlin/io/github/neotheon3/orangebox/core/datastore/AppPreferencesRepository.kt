@@ -3,12 +3,14 @@ package io.github.neotheon3.orangebox.core.datastore
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import io.github.neotheon3.orangebox.core.model.AppPreferences
+import io.github.neotheon3.orangebox.core.model.CrashPreferences
 import io.github.neotheon3.orangebox.core.model.DashboardButton
 import io.github.neotheon3.orangebox.core.model.DashboardPreferences
 import kotlinx.coroutines.flow.Flow
@@ -30,6 +32,8 @@ interface AppPreferencesRepository {
     /** Stores the dashboard settings (overspeed clamped, invalid emergency numbers dropped to the default). */
     suspend fun setDashboard(dashboard: DashboardPreferences)
     suspend fun setMapTilesEnabled(enabled: Boolean)
+    /** Stores the crash-detection settings (threshold and countdown clamped). */
+    suspend fun setCrash(crash: CrashPreferences)
 }
 
 @Singleton
@@ -52,6 +56,11 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                 autoShowDashboard = p[DASH_AUTO_SHOW] ?: false,
             ),
             mapTilesEnabled = p[MAP_TILES] ?: true,
+            crash = CrashPreferences(
+                detectionEnabled = p[CRASH_ENABLED] ?: true,
+                thresholdG = CrashPreferences.clampThreshold(p[CRASH_THRESHOLD] ?: CrashPreferences.DEFAULT_THRESHOLD_G),
+                countdownSeconds = CrashPreferences.clampCountdown(p[CRASH_COUNTDOWN] ?: CrashPreferences.DEFAULT_COUNTDOWN_S),
+            ),
         )
     }.distinctUntilChanged()
 
@@ -72,6 +81,14 @@ class DataStoreAppPreferencesRepository @Inject constructor(
 
     override suspend fun setMapTilesEnabled(enabled: Boolean) { dataStore.edit { it[MAP_TILES] = enabled } }
 
+    override suspend fun setCrash(crash: CrashPreferences) {
+        dataStore.edit {
+            it[CRASH_ENABLED] = crash.detectionEnabled
+            it[CRASH_THRESHOLD] = CrashPreferences.clampThreshold(crash.thresholdG)
+            it[CRASH_COUNTDOWN] = CrashPreferences.clampCountdown(crash.countdownSeconds)
+        }
+    }
+
     override suspend fun setDashboard(dashboard: DashboardPreferences) {
         dataStore.edit {
             it[DASH_BUTTON] = dashboard.button.name
@@ -90,6 +107,9 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val DASH_OVERSPEED = intPreferencesKey("dashboard_overspeed_kph")
         val DASH_AUTO_SHOW = booleanPreferencesKey("dashboard_auto_show")
         val MAP_TILES = booleanPreferencesKey("map_tiles_enabled")
+        val CRASH_ENABLED = booleanPreferencesKey("crash_detection_enabled")
+        val CRASH_THRESHOLD = doublePreferencesKey("crash_threshold_g")
+        val CRASH_COUNTDOWN = intPreferencesKey("crash_countdown_s")
         val ONBOARDING_STEP = stringPreferencesKey("onboarding_step")
         val ONBOARDING = booleanPreferencesKey("onboarding_complete")
         val DISCLAIMER = booleanPreferencesKey("disclaimer_accepted")

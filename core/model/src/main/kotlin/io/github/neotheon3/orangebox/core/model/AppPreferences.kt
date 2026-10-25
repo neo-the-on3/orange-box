@@ -14,4 +14,6 @@ data class AppPreferences(
     val dashboard: DashboardPreferences = DashboardPreferences(),
     /** Trip-detail map backdrop from OpenStreetMap's tile server (the route is drawn either way). */
     val mapTilesEnabled: Boolean = true,
+    /** Impact detection and the crash prompt (M7). */
+    val crash: CrashPreferences = CrashPreferences(),
 )

@@ -12,6 +12,7 @@ dependencies {
     api(project(":core:telemetry"))
     api(project(":core:database"))
     implementation(project(":core:common"))
+    implementation(project(":core:datastore"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.core)
 
