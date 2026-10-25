@@ -56,4 +56,23 @@ class TripSeriesTest {
         assertEquals(200.0, niceMax(121.0), 1e-9)
         assertEquals(1.0, niceMax(0.0), 1e-9)
     }
+
+    @Test fun `speed runs on drive time, a gap over 5 s counts 5 s (#189)`() {
+        // 0..9 s, then a 60 s gap (counts 5 s), then 70..74 s.
+        val samples = (0L..9L).map { s(it, 50.0) } + (70L..74L).map { s(it, 80.0) }
+        val sp = TripSeries.speed(samples.shuffled(java.util.Random(189)), 1_000_000)
+        assertEquals((0..9).map { it.toDouble() } + listOf(14.0, 15.0, 16.0, 17.0, 18.0), sp.map { it.t })
+        assertEquals(80.0, sp.last().value, 1e-9)
+    }
+
+    @Test fun `economy buckets use the same drive time as speed (#189)`() {
+        // 60 s at 72 km/h on 3.6 L/h, a 10 min gap, then 60 s at 36 km/h on 7.2 L/h. The gap counts 5 s, so
+        // the second stretch runs 64..124 s of drive time (buckets covering 64..120 and 120..124), not 11:00..12:00.
+        val samples = (0L..59L).map { s(it, 72.0, 3.6) } + (660L..720L).map { s(it, 36.0, 7.2) }
+        val e = TripSeries.economy(samples, 1_000_000)
+        assertEquals(listOf(32.0, 92.0, 122.0), e.map { it.t }) // minute 0 holds its last reading 5 s into the gap
+        assertEquals(5.0, e[1].value, 1e-6)
+        val sp = TripSeries.speed(samples, 1_000_000)
+        assertTrue("economy ends within the speed axis", e.last().t <= sp.last().t)
+    }
 }

@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -69,5 +70,17 @@ class TripChartsTest {
         }
         compose.onAllNodesWithTag("chart_speed_zones").assertCountEquals(0)
         compose.onAllNodesWithTag("chart_speed").assertCountEquals(0)
+    }
+
+    @Test fun `speed and economy share one time axis (#189)`() {
+        // Speed points run past the trip's duration (e.g. a sample after the last integrated one), and the
+        // economy series ends well before it: both axes still end at the same time.
+        val speed = (0..745).map { SeriesPoint(it.toDouble(), 60.0) }
+        val economy = listOf(SeriesPoint(30.0, 14.0), SeriesPoint(690.0, 12.0))
+        compose.setContent {
+            OrangeBoxTheme { Surface { TripCharts(SpeedZones(TripSeries.SPEED_ZONE_BOUNDS, List(6) { 1.0 }), speed, economy, Locale.UK, durationS = 729.0) } }
+        }
+        compose.onNodeWithTag("chart_speed_end", useUnmergedTree = true).assertTextEquals("12:25")
+        compose.onNodeWithTag("chart_economy_end", useUnmergedTree = true).assertTextEquals("12:25")
     }
 }

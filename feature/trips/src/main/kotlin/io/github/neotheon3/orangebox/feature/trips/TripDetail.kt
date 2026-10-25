@@ -112,7 +112,7 @@ object TripDetails {
             route = route(sorted),
             events = items.filter { it.type != TripEventType.FUEL_CUT },
             fuelCuts = items.filter { it.type == TripEventType.FUEL_CUT },
-            speedSeries = sorted.mapNotNull { s -> s.speedKph?.let { (s.timestampMillis - trip.startedAtMillis) / 1000.0 to it } },
+            speedSeries = TripSeries.speed(sorted, trip.startedAtMillis).map { it.t to it.value },
             speedZones = TripSeries.speedZones(sorted),
             economySeries = TripSeries.economy(sorted, trip.startedAtMillis),
         )
