@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="diagnostics_back">Back</string>
+    <string name="diagnostics_history">Code history</string>
+    <string name="diagnostics_refresh">Refresh</string>
+    <string name="diagnostics_clear">Clear stored DTC</string>
+    <string name="diagnostics_vin">VIN %1$s</string>
+    <string name="diagnostics_last_read">Read at %1$s</string>
+    <string name="diagnostics_unreadable">The car didn\'t answer: %1$s</string>
+
+    <!-- Message bar (legacy wording, §5.1). -->
+    <string name="diagnostics_msg_good">Car status is good.</string>
+    <string name="diagnostics_msg_codes">Tap a red system to see its trouble codes.</string>
+    <string name="diagnostics_msg_mil_only">The check-engine lamp is on, but the car reports no codes.</string>
+    <string name="diagnostics_msg_reading">Reading trouble codes…</string>
+    <string name="diagnostics_msg_not_connected">Connect to your car to read trouble codes.</string>
+    <string name="diagnostics_msg_press_refresh">Press Refresh to read trouble codes.</string>
+    <string name="diagnostics_msg_scan_failed">Couldn\'t read the trouble codes. Press Refresh to try again.</string>
+    <string name="diagnostics_msg_cleared">Trouble codes cleared.</string>
+    <string name="diagnostics_msg_clear_rejected">The car didn\'t clear the codes. Switch the engine off, leave the ignition on, and try again.</string>
+    <string name="diagnostics_msg_clear_failed">Clearing failed: the connection to the car was interrupted.</string>
+
+    <!-- Groups. -->
+    <string name="dtc_group_air_fuel">Air/Fuel</string>
+    <string name="dtc_group_injection">Injection</string>
+    <string name="dtc_group_ignition">Ignition</string>
+    <string name="dtc_group_speed">Speed</string>
+    <string name="dtc_group_circuits">Circuits</string>
+    <string name="dtc_group_transmission">Transmission</string>
+    <string name="dtc_group_powertrain">Powertrain</string>
+    <string name="dtc_group_body">Body</string>
+    <string name="dtc_group_chassis">Chassis</string>
+    <string name="dtc_group_network">Network</string>
+    <plurals name="dtc_group_a11y">
+        <item quantity="one">%1$s: %2$d trouble code</item>
+        <item quantity="other">%1$s: %2$d trouble codes</item>
+    </plurals>
+    <string name="dtc_group_a11y_none">%1$s: no trouble codes</string>
+
+    <string name="zone_chassis">chassis</string>
+    <string name="zone_transmission">transmission</string>
+    <string name="zone_electronic_circuit">electronic circuits</string>
+    <string name="zone_network">network</string>
+    <string name="zone_engine">engine</string>
+    <string name="zone_exhaust">exhaust</string>
+    <string name="zone_electronic_device">electronic devices</string>
+    <string name="illustration_a11y_ok">Vehicle systems: no faults</string>
+    <string name="illustration_a11y_faults">Vehicle systems: faults in %1$s</string>
+
+    <!-- Status of a code. -->
+    <string name="dtc_status_stored">Stored</string>
+    <string name="dtc_status_pending">Pending</string>
+    <string name="dtc_status_permanent">Permanent</string>
+    <string name="dtc_earlier">Earlier in this group</string>
+    <string name="dtc_record_cleared">%1$s · %2$s, cleared %3$s</string>
+    <string name="dtc_record_resolved">%1$s · %2$s, went away %3$s</string>
+    <string name="dtc_record_open">%1$s · %2$s, since %3$s</string>
+    <string name="history_empty">No trouble codes recorded yet.</string>
+
+    <!-- Clear confirmation (§5.4, #49). -->
+    <string name="clear_title">Clear trouble codes?</string>
+    <string name="clear_body">Manual DTC clearance is not recommended.\n\nClearing turns off the check-engine lamp and resets the emission readiness monitors, so the car may not pass an inspection until it has been driven for a while. Switch the engine off and leave the ignition on first. Permanent codes stay until the car confirms the repair.\n\nSure to continue?</string>
+    <string name="clear_confirm">Clear</string>
+    <string name="clear_cancel">Cancel</string>
+    <string name="clear_moving_title">Stop the car first</string>
+    <string name="clear_moving_body">Clearing DTC while driving is not supported. Please stop your car and retry.</string>
+    <string name="clear_ok">OK</string>
+
+    <!-- Drive-start prompt (§5.3, #50). -->
+    <string name="prompt_scanning">Car Diagnosing…</string>
+    <string name="prompt_no_troubles">No Troubles</string>
+    <string name="prompt_warning">DTC Warning</string>
+    <string name="prompt_close">Close</string>
+    <string name="prompt_warning_body">Press car image for checking more details.</string>
+    <plurals name="prompt_warning_codes">
+        <item quantity="one">%d trouble code found.</item>
+        <item quantity="other">%d trouble codes found.</item>
+    </plurals>
+    <string name="prompt_warning_mil">The check-engine lamp is on.</string>
+    <string name="prompt_open_diagnostics">Open Diagnostics</string>
+    <string name="prompt_car_scanning">Scanning the car</string>
+</resources>
