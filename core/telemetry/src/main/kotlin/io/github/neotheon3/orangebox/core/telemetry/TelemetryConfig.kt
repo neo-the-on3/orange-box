@@ -81,4 +81,27 @@ data class TelemetryConfig(
     val chargingVoltsRange: ClosedFloatingPointRange<Double> = 13.2..14.8,
     /** Instant km/L scale maximum (and the value shown during fuel cut). */
     val instantKmPerLMax: Double = 30.0,
+    /** RPM-panel tint escalation (#198). */
+    val intensity: IntensityThresholds = IntensityThresholds(),
 )
+
+/**
+ * The rpm/acceleration step that raises the legacy load/boost tint level (#198). The load/boost bands
+ * themselves are [TelemetryConfig.ecoLoadThresholds] / [TelemetryConfig.ecoBoostThresholdsKpa].
+ * Acceleration is the engine's windowed value; braking (negative) never raises the tint.
+ */
+data class IntensityThresholds(
+    /** Above this rpm the panel is at least amber. */
+    val amberRpm: Double = 2_500.0,
+    /** Above this acceleration, m/s², the panel is at least amber. */
+    val amberAccelMps2: Double = 1.5,
+    /** Above this rpm the panel is red. */
+    val redRpm: Double = 3_500.0,
+    /** Above this acceleration, m/s², the panel is red (a harsh-acceleration event also turns it red). */
+    val redAccelMps2: Double = 2.5,
+) {
+    companion object {
+        const val AMBER = 2
+        const val RED = 4
+    }
+}

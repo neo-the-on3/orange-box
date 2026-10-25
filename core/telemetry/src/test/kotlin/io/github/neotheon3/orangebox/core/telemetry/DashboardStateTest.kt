@@ -37,6 +37,42 @@ class DashboardStateTest {
         assertEquals(2, instant(moving, ObdPid.INTAKE_MAP to 151.3, vehicle = diesel).ecoLevel)
     }
 
+    @Test fun `intensity level - legacy load bands raised by the rpm and acceleration step, never capped (#198)`() {
+        val moving = ObdPid.SPEED to 40.0
+        val calm = ObdPid.RPM to 1800.0
+        assertEquals(1, instant(moving, calm, ObdPid.ENGINE_LOAD to 30.0).intensityLevel)
+        assertEquals(2, instant(moving, calm, ObdPid.ENGINE_LOAD to 60.0).intensityLevel)
+        assertEquals(3, instant(moving, calm, ObdPid.ENGINE_LOAD to 85.0).intensityLevel)
+        assertEquals("heavy load is red", 4, instant(moving, calm, ObdPid.ENGINE_LOAD to 92.0).intensityLevel)
+        assertEquals("rpm > 2500: at least amber", 2, instant(moving, ObdPid.RPM to 2800.0, ObdPid.ENGINE_LOAD to 30.0).intensityLevel)
+        assertEquals("load band wins when higher", 3, instant(moving, ObdPid.RPM to 2800.0, ObdPid.ENGINE_LOAD to 85.0).intensityLevel)
+        assertEquals("rpm > 3500: red", 4, instant(moving, ObdPid.RPM to 3600.0, ObdPid.ENGINE_LOAD to 30.0).intensityLevel)
+        assertEquals("stopped", 0, instant(ObdPid.SPEED to 0.0, ObdPid.RPM to 4000.0, ObdPid.ENGINE_LOAD to 95.0).intensityLevel)
+        assertEquals("moving, no load or rpm", 0, instant(moving).intensityLevel)
+        assertEquals("rpm only", 4, instant(moving, ObdPid.RPM to 3600.0).intensityLevel)
+    }
+
+    @Test fun `intensity level - acceleration escalates, braking does not (#198)`() {
+        fun run(vararg speeds: Double): InstantTelemetry {
+            val e = TelemetryEngine()
+            var last: InstantTelemetry? = null
+            speeds.forEachIndexed { k, v ->
+                last = e.onSample(VehicleSample(k * 500L, mapOf(ObdPid.SPEED to v, ObdPid.RPM to 2000.0, ObdPid.ENGINE_LOAD to 30.0))).instant
+            }
+            return last!!
+        }
+        // +7.2 km/h per s = 2.0 m/s² → amber; +10.8 km/h per s = 3.0 m/s² → red (harsh accel too).
+        assertEquals(2, run(30.0, 33.6, 37.2).intensityLevel)
+        assertEquals(4, run(30.0, 35.4, 40.8).intensityLevel)
+        assertEquals("braking keeps the load band", 1, run(60.0, 50.0, 40.0).intensityLevel)
+    }
+
+    @Test fun `intensity thresholds are configurable (#198)`() {
+        val e = TelemetryEngine(TelemetryConfig(intensity = IntensityThresholds(amberRpm = 2_000.0, redRpm = 3_000.0)))
+        val i = e.onSample(VehicleSample(0, mapOf(ObdPid.SPEED to 50.0, ObdPid.RPM to 3_100.0, ObdPid.ENGINE_LOAD to 20.0))).instant
+        assertEquals(4, i.intensityLevel)
+    }
+
     @Test fun `coolant warning from 100 C`() {
         assertFalse(instant(ObdPid.COOLANT_TEMP to 99.0).coolantWarning)
         assertTrue(instant(ObdPid.COOLANT_TEMP to 100.0).coolantWarning)
