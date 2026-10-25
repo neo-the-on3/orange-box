@@ -65,13 +65,13 @@ adb shell am start -W -n "$PKG/$ACTIVITY" --es backend_mode off
 wait_for_text "Backend: Off" home-off-2 || fail "Could not return to Off"
 shot 04-home-off-again
 
-# 5) Home -> Settings, light then dark theme
+# 5) Home -> Settings, light then dark theme (Server is the last section since #62, so check the first one)
 tap_attr content-desc "Settings" home-for-settings || fail "Settings button not found on Home"
-wait_for_text "Server (advanced)" settings-light || fail "Settings screen did not open"
+wait_for_text "Car and dongle" settings-light || fail "Settings screen did not open"
 shot 05-settings-light
 adb shell cmd uimode night yes > /dev/null 2>&1 || true
 sleep 2
-wait_for_text "Server (advanced)" settings-dark || fail "Settings did not survive dark-mode switch"
+wait_for_text "Car and dongle" settings-dark || fail "Settings did not survive dark-mode switch"
 shot 06-settings-dark
 adb shell input keyevent KEYCODE_BACK
 wait_for_text "Backend: Off" home-dark || fail "Back from Settings did not return to Home"
