@@ -79,8 +79,12 @@ type Config struct {
 	// ephemeral key", allowed only in dev environments: tokens then expire
 	// on restart (the app does a full resync).
 	SyncTokenKey []byte
-	// SyncDeploymentID is the deployment identity sync tokens carry when
-	// the database role can't read pg_control_system() (SYNC_DEPLOYMENT_ID).
+	// SyncDeploymentID (SYNC_DEPLOYMENT_ID) is part of the deployment
+	// identity sync tokens and cursors carry, with the cluster's
+	// system_identifier. Operators change it after every database restore,
+	// PITR or branch reset, which expires every token with
+	// reason=deployment_changed. Required unless Env is a dev environment,
+	// where it defaults to "dev-<ENV>".
 	SyncDeploymentID string
 }
 
@@ -186,7 +190,12 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("SYNC_TOKEN_KEY is required unless ENV is local, ci or sandbox"))
 	}
 	c.SyncDeploymentID = strings.TrimSpace(getenv("SYNC_DEPLOYMENT_ID"))
-	if !validDeploymentID(c.SyncDeploymentID) {
+	switch {
+	case c.SyncDeploymentID == "" && c.IsDevEnvironment():
+		c.SyncDeploymentID = "dev-" + c.Env
+	case c.SyncDeploymentID == "":
+		errs = append(errs, errors.New("SYNC_DEPLOYMENT_ID is required unless ENV is local, ci or sandbox (e.g. prod-2026-10-25; change it after every database restore)"))
+	case !validDeploymentID(c.SyncDeploymentID):
 		errs = append(errs, errors.New("SYNC_DEPLOYMENT_ID must be at most 64 characters from A-Z, a-z, 0-9, '.', '_', ':' and '-'"))
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {

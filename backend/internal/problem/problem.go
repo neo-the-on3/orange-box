@@ -74,6 +74,9 @@ type Problem struct {
 	Code      string       `json:"code,omitempty"`
 	RequestID string       `json:"requestId"`
 	Errors    []FieldError `json:"errors,omitempty"`
+	// Reason refines Code where the client must act differently (e.g.
+	// sync_window_expired: deployment_changed, purged or invalid).
+	Reason string `json:"reason,omitempty"`
 
 	// RetryAfter, when positive, is sent as the Retry-After header (seconds).
 	RetryAfter int `json:"-"`
@@ -96,6 +99,9 @@ func (p *Problem) WithTitle(title string) *Problem { p.Title = title; return p }
 
 // WithErrors attaches field errors.
 func (p *Problem) WithErrors(errs ...FieldError) *Problem { p.Errors = errs; return p }
+
+// WithReason sets Reason.
+func (p *Problem) WithReason(reason string) *Problem { p.Reason = reason; return p }
 
 // WithRetryAfter sets the Retry-After header in seconds.
 func (p *Problem) WithRetryAfter(seconds int) *Problem { p.RetryAfter = seconds; return p }

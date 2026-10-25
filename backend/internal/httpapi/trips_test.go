@@ -384,6 +384,9 @@ func TestTripPagingRules(t *testing.T) {
 		if r.status != http.StatusBadRequest || (c.code != "" && r.problemCode(t) != c.code) {
 			t.Errorf("%s: %d %s, want 400 %s", name, r.status, r.body, c.code)
 		}
+		if c.code == "sync_window_expired" && r.problemReason(t) != "invalid" {
+			t.Errorf("%s: reason %q, want invalid", name, r.problemReason(t))
+		}
 	}
 	// Changes after S, so a sync walk from S has more than one page.
 	for i := range 5 {
@@ -491,6 +494,9 @@ func TestTripSyncWindowExpired(t *testing.T) {
 		r := m.call(http.MethodGet, path, "")
 		if r.status != http.StatusBadRequest || r.problemCode(t) != "sync_window_expired" {
 			t.Fatalf("%s: %d %s", path, r.status, r.body)
+		}
+		if reason := r.problemReason(t); reason != "purged" {
+			t.Errorf("%s: reason %q, want purged", path, reason)
 		}
 		if title := r.json(t)["title"]; title != "Sync window expired" {
 			t.Errorf("title = %v", title)

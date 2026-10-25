@@ -3,6 +3,7 @@ package synctoken
 import (
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,8 +77,13 @@ func TestCursorRoundTrip(t *testing.T) {
 	c, member := codec(t), uuid.New()
 	next := point
 	next.Watermark++
+	// The longest identity accepted.
+	long := strings.Repeat("d", maxIdentity)
+	far := next
+	far.Identity = long
 	for _, cur := range []Cursor{
-		{Kind: History, Filter: FilterHash("v", "", ""), Next: nil, History: store.HistoryPos{StartedAt: point.IssuedAt, ID: uuid.New()}},
+		{Kind: History, Identity: "pg:1/dep:a", Filter: FilterHash("v", "", ""), Next: nil, History: store.HistoryPos{StartedAt: point.IssuedAt, ID: uuid.New()}},
+		{Kind: Changes, Identity: long, Since: &far, Next: &far, Change: store.ChangePos{Xid: 7, ID: uuid.New()}},
 		{Kind: History, Next: &next, History: store.HistoryPos{StartedAt: time.UnixMicro(-5).UTC(), ID: uuid.New()}},
 		{Kind: Changes, Since: &point, Next: &next, Change: store.ChangePos{Xid: 42, ID: uuid.New()}},
 		{Kind: Deletions, Since: &point, Next: &next, Change: store.ChangePos{Xid: 1 << 63, ID: uuid.New()}},
@@ -90,7 +96,7 @@ func TestCursorRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Kind != cur.Kind || got.Filter != cur.Filter || got.History != cur.History || got.Change != cur.Change ||
+		if got.Kind != cur.Kind || got.Identity != cur.Identity || got.Filter != cur.Filter || got.History != cur.History || got.Change != cur.Change ||
 			(got.Since == nil) != (cur.Since == nil) || (got.Next == nil) != (cur.Next == nil) ||
 			(cur.Since != nil && *got.Since != *cur.Since) || (cur.Next != nil && *got.Next != *cur.Next) {
 			t.Fatalf("ParseCursor = %+v, want %+v", got, cur)

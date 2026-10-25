@@ -42,10 +42,38 @@ func tripNotFound() *problem.Problem {
 	return problem.New(http.StatusNotFound, problem.CodeNotFound, "No such trip.")
 }
 
-func syncWindowExpired() *problem.Problem {
-	return problem.New(http.StatusBadRequest, problem.CodeSyncWindowExpired,
-		"The sync token can no longer be used; do a full sync (GET /v1/trips without since).").
-		WithTitle("Sync window expired")
+// Reasons of a sync_window_expired problem (spec: Incremental sync).
+const (
+	// reasonDeploymentChanged: the token or cursor was issued under another
+	// deployment identity; the database was restored or replaced, so the
+	// app re-uploads local trips the server lost after its full sync.
+	reasonDeploymentChanged = "deployment_changed"
+	// reasonPurged: tombstones the token depends on were purged.
+	reasonPurged = "purged"
+	// reasonInvalid: the token does not decode or verify.
+	reasonInvalid = "invalid"
+)
+
+func syncWindowExpired(reason string) *problem.Problem {
+	detail := "The sync token can no longer be used; do a full sync (GET /v1/trips without since)."
+	if reason == reasonDeploymentChanged {
+		detail = "The server's database was restored or replaced since this sync token or cursor was issued; " +
+			"do a full sync (GET /v1/trips without since), then re-upload local trips it doesn't return."
+	}
+	return problem.New(http.StatusBadRequest, problem.CodeSyncWindowExpired, detail).
+		WithTitle("Sync window expired").WithReason(reason)
+}
+
+// walkFailed maps a store walk error: the sync window errors to their
+// problem, anything else as is.
+func walkFailed(err error) error {
+	switch {
+	case errors.Is(err, store.ErrDeploymentChanged):
+		return syncWindowExpired(reasonDeploymentChanged)
+	case errors.Is(err, store.ErrSyncWindowExpired):
+		return syncWindowExpired(reasonPurged)
+	}
+	return err
 }
 
 func badCursor() *problem.Problem {
@@ -435,7 +463,7 @@ func (s *Server) ListTrips(ctx context.Context, req api.ListTripsRequestObject) 
 	if p.Since != nil {
 		sp, err := s.sync.ParseToken(member, *p.Since)
 		if err != nil {
-			return nil, syncWindowExpired()
+			return nil, syncWindowExpired(reasonInvalid)
 		}
 		since = &sp
 	}
@@ -500,11 +528,11 @@ func (s *Server) listTripHistory(ctx context.Context, member uuid.UUID, p api.Li
 	var next *store.SyncPoint
 	if cur != nil {
 		after := cur.History
-		q.After, next = &after, cur.Next
+		q.After, q.Identity, next = &after, cur.Identity, cur.Next
 	}
 	page, err := s.trips.ListTripHistory(ctx, member, q)
 	if err != nil {
-		return nil, err
+		return nil, walkFailed(err)
 	}
 	if cur == nil {
 		next = page.Snapshot
@@ -517,7 +545,7 @@ func (s *Server) listTripHistory(ctx context.Context, member uuid.UUID, p api.Li
 	if more {
 		last := page.Trips[len(items)-1]
 		nextCursor = s.sync.Cursor(member, synctoken.Cursor{
-			Kind: synctoken.History, Filter: historyFilter(p), Next: next,
+			Kind: synctoken.History, Identity: page.Identity, Filter: historyFilter(p), Next: next,
 			History: store.HistoryPos{StartedAt: last.StartedAt, ID: last.ID},
 		})
 	} else if !filtered && next != nil {
@@ -531,14 +559,11 @@ func (s *Server) listTripChanges(ctx context.Context, member uuid.UUID, since st
 	var next *store.SyncPoint
 	if cur != nil {
 		after := cur.Change
-		q.After, next = &after, cur.Next
+		q.After, q.Identity, next = &after, cur.Identity, cur.Next
 	}
 	page, err := s.trips.ListTripChanges(ctx, member, q)
-	if errors.Is(err, store.ErrSyncWindowExpired) {
-		return nil, syncWindowExpired()
-	}
 	if err != nil {
-		return nil, err
+		return nil, walkFailed(err)
 	}
 	if cur == nil {
 		next = page.Snapshot
@@ -552,7 +577,7 @@ func (s *Server) listTripChanges(ctx context.Context, member uuid.UUID, since st
 	}
 	nextCursor, nextSince := "", ""
 	if more {
-		nextCursor = s.sync.Cursor(member, synctoken.Cursor{Kind: synctoken.Changes, Since: &since, Next: next, Change: page.Trips[len(items)-1].Change})
+		nextCursor = s.sync.Cursor(member, synctoken.Cursor{Kind: synctoken.Changes, Identity: page.Identity, Since: &since, Next: next, Change: page.Trips[len(items)-1].Change})
 	} else {
 		nextSince = s.sync.Token(member, *next)
 	}
@@ -572,7 +597,7 @@ func (s *Server) ListTripDeletions(ctx context.Context, req api.ListTripDeletion
 	limit := pageSize(p.Limit)
 	since, err := s.sync.ParseToken(member, p.Since)
 	if err != nil {
-		return nil, syncWindowExpired()
+		return nil, syncWindowExpired(reasonInvalid)
 	}
 	q := store.TripDeletionsQuery{Since: since, Snapshot: true, Limit: limit + 1}
 	var next *store.SyncPoint
@@ -585,14 +610,11 @@ func (s *Server) ListTripDeletions(ctx context.Context, req api.ListTripDeletion
 			return nil, badRequest("since must be the walk's original since when sent with a cursor.")
 		}
 		after := c.Change
-		q.Snapshot, q.After, next = false, &after, c.Next
+		q.Snapshot, q.After, q.Identity, next = false, &after, c.Identity, c.Next
 	}
 	page, err := s.trips.ListTripDeletions(ctx, member, q)
-	if errors.Is(err, store.ErrSyncWindowExpired) {
-		return nil, syncWindowExpired()
-	}
 	if err != nil {
-		return nil, err
+		return nil, walkFailed(err)
 	}
 	if q.Snapshot {
 		next = page.Snapshot
@@ -604,7 +626,7 @@ func (s *Server) ListTripDeletions(ctx context.Context, req api.ListTripDeletion
 	nextCursor, nextSince := "", ""
 	if len(rows) > limit {
 		rows = rows[:limit]
-		nextCursor = s.sync.Cursor(member, synctoken.Cursor{Kind: synctoken.Deletions, Since: &since, Next: next, Change: rows[limit-1].Change})
+		nextCursor = s.sync.Cursor(member, synctoken.Cursor{Kind: synctoken.Deletions, Identity: page.Identity, Since: &since, Next: next, Change: rows[limit-1].Change})
 	} else {
 		nextSince = s.sync.Token(member, *next)
 	}
