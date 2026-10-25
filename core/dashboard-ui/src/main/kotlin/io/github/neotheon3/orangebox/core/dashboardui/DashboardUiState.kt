@@ -118,7 +118,7 @@ object DashboardStateMapper {
             fuelUsedL = decimal(trip.fuelLitres),
             tripKm = decimal(units.distance(trip.distanceKm)),
             tripTime = elapsed(trip.durationS),
-            leftGlow = leftGlow(i.fuelCut, ecoLamp(i.eco, i.ecoLevel)),
+            leftGlow = leftGlow(i.fuelCut, i.intensityLevel),
             rightGlow = rightGlow(i.overspeed, i.harshAccel || i.harshBrake),
             detailPages = detailPages(snapshot, activePids, units),
             speedUnit = units.speedLabel,
@@ -131,7 +131,7 @@ object DashboardStateMapper {
     private fun capDisplay(v: Double) = v.coerceAtMost(TRIP_KM_PER_L_CAP)
 
     /**
-     * ECO lamp / tint level (#138). Off whenever eco time is not counted (moving, rpm <= 2500 and
+     * ECO lamp level (#138); the RPM-panel tint follows [InstantTelemetry.intensityLevel] instead (#198). Off whenever eco time is not counted (moving, rpm <= 2500 and
      * |accel| <= 1.5 m/s², see docs/telemetry.md), e.g. at 130 km/h / 3,500 rpm even with light load.
      * While eco, the load/boost level only shades it: light load green, moderate or heavy load yellow.
      */
@@ -141,12 +141,15 @@ object DashboardStateMapper {
         else -> 1
     }
 
-    /** RPM panel: fuel cut (green, FUEL-CUT lit) wins over the eco tint. */
-    fun leftGlow(fuelCut: Boolean, ecoLevel: Int): PanelGlow = when {
+    /**
+     * RPM panel, legacy mapping (1 green, 2–3 amber, 4+ red) of the driving-intensity level (#198);
+     * fuel cut (green, FUEL-CUT lit) wins over the tint.
+     */
+    fun leftGlow(fuelCut: Boolean, intensityLevel: Int): PanelGlow = when {
         fuelCut -> PanelGlow.FUEL_CUT
-        ecoLevel == 1 -> PanelGlow.ECO_GREEN
-        ecoLevel in 2..3 -> PanelGlow.ECO_YELLOW
-        ecoLevel >= 4 -> PanelGlow.ECO_RED
+        intensityLevel == 1 -> PanelGlow.ECO_GREEN
+        intensityLevel in 2..3 -> PanelGlow.ECO_YELLOW
+        intensityLevel >= 4 -> PanelGlow.ECO_RED
         else -> PanelGlow.NONE
     }
 

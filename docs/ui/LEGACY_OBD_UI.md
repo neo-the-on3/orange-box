@@ -135,7 +135,7 @@ Weighted spaces separate the blocks. Orange Box keeps this order and also places
 | Speed meter | `SAE_VSS` (extra data) | `VehicleSample[SPEED]` | int; `---` if missing |
 | FUEL-CUT lamp | `CALC_FUEL_CUT` | `InstantTelemetry.fuelCut` | on = green `#18f800` text + icon |
 | OVERSPEED lamp | `VSS ≥ threshold` (default 110 km/h, user setting) | `InstantTelemetry.overspeed` (event with hysteresis, 120/117 km/h, configurable in M8) | on = red `#f80000` |
-| Left panel tint | eco level from load % (petrol/LPG: <50 green, 50–80 or 80–90 yellow, ≥90 red; diesel MAP−BARO <50/<80/<100/≥100; only while VSS > 0) | `InstantTelemetry.ecoLevel` (new, same thresholds) | see 4.4 |
+| Left panel tint | eco level from load % (petrol/LPG: <50 green, 50–80 or 80–90 yellow, ≥90 red; diesel MAP−BARO <50/<80/<100/≥100; only while VSS > 0) | `InstantTelemetry.intensityLevel`: same load/boost bands, raised to amber/red by rpm or acceleration (#198) | see 4.4 |
 | ECO icon | same eco level | lit only while `InstantTelemetry.eco` (eco time counted); load shades it green/yellow (#138) | green/yellow; off grey-white |
 | COOLANT icon | `SAE_ECT` valid; `WARN_OVERHEAT` (≥ 100 °C) | `coolantC`, warning flag | blue normal, orange warning, off |
 | BATTERY icon | `CALC_AUX_BAT` valid; warning outside 13.2–14.8 V (engine on) | `batteryV`, warning flag | blue / orange / off |

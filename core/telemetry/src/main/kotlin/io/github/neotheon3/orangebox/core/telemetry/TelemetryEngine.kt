@@ -36,6 +36,12 @@ data class InstantTelemetry(
      * 1 = light, 2–3 = moderate, 4 = heavy. See [TelemetryConfig.ecoLoadThresholds].
      */
     val ecoLevel: Int = 0,
+    /**
+     * Driving intensity for the RPM-panel tint (#198): 0 = no tint (stopped or no data), 1 = green,
+     * 2–3 = amber, 4 = red. The legacy load/boost level ([ecoLevel]) raised by the rpm/acceleration step
+     * in [TelemetryConfig.intensity]. Unlike the ECO lamp it is not gated on the eco rule.
+     */
+    val intensityLevel: Int = 0,
     /** Coolant at or above [TelemetryConfig.coolantWarningC]. */
     val coolantWarning: Boolean = false,
     /** Engine running and voltage outside [TelemetryConfig.chargingVoltsRange]. */
@@ -181,6 +187,8 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val volts = sample[ObdPid.CONTROL_MODULE_VOLTAGE]
         val engineOn = rpm != null && rpm > 0
 
+        val loadLevel = if (moving) ecoLevel(sample) else 0
+
         val instant = InstantTelemetry(
             speedKph = speed, rpm = rpm,
             coolantC = coolant, fuelLevelPercent = sample[ObdPid.FUEL_LEVEL],
@@ -190,7 +198,8 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             warnings = warnings(sample),
             harshAccel = harshAccelEvent.active,
             harshBrake = harshBrakeEvent.active,
-            ecoLevel = if (moving) ecoLevel(sample) else 0,
+            ecoLevel = loadLevel,
+            intensityLevel = if (moving) intensityLevel(loadLevel, rpm, accel, harshAccelEvent.active) else 0,
             coolantWarning = coolant != null && coolant >= config.coolantWarningC,
             batteryWarning = engineOn && volts != null && volts !in config.chargingVoltsRange,
             instantKmPerL = kmPerL,
@@ -246,6 +255,17 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             (sample[ObdPid.ENGINE_LOAD] ?: return 0) to config.ecoLoadThresholds
         }
         return 1 + bounds.count { value >= it }
+    }
+
+    /** Legacy load/boost level raised to amber/red by rpm or acceleration ([TelemetryConfig.intensity]). */
+    private fun intensityLevel(loadLevel: Int, rpm: Double?, accel: Double?, harshAccel: Boolean): Int {
+        val t = config.intensity
+        val step = when {
+            harshAccel || (rpm != null && rpm > t.redRpm) || (accel != null && accel > t.redAccelMps2) -> IntensityThresholds.RED
+            (rpm != null && rpm > t.amberRpm) || (accel != null && accel > t.amberAccelMps2) -> IntensityThresholds.AMBER
+            else -> 0
+        }
+        return maxOf(loadLevel, step)
     }
 
     private var reportedFuelType: FuelType? = null
