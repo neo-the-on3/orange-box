@@ -14,6 +14,18 @@
   - stop the service;
   - disconnect the dongle.
 
+## Getting to the dashboard (#192)
+- **Home Drive button**, the first item on Home in every connection state: "Start driving" connects and opens
+  the dashboard (Idle, Link lost, Failed); "Open dashboard" just opens it while connecting or connected.
+  The mapping is `DriveAction.of(state)` in `feature:home`.
+- **Live data card:** tapping anywhere on it opens the dashboard; the "Open dashboard" button stays for TalkBack.
+- **Launcher shortcut "Drive"** (long-press the app icon, or pin it): a dynamic shortcut published by
+  `LauncherShortcuts` on launch, opening `MainActivity` with `EXTRA_OPEN_DASHBOARD`. Dynamic rather than
+  `shortcuts.xml`, so it follows the `.debug` application id.
+- **Backend pill** ("Backend: Fake/Remote") only shows when the backend is on; Off is the default and says nothing.
+- **Show dashboard automatically** stays off by default (`DashboardPreferences.autoShowDashboard`); flipping
+  the default is a one-line change there.
+
 ## DrivingService
 - **Foreground service type:** `connectedDevice`, plus `location` when a location permission is granted. If the location type is refused (e.g. started while not in use), it falls back to `connectedDevice` only. If that is refused too, the service stops instead of crashing.
 - **Ongoing notification** (channel `driving`, low importance):

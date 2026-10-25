@@ -66,8 +66,10 @@ class ObdStatusCardTest {
         assertEquals(1, obd.retryCalls)
     }
 
-    @Test fun `backend pill still renders`() {
+    @Test fun `backend pill is hidden while Off and the drive button connects (#192)`() {
         render()
-        compose.onNodeWithText("Backend: Off").assertIsDisplayed()
+        compose.onNodeWithText("Backend: Off").assertDoesNotExist()
+        compose.onNodeWithTag("home_drive").performClick()
+        assertEquals(1, obd.connectCalls)
     }
 }

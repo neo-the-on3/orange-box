@@ -27,6 +27,10 @@ data class HomeUiState(
     /** Same mapping as the driving dashboard, so Home and dashboard show identical values. */
     val dashboard: DashboardUiState = DashboardUiState(),
 ) {
+    /** "Backend: Fake/Remote"; hidden while the backend is Off (the default), see #192. */
+    val showBackendPill: Boolean
+        get() = !loading && backend.mode != BackendMode.OFF
+
     val showRemoteWarning: Boolean
         get() = !loading && backend.mode == BackendMode.REMOTE && !backend.isRemoteReady
 }

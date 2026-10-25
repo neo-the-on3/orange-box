@@ -8,7 +8,7 @@ source "${SMOKE_LIB:-scripts/ci/smoke-lib.sh}"
 
 adb shell am force-stop "$PKG"
 adb shell am start -W -n "$PKG/$ACTIVITY" --es backend_mode off > /dev/null
-wait_for_text "Backend: Off" sim-home
+wait_for_text "Start driving" sim-home
 tap_attr content-desc "More" sim-more
 tap_attr text "Simulator" sim-menu
 wait_for_text "Use simulated dongle" sim-screen

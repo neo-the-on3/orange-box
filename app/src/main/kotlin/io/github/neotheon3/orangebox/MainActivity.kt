@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) {
+            LauncherShortcuts.publish(this)
             launchOverrides.apply(intent)
             handleOpenDashboard(intent)
             io.github.neotheon3.orangebox.crash.CrashNotifier.handle(this, intent, crashPrompt)
