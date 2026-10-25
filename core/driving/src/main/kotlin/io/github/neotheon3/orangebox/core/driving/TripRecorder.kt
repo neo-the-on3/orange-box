@@ -8,6 +8,7 @@ import io.github.neotheon3.orangebox.core.database.TripRepository
 import io.github.neotheon3.orangebox.core.database.TripSampleEntity
 import io.github.neotheon3.orangebox.core.obd.ObdConnection
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
+import io.github.neotheon3.orangebox.core.telemetry.TelemetryConfig
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySource
 import io.github.neotheon3.orangebox.core.telemetry.TripTotals
@@ -90,6 +91,8 @@ class TripRecorder(
     private var base = TripTotals()
     private var last = TripTotals()
     private var lastSampleAt = Long.MIN_VALUE
+    /** Sample time of the last snapshot this trip took in (stored as a sample or not). */
+    private var lastSnapshotAt = Long.MIN_VALUE
     private var lastCheckpointWall = 0L
     private var engineOnWall = 0L
     /** The latest sample of this trip read the engine as not running (rpm 0 or missing). */
@@ -142,6 +145,15 @@ class TripRecorder(
         last = s.trip
         val totals = base + s.trip
         val f = fix
+        // A gap longer than the engine's stale limit ends its events as signal_lost at the last sample before
+        // the gap, and one still over its threshold re-opens on the first sample after it. The flag never
+        // drops in the snapshots either side, so close our rows the same way, or the detail would show one
+        // event spanning the gap where the summary counts two (#187).
+        if (lastSnapshotAt != Long.MIN_VALUE && s.timestampMillis - lastSnapshotAt > MAX_GAP_MILLIS) {
+            closeAllOpen()
+            flags = Flags()
+        }
+        lastSnapshotAt = s.timestampMillis
         if (lastSampleAt == Long.MIN_VALUE || s.timestampMillis - lastSampleAt >= SAMPLE_MILLIS) {
             samples += TripSampleEntity(
                 tripId = current.id, timestampMillis = s.timestampMillis,
@@ -153,9 +165,12 @@ class TripRecorder(
         val now = Flags(s.instant.harshAccel, s.instant.harshBrake, s.instant.overspeed, s.instant.fuelCut)
         // value: the peak while the event runs: max acceleration, the strongest (most negative) braking,
         // max speed for overspeed; fuel cut keeps the speed it started at.
-        fun edge(was: Boolean, isOn: Boolean, type: String, value: Double?, peakOf: (Double, Double) -> Double) {
+        // restarted: the engine counted a new event of this type while the flag stayed on (it closed the
+        // previous one and opened another), so the row splits there too.
+        fun edge(was: Boolean, isOn: Boolean, type: String, value: Double?, restarted: Boolean = false, peakOf: (Double, Double) -> Double) {
+            if (isOn && was && restarted) open[type]?.let { close(type, it.lastAt) }
             when {
-                isOn && !was -> open[type] = OpenEvent(
+                isOn && (!was || open[type] == null) -> open[type] = OpenEvent(
                     TripEventEntity(tripId = current.id, timestampMillis = s.timestampMillis, type = type, value = value, latitude = f?.latitude, longitude = f?.longitude),
                     value, s.timestampMillis,
                 )
@@ -167,10 +182,10 @@ class TripRecorder(
             }
         }
         val keep: (Double, Double) -> Double = { a, _ -> a }
-        edge(flags.harshAccel, now.harshAccel, EVENT_HARSH_ACCEL, s.instant.accelMps2, ::maxOf)
-        edge(flags.harshBrake, now.harshBrake, EVENT_HARSH_BRAKE, s.instant.accelMps2, ::minOf)
-        edge(flags.overspeed, now.overspeed, EVENT_OVERSPEED, s.instant.speedKph, ::maxOf)
-        edge(flags.fuelCut, now.fuelCut, EVENT_FUEL_CUT, s.instant.speedKph, keep)
+        edge(flags.harshAccel, now.harshAccel, EVENT_HARSH_ACCEL, s.instant.accelMps2, totals.harshAccelCount > current.harshAccelCount, ::maxOf)
+        edge(flags.harshBrake, now.harshBrake, EVENT_HARSH_BRAKE, s.instant.accelMps2, totals.harshBrakeCount > current.harshBrakeCount, ::minOf)
+        edge(flags.overspeed, now.overspeed, EVENT_OVERSPEED, s.instant.speedKph, totals.overspeedCount > current.overspeedCount, ::maxOf)
+        edge(flags.fuelCut, now.fuelCut, EVENT_FUEL_CUT, s.instant.speedKph, peakOf = keep)
         flags = now
         val updated = current.withTotals(totals).copy(lastSampleAtMillis = s.timestampMillis)
         trip = updated
@@ -182,6 +197,11 @@ class TripRecorder(
     private fun close(type: String, endAt: Long) {
         val o = open.remove(type) ?: return
         events += o.row.copy(value = o.peak, durationS = (endAt - o.row.timestampMillis).coerceAtLeast(0) / 1000.0)
+    }
+
+    /** Closes every open event at its last sample (a trip end, or a gap the engine ends them at). */
+    private fun closeAllOpen() {
+        open.keys.toList().forEach { type -> close(type, open.getValue(type).lastAt) }
     }
 
     private suspend fun begin(s: TelemetrySnapshot) {
@@ -199,6 +219,7 @@ class TripRecorder(
         base = TripTotals(); last = TripTotals(); flags = Flags()
         engineOffRead = false; stallLogged = false
         lastSampleAt = Long.MIN_VALUE
+        lastSnapshotAt = Long.MIN_VALUE
         lastCheckpointWall = clock.now()
         samples.clear(); events.clear(); open.clear()
         fix = null
@@ -235,7 +256,7 @@ class TripRecorder(
         val t = trip ?: return
         val closed = t.copy(endedAtMillis = maxOf(t.startedAtMillis, t.lastSampleAtMillis), endReason = reason)
         // Events still running end with the trip, at their last sample.
-        open.keys.toList().forEach { type -> close(type, open.getValue(type).lastAt) }
+        closeAllOpen()
         checkpoint(closed)
         locationJob?.cancel(); locationJob = null
         trip = null
@@ -252,6 +273,8 @@ class TripRecorder(
         const val CHECKPOINT_MILLIS = 5_000L
         const val ENGINE_OFF_GRACE_MILLIS = 30_000L
         const val TICK_MILLIS = 1_000L
+        /** The telemetry engine's `maxGapMillis`: a longer gap ends its events as signal_lost. */
+        val MAX_GAP_MILLIS = TelemetryConfig().maxGapMillis
         const val EVENT_HARSH_ACCEL = "harsh_accel"
         const val EVENT_HARSH_BRAKE = "harsh_brake"
         const val EVENT_OVERSPEED = "overspeed"
