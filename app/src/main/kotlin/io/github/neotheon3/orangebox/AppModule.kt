@@ -73,4 +73,8 @@ object VehicleProfiles {
 abstract class BackendAccountModule {
     @dagger.Binds
     abstract fun bindBackendAccount(impl: io.github.neotheon3.orangebox.sync.AppBackendAccount): io.github.neotheon3.orangebox.core.datastore.BackendAccount
+
+    /** Fills the diagnostics' optional report sink: DTC reads and clears are queued for upload (#67). */
+    @dagger.Binds
+    abstract fun bindDtcReportSink(impl: io.github.neotheon3.orangebox.sync.AppDtcReportSink): io.github.neotheon3.orangebox.core.diagnostics.DtcReportSink
 }
