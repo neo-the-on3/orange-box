@@ -6,6 +6,7 @@ import io.github.neotheon3.orangebox.core.network.SyncWindowReason
 import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
 import io.github.neotheon3.orangebox.core.network.TripBatchDto
 import io.github.neotheon3.orangebox.core.network.TripDto
+import io.github.neotheon3.orangebox.core.network.TripUploadDto
 import java.util.UUID
 
 /**
@@ -239,7 +240,15 @@ class SyncEngine(
         while (true) {
             val batch = store.pendingTripBatch() ?: nextBatch(attempted) ?: return
             attempted += batch.trips.map { it.clientTripId }
-            val result = api.uploadTrips(TripBatchDto(batch.trips), batch.idempotencyKey)
+            val result = try {
+                api.uploadTrips(TripBatchDto(batch.trips), batch.idempotencyKey)
+            } catch (e: ApiError.Http) {
+                if (e.status != 422) throw e
+                rejectInvalid(batch, e)
+                attempted -= batch.trips.map { it.clientTripId }.toSet() - rejectedIn(batch, e)
+                store.setPendingTripBatch(null) // the rest goes in a fresh batch with a fresh key
+                continue
+            }
             val sent = batch.trips.associateBy { it.clientTripId }
             for (item in result.results) {
                 val trip = sent[item.clientId] ?: continue
@@ -263,11 +272,34 @@ class SyncEngine(
         }
     }
 
+    /** The trips a batch-level `422` points at (`/trips/<i>`); every trip of the batch when it points nowhere. */
+    private fun rejectedIn(batch: PendingTripBatch, e: ApiError.Http): Set<String> {
+        val indexes = e.problem?.errors.orEmpty().mapNotNull { Regex("^/trips/(\\d+)").find(it.pointer)?.groupValues?.get(1)?.toIntOrNull() }
+        val pointed = indexes.mapNotNull { batch.trips.getOrNull(it)?.clientTripId }.toSet()
+        return pointed.ifEmpty { batch.trips.map { it.clientTripId }.toSet() }
+    }
+
+    private suspend fun rejectInvalid(batch: PendingTripBatch, e: ApiError.Http) {
+        for (id in rejectedIn(batch, e)) {
+            store.markRejected(id, e.code ?: ApiError.CODE_VALIDATION_FAILED)
+            report = report.copy(rejected = report.rejected + 1)
+        }
+    }
+
     private suspend fun nextBatch(attempted: Set<String>): PendingTripBatch? {
         val gone = store.vehicles().filter { it.goneOnServer }.map { it.clientVehicleId }.toSet()
         val uploads = store.trips()
             .filter { it.needsUpload && !it.remoteOrigin && it.clientVehicleId !in gone && it.clientTripId !in attempted }
-            .mapNotNull { store.uploadOf(it.clientTripId) }
+            .mapNotNull { store.uploadOf(it.clientTripId)?.withinLimits() }
+            .filter { trip ->
+                // Over 16 KiB is a 422 for the whole batch: keep it out and mark it, rather than send it.
+                (trip.encodedBytes() <= TripUploadDto.MAX_TRIP_BYTES).also { ok ->
+                    if (!ok) {
+                        store.markRejected(trip.clientTripId, CODE_TRIP_TOO_LARGE)
+                        report = report.copy(rejected = report.rejected + 1)
+                    }
+                }
+            }
             .take(BackendApi.MAX_TRIPS_PER_BATCH)
         if (uploads.isEmpty()) return null
         return PendingTripBatch(newKey(), uploads).also { store.setPendingTripBatch(it) }
@@ -428,6 +460,9 @@ class SyncEngine(
     companion object {
         /** Keeps one run short; the rest goes out on the next run. */
         const val MAX_TELEMETRY_BATCHES_PER_RUN = 50
+
+        /** Local reject code: the trip's JSON is over [TripUploadDto.MAX_TRIP_BYTES]. */
+        const val CODE_TRIP_TOO_LARGE = "trip_too_large"
 
         const val STEP_TELEMETRY = "telemetry"
         const val STEP_DTC_REPORTS = "dtc_reports"

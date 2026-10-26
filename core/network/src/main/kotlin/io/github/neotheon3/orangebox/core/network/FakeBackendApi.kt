@@ -139,7 +139,17 @@ class FakeBackendApi(
         )
     }
 
+    /** Trips encoded larger than this fail the whole batch with `422` at `/trips/<i>` (spec: 16 KiB). */
+    var maxTripBytes: Int = TripUploadDto.MAX_TRIP_BYTES
+
     override suspend fun uploadTrips(batch: TripBatchDto, idempotencyKey: String) = op("POST /v1/trips/batch") {
+        val tooLarge = batch.trips.withIndex().filter { it.value.encodedBytes() > maxTripBytes }
+        if (tooLarge.isNotEmpty()) {
+            throw ApiError.Http(
+                422,
+                problem(422, ApiError.CODE_VALIDATION_FAILED).copy(errors = tooLarge.map { ProblemDto.FieldError("/trips/${it.index}", "trip too large") }),
+            )
+        }
         BatchResultDto(
             batch.trips.map { t ->
                 when {
