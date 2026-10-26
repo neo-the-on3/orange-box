@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -53,15 +54,21 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
-fun StatsRoute(onBack: () -> Unit, viewModel: StatsViewModel = hiltViewModel()) {
+fun StatsRoute(onBack: () -> Unit, onOpenRankings: () -> Unit = {}, viewModel: StatsViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    StatsScreen(state, onBack = onBack, onPeriod = viewModel::setPeriod)
+    StatsScreen(state, onBack = onBack, onPeriod = viewModel::setPeriod, onOpenRankings = onOpenRankings)
 }
 
 /** Weekly or monthly totals of the recorded trips (#46), Material 3 defaults. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StatsScreen(state: StatsUiState, onBack: () -> Unit = {}, onPeriod: (StatsPeriod) -> Unit = {}, locale: Locale = Locale.getDefault()) {
+fun StatsScreen(
+    state: StatsUiState,
+    onBack: () -> Unit = {},
+    onPeriod: (StatsPeriod) -> Unit = {},
+    locale: Locale = Locale.getDefault(),
+    onOpenRankings: () -> Unit = {},
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -80,14 +87,19 @@ fun StatsScreen(state: StatsUiState, onBack: () -> Unit = {}, onPeriod: (StatsPe
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item(key = "period") {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    StatsPeriod.entries.forEachIndexed { i, p ->
-                        SegmentedButton(
-                            selected = state.period == p,
-                            onClick = { onPeriod(p) },
-                            shape = SegmentedButtonDefaults.itemShape(i, StatsPeriod.entries.size),
-                            modifier = Modifier.testTag("stats_period_${p.name.lowercase()}"),
-                        ) { Text(stringResource(if (p == StatsPeriod.WEEK) R.string.stats_weekly else R.string.stats_monthly)) }
+                // One item with the optional rankings card: inserting an item above the first one would leave
+                // the list anchored below it, so a card appearing after the screen opened would be scrolled away.
+                Column {
+                    if (state.rankingsAvailable) RankingsEntry(onOpenRankings)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        StatsPeriod.entries.forEachIndexed { i, p ->
+                            SegmentedButton(
+                                selected = state.period == p,
+                                onClick = { onPeriod(p) },
+                                shape = SegmentedButtonDefaults.itemShape(i, StatsPeriod.entries.size),
+                                modifier = Modifier.testTag("stats_period_${p.name.lowercase()}"),
+                            ) { Text(stringResource(if (p == StatsPeriod.WEEK) R.string.stats_weekly else R.string.stats_monthly)) }
+                        }
                     }
                 }
             }
@@ -105,6 +117,18 @@ fun StatsScreen(state: StatsUiState, onBack: () -> Unit = {}, onPeriod: (StatsPe
                 }
             }
         }
+    }
+}
+
+/** Server features (#68): only in Fake, or Remote signed in. The local stats below stay the default view. */
+@Composable
+private fun RankingsEntry(onOpen: () -> Unit) {
+    OutlinedCard(onClick = onOpen, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("stats_rankings")) {
+        ListItem(
+            headlineContent = { Text(stringResource(R.string.stats_rankings)) },
+            supportingContent = { Text(stringResource(R.string.stats_rankings_body)) },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
+        )
     }
 }
 

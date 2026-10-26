@@ -37,6 +37,8 @@ import io.github.neotheon3.orangebox.feature.driving.DashboardDestination
 import io.github.neotheon3.orangebox.feature.driving.dashboardScreen
 import io.github.neotheon3.orangebox.feature.home.HomeDestination
 import io.github.neotheon3.orangebox.feature.home.homeScreen
+import io.github.neotheon3.orangebox.feature.rankings.RankingsDestination
+import io.github.neotheon3.orangebox.feature.rankings.rankingsScreen
 import io.github.neotheon3.orangebox.feature.settings.SettingsDestination
 import io.github.neotheon3.orangebox.feature.settings.settingsScreen
 import io.github.neotheon3.orangebox.feature.setup.DongleSetupDestination
@@ -92,7 +94,9 @@ fun OrangeBoxNavHost(
                 onBack = { navController.popBackStack() },
                 onOpenTrip = { id -> navController.navigate(TripDetailDestination(id)) { launchSingleTop = true } },
                 onOpenStats = { navController.navigate(StatsDestination) { launchSingleTop = true } },
+                onOpenRankings = { navController.navigate(RankingsDestination) { launchSingleTop = true } },
             )
+            rankingsScreen(onBack = { navController.popBackStack() })
             dashboardScreen(
                 onEndDriving = { navController.returnHome() },
                 onBack = { navController.returnHome() },

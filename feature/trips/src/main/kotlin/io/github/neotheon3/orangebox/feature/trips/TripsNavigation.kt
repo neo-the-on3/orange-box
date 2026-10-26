@@ -22,8 +22,9 @@ fun NavGraphBuilder.tripsScreen(
     onBack: () -> Unit,
     onOpenTrip: (Long) -> Unit = {},
     onOpenStats: () -> Unit = {},
+    onOpenRankings: () -> Unit = {},
 ) {
     composable<TripsDestination> { TripsRoute(onBack = onBack, onOpenTrip = onOpenTrip, onOpenStats = onOpenStats) }
     composable<TripDetailDestination> { TripDetailRoute(onBack = onBack) }
-    composable<StatsDestination> { io.github.neotheon3.orangebox.feature.trips.stats.StatsRoute(onBack = onBack) }
+    composable<StatsDestination> { io.github.neotheon3.orangebox.feature.trips.stats.StatsRoute(onBack = onBack, onOpenRankings = onOpenRankings) }
 }
