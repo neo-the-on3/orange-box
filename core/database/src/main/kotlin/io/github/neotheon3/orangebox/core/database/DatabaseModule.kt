@@ -31,4 +31,5 @@ abstract class VehicleRepositoryModule {
     @Binds abstract fun bindVehicleRepository(impl: RoomVehicleRepository): VehicleRepository
     @Binds abstract fun bindTripRepository(impl: RoomTripRepository): TripRepository
     @Binds abstract fun bindDtcHistoryRepository(impl: RoomDtcHistoryRepository): DtcHistoryRepository
+    @Binds abstract fun bindTripReassignment(impl: RoomTripReassignment): TripReassignment
 }

@@ -269,8 +269,8 @@ class SyncEngine(
             val copy = byId[v.serverId] ?: byClientId[v.clientVehicleId]
             if (copy == null) {
                 // Deleted elsewhere (archived ones are still listed). Its trips there come back as tombstones;
-                // trips only on this phone stay, unuploaded.
-                // TODO(M9): let the user move those trips to another vehicle (Trips screen); not cheap here.
+                // trips only on this phone stay, unuploaded, until the user moves them to another vehicle on the
+                // Trips screen (#203, TripReassignment). Moved trips upload on the next run like any others.
                 store.markVehicleGone(v.clientVehicleId)
                 report = report.copy(vehiclesDeletedElsewhere = report.vehiclesDeletedElsewhere + 1)
                 continue

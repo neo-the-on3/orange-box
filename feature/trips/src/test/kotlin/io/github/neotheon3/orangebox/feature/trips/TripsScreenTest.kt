@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import io.github.neotheon3.orangebox.core.designsystem.OrangeBoxTheme
+import io.github.neotheon3.orangebox.core.model.Vehicle
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -43,6 +44,12 @@ class TripsScreenTest {
         onNextMonth = { events += "next" },
         onDayClicked = { events += "day:$it" },
         onOpenTrip = { events += "trip:$it" },
+        move = MoveTripsActions(
+            onStart = { events += "move" },
+            onSelect = { events += "pick:$it" },
+            onConfirm = { events += "confirm" },
+            onDismiss = { events += "cancel" },
+        ),
     )
 
     private val populated = listOf(
@@ -110,5 +117,37 @@ class TripsScreenTest {
     @Test fun `dark theme`() {
         show(state(populated), dark = true)
         render("trips-month-dark")
+    }
+
+    @Test fun `#203 - trips of a vehicle deleted elsewhere get a hint and a move action`() {
+        show(state(populated).copy(orphanedTripIds = setOf(3L, 4L)))
+        compose.onNodeWithTag("trips_orphaned").assertIsDisplayed()
+        compose.onNodeWithText("2 trips belong to a vehicle", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("trip_orphaned_4", useUnmergedTree = true).assertExists().assertTextContains("Vehicle deleted on another device")
+        compose.onAllNodesWithTag("trip_orphaned_1", useUnmergedTree = true).assertCountEquals(0)
+        render("trips-orphaned")
+        compose.onNodeWithTag("trips_move").performClick()
+        assertEquals(listOf("move"), events)
+    }
+
+    @Test fun `#203 - no banner without orphaned trips`() {
+        show(state(populated))
+        compose.onAllNodesWithTag("trips_orphaned").assertCountEquals(0)
+    }
+
+    @Test fun `#203 - the move dialog lists the vehicles and confirms the pick`() {
+        val dialog = MoveTripsDialog(setOf(3L, 4L), listOf(Vehicle(id = 5, name = "Celerio"), Vehicle(id = 6, name = "Swift", maker = "Maruti", model = "Swift")), selected = 6)
+        show(state(populated).copy(orphanedTripIds = setOf(3L, 4L), moveDialog = dialog))
+        compose.onNodeWithText("Move 2 trips").assertIsDisplayed()
+        compose.onNodeWithTag("trips_move_target_5").performClick()
+        compose.onNodeWithTag("trips_move_confirm").performClick()
+        compose.onNodeWithTag("trips_move_cancel").performClick()
+        assertEquals(listOf("pick:5", "confirm", "cancel"), events)
+    }
+
+    @Test fun `#203 - with no other vehicle the dialog says so and can't confirm`() {
+        show(state(populated).copy(orphanedTripIds = setOf(3L), moveDialog = MoveTripsDialog(setOf(3L), emptyList(), null)))
+        compose.onNodeWithTag("trips_move_none").assertIsDisplayed()
+        compose.onAllNodesWithTag("trips_move_confirm").assertCountEquals(0)
     }
 }

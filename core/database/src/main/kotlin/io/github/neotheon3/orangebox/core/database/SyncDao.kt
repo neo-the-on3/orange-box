@@ -148,6 +148,43 @@ interface SyncDao {
         deleteTrip(clientTripId)
     }
 
+    // --- trips of a vehicle deleted elsewhere (#203) ---
+
+    /** Trips whose vehicle was deleted on another device (`goneOnServer`): they stay here and don't upload. */
+    @Query("SELECT t.id FROM trips t JOIN vehicle_sync s ON s.vehicleId = t.vehicleId WHERE s.goneOnServer = 1")
+    fun observeTripsOfGoneVehicles(): kotlinx.coroutines.flow.Flow<List<Long>>
+
+    @Query("SELECT t.id FROM trips t JOIN vehicle_sync s ON s.vehicleId = t.vehicleId WHERE s.goneOnServer = 1 AND t.id IN (:ids)")
+    suspend fun tripsOfGoneVehicles(ids: Collection<Long>): List<Long>
+
+    @Query("SELECT DISTINCT accountId FROM trips WHERE id IN (:ids)")
+    suspend fun accountsOfTrips(ids: Collection<Long>): List<String?>
+
+    /** Vehicles not deleted on the server, oldest first. */
+    @Query("SELECT v.* FROM vehicles v LEFT JOIN vehicle_sync s ON s.vehicleId = v.id WHERE s.goneOnServer IS NULL OR s.goneOnServer = 0 ORDER BY v.id")
+    suspend fun vehiclesNotGone(): List<VehicleEntity>
+
+    @Query("UPDATE trips SET vehicleId = :vehicleId WHERE id IN (:ids)")
+    suspend fun setTripsVehicle(ids: Collection<Long>, vehicleId: Long)
+
+    /** Moved trips upload again under their new vehicle, even if a copy was accepted before; old rejections clear. */
+    @Query("UPDATE trip_sync SET forceUpload = 1, rejectedCode = NULL WHERE tripId IN (:ids)")
+    suspend fun requeueMovedTrips(ids: Collection<Long>)
+
+    /**
+     * Moves the trips among [ids] whose vehicle was deleted elsewhere to [vehicleId] (a vehicle that isn't gone), so
+     * the next sync uploads them. Returns how many moved.
+     */
+    @Transaction
+    suspend fun moveTripsOfGoneVehicles(ids: Collection<Long>, vehicleId: Long): Int {
+        if (vehiclesNotGone().none { it.id == vehicleId }) return 0
+        val movable = tripsOfGoneVehicles(ids)
+        if (movable.isEmpty()) return 0
+        setTripsVehicle(movable, vehicleId)
+        requeueMovedTrips(movable)
+        return movable.size
+    }
+
     // --- accounts (Q13) ---
 
     @Query(

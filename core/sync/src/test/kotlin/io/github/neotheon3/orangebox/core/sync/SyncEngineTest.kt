@@ -323,6 +323,26 @@ class SyncEngineTest {
         assertTrue(server.calls.contains("GET /v1/vehicles?includeArchived=true"))
     }
 
+    @Test fun `trips of a vehicle deleted elsewhere upload after a move to another vehicle (#203)`() = runTest {
+        val car = phone.addVehicle()
+        phone.record(car)
+        engine.run()
+        val local = phone.record(car, at = Instant.parse("2026-10-21T10:00:00Z"))
+        server.deleteVehicleElsewhere(car)
+        engine.run()
+        assertFalse(local in server.trips.map { it.clientTripId })
+
+        val other = phone.addVehicle("Celerio")
+        assertEquals("a gone vehicle is no target", 0, phone.moveTripsOfGoneVehicles(setOf(local), car))
+        assertEquals(1, phone.moveTripsOfGoneVehicles(setOf(local), other))
+        val r = engine.run()
+        assertEquals(1, r.uploaded)
+        assertEquals(1, r.vehiclesCreated)
+        val serverOther = server.vehicles.single { it.clientVehicleId == other }
+        assertEquals(serverOther.id, server.trips.single { it.clientTripId == local }.vehicleId)
+        assertEquals("nothing left to move", 0, phone.moveTripsOfGoneVehicles(setOf(local), other))
+    }
+
     @Test fun `an archived vehicle isn't deleted, and an edit elsewhere is applied once`() = runTest {
         val car = phone.addVehicle()
         phone.record(car)
