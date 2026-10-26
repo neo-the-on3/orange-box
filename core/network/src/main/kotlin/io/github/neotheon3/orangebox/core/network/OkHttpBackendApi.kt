@@ -135,6 +135,52 @@ class OkHttpBackendApi(
         }
     }
 
+    override suspend fun getMe(): Tagged<ProfileDto> = tagged(ProfileDto.serializer(), get("me"))
+
+    /** JSON merge patch; `If-Match` when we have an `ETag` (a server that requires one answers `428`). */
+    override suspend fun patchMe(patch: ProfilePatchDto, etag: String?): Tagged<ProfileDto> = tagged(
+        ProfileDto.serializer(),
+        Request.Builder().url(url("me"))
+            .patch(BackendJson.encodeToString(ProfilePatchDto.serializer(), patch).toRequestBody(MERGE_PATCH))
+            .apply { etag?.let { header("If-Match", it) } },
+    )
+
+    override suspend fun getStatsSummary(period: String, tz: String, date: String?, vehicleId: String?): StatsSummaryDto = call(
+        get("stats/summary") {
+            addQueryParameter("period", period)
+            addQueryParameter("tz", tz)
+            date?.let { addQueryParameter("date", it) }
+            vehicleId?.let { addQueryParameter("vehicleId", it) }
+        },
+        authenticated = true,
+    )
+
+    override suspend fun listRanking(metric: String, period: String, tz: String, date: String?, cursor: String?): RankingPageDto = call(
+        get("rankings/$metric") {
+            addQueryParameter("period", period)
+            addQueryParameter("tz", tz)
+            date?.let { addQueryParameter("date", it) }
+            cursor?.let { addQueryParameter("cursor", it) }
+        },
+        authenticated = true,
+    )
+
+    override suspend fun getMyRanking(metric: String, period: String, tz: String, date: String?): MyRankingDto = call(
+        get("rankings/$metric/me") {
+            addQueryParameter("period", period)
+            addQueryParameter("tz", tz)
+            date?.let { addQueryParameter("date", it) }
+        },
+        authenticated = true,
+    )
+
+    override suspend fun getPointsBalance(): PointsBalanceDto = call(get("me/points"), authenticated = true)
+
+    override suspend fun listPointsLedger(cursor: String?): PointsLedgerPageDto = call(
+        get("me/points/ledger") { cursor?.let { addQueryParameter("cursor", it) } },
+        authenticated = true,
+    )
+
     // --- plumbing ---
 
     private suspend inline fun <reified T> call(builder: Request.Builder, authenticated: Boolean): T =

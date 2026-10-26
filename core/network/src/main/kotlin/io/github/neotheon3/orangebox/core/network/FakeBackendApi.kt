@@ -3,6 +3,7 @@ package io.github.neotheon3.orangebox.core.network
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Instant
+import java.time.LocalDate
 import java.util.Base64
 import java.util.UUID
 
@@ -288,6 +289,147 @@ class FakeBackendApi(
     override suspend fun deleteTrip(serverId: String) = op("DELETE /v1/trips/$serverId") {
         val trip = state.trips.values.firstOrNull { it.dto.id == serverId } ?: return@op // 404 counts as done
         deleteLocked(trip.dto.clientTripId)
+    }
+
+    // --- member features (#66 / #68): profile, stats, rankings, points ---
+
+    private var profile: ProfileDto? = null
+
+    /** Off: the stats, rankings and points endpoints answer `501` (a server that hasn't built them yet). */
+    var memberFeaturesImplemented: Boolean = true
+
+    /** Leaderboard page size (small, so the app's "load more" is exercised). */
+    var rankingPageSize: Int = 10
+
+    /** Ledger page size. */
+    var ledgerPageSize: Int = 20
+
+    /** Optional `today` for tests; defaults to the clock's date in the request's `tz`. */
+    var today: LocalDate? = null
+
+    private fun profileLocked(): ProfileDto = profile ?: clock().let { now ->
+        ProfileDto(
+            id = "fake-member", displayName = "You (Fake)", email = "driver@example.com", createdAt = now, updatedAt = now,
+            countryCode = "IN", rankingOptIn = false, authProvider = "email_otp",
+        ).also { profile = it }
+    }
+
+    private fun etagOf(p: ProfileDto) = "\"p" + p.updatedAt.toEpochMilli() + "\""
+
+    private fun requireMemberFeatures() {
+        if (!memberFeaturesImplemented) throw http(501, "not_implemented")
+    }
+
+    private fun day(date: String?, zone: java.time.ZoneId): LocalDate =
+        date?.let { runCatching { LocalDate.parse(it) }.getOrNull() ?: throw http(400, ApiError.CODE_VALIDATION_FAILED) }
+            ?: today ?: clock().atZone(zone).toLocalDate()
+
+    private fun period(p: String) = p.takeIf { it in Periods.ALL_VALUES } ?: throw http(400, ApiError.CODE_VALIDATION_FAILED)
+
+    private fun metric(m: String) = m.takeIf { it in RankingMetrics.ALL } ?: throw http(400, ApiError.CODE_VALIDATION_FAILED)
+
+    override suspend fun getMe() = op("GET /v1/me") { profileLocked().let { Tagged(it, etagOf(it)) } }
+
+    override suspend fun patchMe(patch: ProfilePatchDto, etag: String?) = op("PATCH /v1/me") {
+        patchFailures.removeFirstOrNull()?.let { throw it }
+        val current = profileLocked()
+        if (etag.isNullOrBlank()) throw http(428, ApiError.CODE_PRECONDITION_REQUIRED)
+        if (etag != etagOf(current)) throw http(412, ApiError.CODE_ETAG_MISMATCH)
+        if (patch == ProfilePatchDto() || patch.displayName?.length?.let { it !in 1..40 } == true) throw http(422, ApiError.CODE_VALIDATION_FAILED)
+        val now = clock().let { if (!it.isAfter(current.updatedAt)) current.updatedAt.plusMillis(1) else it }
+        val updated = current.copy(
+            displayName = patch.displayName ?: current.displayName, countryCode = patch.countryCode ?: current.countryCode,
+            regionCode = patch.regionCode ?: current.regionCode, rankingOptIn = patch.rankingOptIn ?: current.rankingOptIn, updatedAt = now,
+        )
+        profile = updated
+        Tagged(updated, etagOf(updated))
+    }
+
+    private fun periodTrips(period: String, date: String?, tz: String, vehicleId: String? = null, ranked: Boolean = false):
+        Triple<LocalDate, LocalDate, List<TripDto>> {
+        val zone = FakeMemberData.zone(tz)
+        val all = FakeMemberData.completed(state.trips.values.map { it.dto })
+            .filter { (vehicleId == null || it.vehicleId == vehicleId) && (!ranked || it.simulated != true) }
+        val first = all.minOfOrNull { it.startedAt }?.atZone(zone)?.toLocalDate()
+        val (from, to) = FakeMemberData.range(period(period), day(date, zone), first)
+        return Triple(from, to, FakeMemberData.inRange(all, zone, from, to))
+    }
+
+    override suspend fun getStatsSummary(period: String, tz: String, date: String?, vehicleId: String?) =
+        op("GET /v1/stats/summary?period=$period") {
+            requireMemberFeatures()
+            val (from, to, trips) = periodTrips(period, date, tz, vehicleId)
+            FakeMemberData.summary(period, from, to, trips, FakeMemberData.completed(state.trips.values.map { it.dto }), vehicleId)
+        }
+
+    /** The leaderboard of [metric]: the made-up members, plus this member when opted in with ranked trips. */
+    private fun board(metric: String, period: String, tz: String, date: String?): Pair<LocalDate, List<RankingEntryDto>> {
+        val (from, _, trips) = periodTrips(period, date, tz, ranked = true)
+        val me = profileLocked()
+        val all = FakeMemberData.completed(state.trips.values.map { it.dto })
+        val value = if (me.rankingOptIn) FakeMemberData.myValue(metric(metric), trips, all, pointsLocked().remaining) else null
+        return from to FakeMemberData.leaderboard(metric, period, value?.let { me.displayName to it })
+    }
+
+    override suspend fun listRanking(metric: String, period: String, tz: String, date: String?, cursor: String?) =
+        op("GET /v1/rankings/$metric?period=$period&cursor=$cursor") {
+            requireMemberFeatures()
+            val (start, rows) = board(metric(metric), period(period), tz, date)
+            val offset = cursor?.let { c -> unb64(c)?.split('|')?.takeIf { it.size == 4 && it[0] == "r" && it[1] == metric && it[2] == period }?.get(3)?.toIntOrNull() }
+                ?: if (cursor == null) 0 else throw http(400, "invalid_cursor")
+            val page = rows.drop(offset).take(rankingPageSize)
+            val more = offset + page.size < rows.size
+            RankingPageDto(metric, period, start.toString(), page, if (more) b64("r|$metric|$period|${offset + page.size}") else null)
+        }
+
+    override suspend fun getMyRanking(metric: String, period: String, tz: String, date: String?) =
+        op("GET /v1/rankings/$metric/me?period=$period") {
+            requireMemberFeatures()
+            val (_, rows) = board(metric(metric), period(period), tz, date)
+            val me = rows.firstOrNull { it.isMe } ?: throw http(404, "not_ranked")
+            MyRankingDto(
+                metric, period, me.rank, rows.size, me.value,
+                percentile = ((rows.size - me.rank) * 1000.0 / rows.size).toInt() / 10.0,
+            )
+        }
+
+    private fun ledgerLocked() = FakeMemberData.ledger(profileLocked().createdAt, FakeMemberData.completed(state.trips.values.map { it.dto }))
+
+    private fun pointsLocked() = FakeMemberData.balance(ledgerLocked())
+
+    override suspend fun getPointsBalance() = op("GET /v1/me/points") {
+        requireMemberFeatures()
+        pointsLocked()
+    }
+
+    override suspend fun listPointsLedger(cursor: String?) = op("GET /v1/me/points/ledger?cursor=$cursor") {
+        requireMemberFeatures()
+        val rows = ledgerLocked()
+        val offset = cursor?.let { c -> unb64(c)?.split('|')?.takeIf { it.size == 2 && it[0] == "l" }?.get(1)?.toIntOrNull() ?: throw http(400, "invalid_cursor") } ?: 0
+        val page = rows.drop(offset).take(ledgerPageSize)
+        PointsLedgerPageDto(page, if (offset + page.size < rows.size) b64("l|${offset + page.size}") else null)
+    }
+
+    /** Debug Simulator scenarios (#66): the next matching call fails the way a real server can. */
+    enum class Scenario {
+        /** The next `PATCH` (vehicle or profile) answers `412 etag_mismatch`. */
+        CONFLICT_412,
+
+        /** The next call answers `500` with a problem+json body. */
+        PROBLEM_500,
+
+        /** The next call answers `503` with `Retry-After: 5`. */
+        UNAVAILABLE_503,
+    }
+
+    fun arm(scenario: Scenario) {
+        when (scenario) {
+            Scenario.CONFLICT_412 -> patchFailures.add(http(412, ApiError.CODE_ETAG_MISMATCH))
+            Scenario.PROBLEM_500 -> failures.add(
+                ApiError.Http(500, problem(500, "internal_error").copy(title = "Internal Server Error", detail = "Simulated server error (Fake mode)")),
+            )
+            Scenario.UNAVAILABLE_503 -> failures.add(unavailable())
+        }
     }
 
     // --- internals ---
