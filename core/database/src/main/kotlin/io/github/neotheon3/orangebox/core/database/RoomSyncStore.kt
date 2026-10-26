@@ -2,12 +2,18 @@ package io.github.neotheon3.orangebox.core.database
 
 import io.github.neotheon3.orangebox.core.model.VehicleFuel
 import io.github.neotheon3.orangebox.core.network.BackendJson
+import io.github.neotheon3.orangebox.core.network.EventDto
+import io.github.neotheon3.orangebox.core.network.SampleDto
+import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
 import io.github.neotheon3.orangebox.core.network.TripDto
 import io.github.neotheon3.orangebox.core.network.TripUploadDto
 import io.github.neotheon3.orangebox.core.network.UtcInstantSerializer
 import io.github.neotheon3.orangebox.core.network.VehicleCreateDto
 import io.github.neotheon3.orangebox.core.sync.LocalDeletion
+import io.github.neotheon3.orangebox.core.sync.PendingTelemetryBatch
 import io.github.neotheon3.orangebox.core.sync.PendingTripBatch
+import io.github.neotheon3.orangebox.core.sync.TelemetryChunk
+import io.github.neotheon3.orangebox.core.sync.TelemetryTrip
 import io.github.neotheon3.orangebox.core.sync.SyncStore
 import io.github.neotheon3.orangebox.core.sync.SyncTrip
 import io.github.neotheon3.orangebox.core.sync.SyncVehicle
@@ -17,7 +23,8 @@ import javax.inject.Inject
 import kotlin.math.roundToLong
 
 /** [SyncStore] over Room (schema 5). Behaves like the engine tests' InMemorySyncStore. */
-class RoomSyncStore @Inject constructor(private val dao: SyncDao) : SyncStore {
+class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : SyncStore {
+    @Inject constructor(dao: SyncDao) : this(dao, System::currentTimeMillis)
 
     override suspend fun since(): String? = dao.state(KEY_SINCE)
     override suspend fun storeSince(token: String) = dao.putState(SyncStateEntity(KEY_SINCE, token))
@@ -122,6 +129,7 @@ class RoomSyncStore @Inject constructor(private val dao: SyncDao) : SyncStore {
 
     override suspend fun deleteTripLocally(clientTripId: String) {
         dao.deleteTrip(clientTripId)
+        dao.deleteState(KEY_TELEMETRY + clientTripId)
     }
 
     override suspend fun localDeletions(): List<LocalDeletion> =
@@ -197,7 +205,108 @@ class RoomSyncStore @Inject constructor(private val dao: SyncDao) : SyncStore {
         else dao.putState(SyncStateEntity(KEY_PENDING_BATCH, BackendJson.encodeToString(StoredBatch.serializer(), StoredBatch(batch.idempotencyKey, batch.trips))))
     }
 
+    // --- telemetry (#67) ---
+
+    /** Per-trip progress in `sync_state`: `"<lastSampleRowId>|<lastEventRowId>"`, or `"done|<code>"`. */
+    private suspend fun progress(clientTripId: String): Pair<Long, Long>? {
+        val v = dao.state(KEY_TELEMETRY + clientTripId) ?: return 0L to 0L
+        if (v.startsWith(DONE)) return null
+        val p = v.split('|')
+        return (p.getOrNull(0)?.toLongOrNull() ?: 0L) to (p.getOrNull(1)?.toLongOrNull() ?: 0L)
+    }
+
+    override suspend fun telemetryTrips(): List<TelemetryTrip> {
+        val done = dao.stateKeys(KEY_TELEMETRY).filter { dao.state(it)?.startsWith(DONE) == true }.map { it.removePrefix(KEY_TELEMETRY) }.toSet()
+        return dao.telemetryCandidates(clock() - TELEMETRY_BACKLOG_DAYS * DAY_MILLIS)
+            .filter { it.clientTripId !in done }
+            .map { TelemetryTrip(it.clientTripId, it.vehicleServerId) }
+    }
+
+    override suspend fun telemetryChunk(clientTripId: String, maxSamples: Int, maxEvents: Int): TelemetryChunk? {
+        var (afterSample, afterEvent) = progress(clientTripId) ?: return null
+        while (true) {
+            val samples = dao.samplesAfter(clientTripId, afterSample, maxSamples)
+            val events = dao.eventsAfter(clientTripId, afterEvent, maxEvents)
+            if (samples.isEmpty() && events.isEmpty()) return null
+            val sampleDtos = samples.map(::sampleDto)
+            val eventDtos = events.mapNotNull(::eventDto)
+            val upToSample = samples.lastOrNull()?.id ?: afterSample
+            val upToEvent = events.lastOrNull()?.id ?: afterEvent
+            if (sampleDtos.isNotEmpty() || eventDtos.isNotEmpty()) return TelemetryChunk(sampleDtos, eventDtos, upToSample, upToEvent)
+            // Only events the spec has no type for: skip past them without a request.
+            markTelemetrySent(clientTripId, upToSample, upToEvent)
+            afterSample = upToSample
+            afterEvent = upToEvent
+        }
+    }
+
+    override suspend fun markTelemetrySent(clientTripId: String, samplesUpTo: Long, eventsUpTo: Long) =
+        dao.putState(SyncStateEntity(KEY_TELEMETRY + clientTripId, "$samplesUpTo|$eventsUpTo"))
+
+    override suspend fun markTelemetryDone(clientTripId: String, code: String?) =
+        dao.putState(SyncStateEntity(KEY_TELEMETRY + clientTripId, DONE + (code ?: "")))
+
+    @Serializable private data class StoredTelemetry(val idempotencyKey: String, val batch: TelemetryBatchDto, val samplesUpTo: Long, val eventsUpTo: Long)
+
+    override suspend fun pendingTelemetryBatch(): PendingTelemetryBatch? = dao.state(KEY_PENDING_TELEMETRY)?.let { json ->
+        runCatching { BackendJson.decodeFromString(StoredTelemetry.serializer(), json) }.getOrNull()
+            ?.let { PendingTelemetryBatch(it.idempotencyKey, it.batch, it.samplesUpTo, it.eventsUpTo) }
+    }
+
+    override suspend fun setPendingTelemetryBatch(batch: PendingTelemetryBatch?) {
+        if (batch == null) dao.deleteState(KEY_PENDING_TELEMETRY)
+        else dao.putState(
+            SyncStateEntity(
+                KEY_PENDING_TELEMETRY,
+                BackendJson.encodeToString(StoredTelemetry.serializer(), StoredTelemetry(batch.idempotencyKey, batch.batch, batch.samplesUpTo, batch.eventsUpTo)),
+            ),
+        )
+    }
+
     companion object {
+        const val KEY_TELEMETRY = "telemetry:"
+        const val KEY_PENDING_TELEMETRY = "pending_telemetry_batch"
+        private const val DONE = "done|"
+        private const val DAY_MILLIS = 86_400_000L
+
+        /**
+         * Offline backlog bound: telemetry of trips older than this isn't uploaded (#67 proposes 30 days / 100 MB).
+         * TODO(#67): the 100 MB size bound isn't enforced yet; the spec only lists it as a proposal.
+         */
+        const val TELEMETRY_BACKLOG_DAYS = 30L
+
+        /**
+         * Local event type → spec `EventType`. `fuel_cut` has no spec value, so it isn't sent (its time is in the
+         * trip summary's `fuelCutTimeS`).
+         * TODO(M9 question 12 for Go Developer): add `fuel_cut` to `EventType`, or confirm it stays summary-only.
+         */
+        val EVENT_TYPES: Map<String, String> = mapOf(
+            "harsh_accel" to "harsh_accel",
+            "harsh_brake" to "harsh_brake",
+            "overspeed" to "overspeed",
+        )
+
+        /** Spec `Sample` from a recorded sample. TODO(M9 question 11): fuel flow (L/h) has no `Sample` field, so it isn't sent. */
+        fun sampleDto(s: TripSampleEntity) = SampleDto(
+            t = Instant.ofEpochMilli(s.timestampMillis),
+            lat = s.latitude,
+            lon = s.longitude,
+            speedKmh = s.speedKph,
+            rpm = s.rpm,
+            coolantC = s.coolantC,
+        )
+
+        fun eventDto(e: TripEventEntity): EventDto? = EVENT_TYPES[e.type]?.let { type ->
+            EventDto(
+                t = Instant.ofEpochMilli(e.timestampMillis),
+                type = type,
+                clientEventId = e.clientEventId.takeIf { it.isNotBlank() },
+                lat = e.latitude,
+                lon = e.longitude,
+                value = e.value,
+            )
+        }
+
         const val KEY_SINCE = "trips_since"
         const val KEY_PENDING_BATCH = "pending_trip_batch"
         const val END_REMOTE = "remote"
