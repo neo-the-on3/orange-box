@@ -4,7 +4,9 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.github.neotheon3.orangebox.core.database.TripReassignment
 import io.github.neotheon3.orangebox.core.database.TripRepository
+import io.github.neotheon3.orangebox.core.datastore.BackendAccount
 import io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -21,6 +23,9 @@ data class TripDetailUiState(
     val notFound: Boolean = false,
     val detail: TripDetail? = null,
     val tilesEnabled: Boolean = true,
+    /** #203: the trip's vehicle was deleted on another device. */
+    val orphaned: Boolean = false,
+    val moveDialog: MoveTripsDialog? = null,
 )
 
 @HiltViewModel
@@ -29,14 +34,23 @@ class TripDetailViewModel internal constructor(
     private val repository: TripRepository,
     private val prefs: AppPreferencesRepository,
     private val zone: ZoneId,
+    reassignment: TripReassignment = TripMover.NONE,
+    account: BackendAccount? = null,
 ) : ViewModel() {
-    @Inject constructor(savedState: SavedStateHandle, repository: TripRepository, prefs: AppPreferencesRepository) :
-        this(savedState.get<Long>(TripDetailDestination.ARG_TRIP_ID) ?: -1L, repository, prefs, ZoneId.systemDefault())
+    @Inject constructor(
+        savedState: SavedStateHandle,
+        repository: TripRepository,
+        prefs: AppPreferencesRepository,
+        reassignment: TripReassignment,
+        account: BackendAccount,
+    ) : this(savedState.get<Long>(TripDetailDestination.ARG_TRIP_ID) ?: -1L, repository, prefs, ZoneId.systemDefault(), reassignment, account)
+
+    private val mover = TripMover(reassignment, account, viewModelScope)
 
     private val loaded = MutableStateFlow<TripDetailUiState>(TripDetailUiState())
 
-    val uiState: StateFlow<TripDetailUiState> = combine(loaded, prefs.preferences.map { it.mapTilesEnabled }) { s, tiles ->
-        s.copy(tilesEnabled = tiles)
+    val uiState: StateFlow<TripDetailUiState> = combine(loaded, prefs.preferences.map { it.mapTilesEnabled }, mover.orphaned, mover.dialog) { s, tiles, orphaned, dialog ->
+        s.copy(tilesEnabled = tiles, orphaned = tripId in orphaned, moveDialog = dialog)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripDetailUiState())
 
     init {
@@ -54,6 +68,12 @@ class TripDetailViewModel internal constructor(
             }
         }
     }
+
+    /** #203: move this trip to another vehicle. */
+    fun startMove() = mover.start(setOf(tripId))
+    fun selectMoveTarget(vehicleId: Long) = mover.select(vehicleId)
+    fun confirmMove() = mover.confirm()
+    fun dismissMove() = mover.dismiss()
 
     fun setTilesEnabled(enabled: Boolean) {
         viewModelScope.launch { prefs.setMapTilesEnabled(enabled) }

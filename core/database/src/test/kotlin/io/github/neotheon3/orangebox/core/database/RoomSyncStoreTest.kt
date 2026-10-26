@@ -8,6 +8,7 @@ import io.github.neotheon3.orangebox.core.network.FakeBackendApi
 import io.github.neotheon3.orangebox.core.network.SyncWindowReason
 import io.github.neotheon3.orangebox.core.network.TripUploadDto
 import io.github.neotheon3.orangebox.core.sync.SyncEngine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -57,6 +58,32 @@ class RoomSyncStoreTest {
     ).let { db.tripDao().trip(it)!! }
 
     private fun run() = runBlocking { SyncEngine(server, store).run() }
+
+    @Test fun `#203 - trips of a vehicle deleted elsewhere move to another vehicle and upload`() = runBlocking {
+        val car = car()
+        trip(car)
+        run()
+        val local = trip(car, start = 1_760_000_900_000)
+        val clientCar = db.syncDao().clientVehicleIdOf(car)!!
+        server.deleteVehicleElsewhere(clientCar)
+        assertEquals(1, run().vehiclesDeletedElsewhere)
+        val reassign = RoomTripReassignment(db.syncDao())
+        assertEquals(setOf(local.id), reassign.orphanedTripIds.first())
+        assertNull("can't upload without a server vehicle", store.uploadOf(local.clientTripId))
+
+        val celerio = car("Celerio")
+        assertEquals("only vehicles that aren't gone", listOf(celerio), reassign.targets(setOf(local.id)).map { it.id })
+        assertEquals("a gone vehicle is no target", 0, reassign.move(setOf(local.id), car))
+        assertEquals(1, reassign.move(setOf(local.id), celerio))
+        assertEquals(celerio, db.tripDao().trip(local.id)!!.vehicleId)
+        assertTrue(reassign.orphanedTripIds.first().isEmpty())
+
+        val r = run()
+        assertEquals(1, r.uploaded)
+        val serverCelerio = server.vehicles.single { it.clientVehicleId == db.syncDao().clientVehicleIdOf(celerio) }
+        assertEquals(serverCelerio.id, server.trips.single { it.clientTripId == local.clientTripId }.vehicleId)
+        assertEquals("only orphaned trips move", 0, reassign.move(setOf(local.id), celerio))
+    }
 
     @Test fun `bootstrap uploads the vehicle and trips and stores the token`() = runBlocking {
         val v = car()

@@ -39,6 +39,9 @@ data class TripsUiState(
     val trips: List<TripListItem>,
     val summary: MonthSummary,
     val loading: Boolean = false,
+    /** #203: trips (any month) whose vehicle was deleted on another device. */
+    val orphanedTripIds: Set<Long> = emptySet(),
+    val moveDialog: MoveTripsDialog? = null,
 ) {
     val weeks: List<List<CalendarDay>> get() = days.chunked(7)
     /** [trips] grouped by local start day, newest day first (order preserved inside a day). */

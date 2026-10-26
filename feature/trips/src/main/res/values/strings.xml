@@ -79,4 +79,22 @@
     </plurals>
     <string name="stats_rankings">Rankings and points</string>
     <string name="stats_rankings_body">Server stats, leaderboards and your points</string>
+    <!-- #203: trips of a vehicle deleted on another device -->
+    <string name="trips_vehicle_deleted_elsewhere">Vehicle deleted on another device</string>
+    <plurals name="trips_orphaned_body">
+        <item quantity="one">%d trip belongs to a vehicle that was deleted on another device. It stays on this phone and won\'t sync until you move it to another vehicle.</item>
+        <item quantity="other">%d trips belong to a vehicle that was deleted on another device. They stay on this phone and won\'t sync until you move them to another vehicle.</item>
+    </plurals>
+    <string name="trips_orphaned_one_body">This trip stays on this phone and won\'t sync until you move it to another vehicle.</string>
+    <string name="trips_move_all">Move to another vehicle</string>
+    <string name="trips_move_one">Move this trip</string>
+    <plurals name="trips_move_title">
+        <item quantity="one">Move %d trip</item>
+        <item quantity="other">Move %d trips</item>
+    </plurals>
+    <string name="trips_move_body">Pick the vehicle they were driven with. They upload with the next sync.</string>
+    <string name="trips_move_no_vehicle">There\'s no other vehicle on this phone. Add a vehicle first, then move the trips.</string>
+    <string name="trips_move_confirm">Move</string>
+    <string name="trips_move_cancel">Cancel</string>
+    <string name="trips_move_ok">OK</string>
 </resources>

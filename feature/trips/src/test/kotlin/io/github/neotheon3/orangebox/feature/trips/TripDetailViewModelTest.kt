@@ -1,7 +1,10 @@
 package io.github.neotheon3.orangebox.feature.trips
 
 import io.github.neotheon3.orangebox.core.database.TripSampleEntity
+import io.github.neotheon3.orangebox.core.model.Vehicle
 import io.github.neotheon3.orangebox.core.testing.FakeAppPreferencesRepository
+import io.github.neotheon3.orangebox.core.testing.FakeBackendAccount
+import io.github.neotheon3.orangebox.core.testing.FakeTripReassignment
 import io.github.neotheon3.orangebox.core.testing.FakeTripRepository
 import io.github.neotheon3.orangebox.core.testing.MainDispatcherRule
 import kotlinx.coroutines.launch
@@ -43,5 +46,20 @@ class TripDetailViewModelTest {
         assertEquals(11.5, vm.uiState.value.detail!!.metrics.distanceKm, 1e-9)
         repo.set(emptyList())
         assertTrue(vm.uiState.value.notFound)
+    }
+
+    @Test fun `#203 - a trip of a vehicle deleted elsewhere moves on its own`() = runTest {
+        val reassign = FakeTripReassignment(setOf(7L, 8L), listOf(Vehicle(id = 5, name = "Celerio")))
+        val account = FakeBackendAccount()
+        val vm = TripDetailViewModel(7, repo, prefs, TEST_ZONE, reassign, account)
+        backgroundScope.launch(main.testDispatcher) { vm.uiState.collect {} }
+        assertTrue(vm.uiState.value.orphaned)
+        vm.startMove()
+        assertEquals(setOf(7L), vm.uiState.value.moveDialog!!.tripIds)
+        vm.confirmMove()
+        assertEquals(listOf(setOf(7L) to 5L), reassign.moves)
+        assertFalse(vm.uiState.value.orphaned)
+        assertEquals(setOf(8L), reassign.orphanedTripIds.value)
+        assertEquals(1, account.syncRequests)
     }
 }

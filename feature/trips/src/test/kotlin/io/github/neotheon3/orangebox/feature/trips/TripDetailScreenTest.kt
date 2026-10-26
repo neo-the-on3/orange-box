@@ -6,6 +6,7 @@ import android.graphics.Paint
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -155,4 +156,21 @@ class TripDetailScreenTest {
         render("trip-detail-dark")
     }
 
+    @Test fun `#203 - a trip of a vehicle deleted elsewhere offers a move`() {
+        var moves = 0
+        compose.setContent {
+            OrangeBoxTheme {
+                TripDetailScreen(
+                    TripDetailUiState(loading = false, detail = DetailFixture.detail(), tilesEnabled = false, orphaned = true),
+                    locale = Locale.UK,
+                    move = MoveTripsActions(onStart = { moves++ }),
+                )
+            }
+        }
+        compose.onNodeWithTag("trips_orphaned").assertIsDisplayed()
+        compose.onNodeWithText("Vehicle deleted on another device").assertIsDisplayed()
+        render("trip-detail-orphaned")
+        compose.onNodeWithTag("trips_move").assertTextContains("Move this trip").performClick()
+        assertEquals(1, moves)
+    }
 }

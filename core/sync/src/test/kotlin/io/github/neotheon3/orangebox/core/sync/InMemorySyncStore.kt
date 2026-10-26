@@ -61,6 +61,14 @@ class InMemorySyncStore : SyncStore {
         return id
     }
 
+    /** "Move to another vehicle" (#203), as SyncDao.moveTripsOfGoneVehicles does: only trips of a gone vehicle move. */
+    fun moveTripsOfGoneVehicles(ids: Set<String>, toVehicle: String): Int {
+        if (vehicles[toVehicle]?.goneOnServer != false) return 0
+        val movable = ids.mapNotNull(trips::get).filter { t -> t.clientVehicleId?.let { vehicles[it]?.goneOnServer } == true }
+        movable.forEach { trips[it.clientTripId] = it.copy(clientVehicleId = toVehicle, forceUpload = true, rejected = null) }
+        return movable.size
+    }
+
     /** "Merge with account", as RoomSyncStore.mergeInto does: restamp, forget the old server ids, mark vehicles merged. */
     fun mergeInto(account: String) {
         val merged = trips.values.filter { it.account != account }

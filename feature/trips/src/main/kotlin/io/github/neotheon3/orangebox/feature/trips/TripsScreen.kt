@@ -69,6 +69,7 @@ fun TripsRoute(onBack: () -> Unit, onOpenTrip: (Long) -> Unit, onOpenStats: () -
             onDayClicked = viewModel::onDayClicked,
             onOpenTrip = onOpenTrip,
             onOpenStats = onOpenStats,
+            move = MoveTripsActions(viewModel::startMoveOrphaned, viewModel::selectMoveTarget, viewModel::confirmMove, viewModel::dismissMove),
         ),
     )
 }
@@ -80,6 +81,7 @@ data class TripsActions(
     val onDayClicked: (LocalDate) -> Unit = {},
     val onOpenTrip: (Long) -> Unit = {},
     val onOpenStats: () -> Unit = {},
+    val move: MoveTripsActions = MoveTripsActions(),
 )
 
 /** Trip history: a month calendar marking days with trips, and the trips of the month or the selected day. */
@@ -109,7 +111,15 @@ fun TripsScreen(state: TripsUiState, actions: TripsActions, locale: Locale = Loc
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item(key = "calendar") { MonthCalendar(state, actions, locale) }
+            item(key = "calendar") {
+                // The #203 card lives inside the first item: an item inserted above it would be scrolled out of view.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.orphanedTripIds.isNotEmpty()) {
+                        OrphanedTripsCard(state.orphanedTripIds.size, single = false, onMove = actions.move.onStart)
+                    }
+                    MonthCalendar(state, actions, locale)
+                }
+            }
             item(key = "summary") { ListHeader(state, locale) }
             if (state.isEmptyMonth) {
                 item(key = "empty") {
@@ -133,10 +143,13 @@ fun TripsScreen(state: TripsUiState, actions: TripsActions, locale: Locale = Loc
                         )
                     }
                 }
-                items(trips, key = { it.id }) { trip -> TripRow(trip, locale) { actions.onOpenTrip(trip.id) } }
+                items(trips, key = { it.id }) { trip ->
+                    TripRow(trip, locale, orphaned = trip.id in state.orphanedTripIds) { actions.onOpenTrip(trip.id) }
+                }
             }
         }
     }
+    state.moveDialog?.let { MoveTripsDialogView(it, actions.move) }
 }
 
 @Composable
@@ -251,12 +264,23 @@ private fun ListHeader(state: TripsUiState, locale: Locale) {
 }
 
 @Composable
-private fun TripRow(trip: TripListItem, locale: Locale, onClick: () -> Unit) {
+private fun TripRow(trip: TripListItem, locale: Locale, orphaned: Boolean = false, onClick: () -> Unit) {
     val time = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
     val day = DateTimeFormatter.ofPattern("EEE d MMM", locale)
     val period = trip.start.format(day) + ", " + trip.start.format(time) + (trip.end?.let { " – " + it.format(time) } ?: "")
     OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag("trip_row_${trip.id}")) {
         ListItem(
+            overlineContent = if (orphaned) {
+                {
+                    Text(
+                        stringResource(R.string.trips_vehicle_deleted_elsewhere),
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("trip_orphaned_${trip.id}"),
+                    )
+                }
+            } else {
+                null
+            },
             headlineContent = { Text(period) },
             supportingContent = {
                 Text(

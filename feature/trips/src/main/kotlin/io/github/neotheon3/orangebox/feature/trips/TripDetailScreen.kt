@@ -73,7 +73,10 @@ fun TripDetailRoute(onBack: () -> Unit, viewModel: TripDetailViewModel = hiltVie
     val tiles = remember(state.tilesEnabled) {
         if (state.tilesEnabled) MapTiles.Provider(MapTiles.sharedClient(context)) else null
     }
-    TripDetailScreen(state, tiles, onBack = onBack, onTilesChanged = viewModel::setTilesEnabled)
+    TripDetailScreen(
+        state, tiles, onBack = onBack, onTilesChanged = viewModel::setTilesEnabled,
+        move = MoveTripsActions(viewModel::startMove, viewModel::selectMoveTarget, viewModel::confirmMove, viewModel::dismissMove),
+    )
 }
 
 /** Trip detail (Material 3): route map (#44), summary metrics, charts (#45) and events. */
@@ -96,7 +99,9 @@ fun TripDetailScreen(
     },
     /** System bars and cutouts to keep clear of; in landscape 3-button navigation sits on a side (#188). */
     contentInsets: WindowInsets = WindowInsets.safeDrawing,
+    move: MoveTripsActions = MoveTripsActions(),
 ) {
+    state.moveDialog?.let { MoveTripsDialogView(it, move) }
     Scaffold(
         contentWindowInsets = contentInsets,
         topBar = {
@@ -145,7 +150,13 @@ fun TripDetailScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    item(key = "map") { MapCard(detail, if (state.tilesEnabled) tiles else null, mapHeight) }
+                    item(key = "map") {
+                        // #203 card inside the first item, so it isn't scrolled out of view when it appears.
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (state.orphaned) OrphanedTripsCard(1, single = true, onMove = move.onStart)
+                            MapCard(detail, if (state.tilesEnabled) tiles else null, mapHeight)
+                        }
+                    }
                     item(key = "metrics") { MetricsGrid(detail.metrics, locale) }
                     item(key = "gps") {
                         Text(
