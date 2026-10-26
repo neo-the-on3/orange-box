@@ -279,3 +279,46 @@ enum class SyncWindowReason(val wire: String?) {
         const val STATUS_TRIP_DELETED = "trip_deleted"
     }
 }
+
+// --- DTC reports (POST /v1/vehicles/{vehicleId}/dtc-reports) ---
+
+/** `DtcReportCreate` (`DtcSet` + the read). Codes must match `^[PCBU][0-9A-F]{4}$`. */
+@Serializable data class DtcReportCreateDto(
+    val clientReportId: String,
+    /** `read` or `cleared`. */
+    val kind: String,
+    val readAt: UtcInstant,
+    val mil: Boolean,
+    val stored: List<String>? = null,
+    val pending: List<String>? = null,
+    val permanent: List<String>? = null,
+    val vin: String? = null,
+    val clientTripId: String? = null,
+    val odometerKm: Int? = null,
+    val distanceSinceMilKm: Int? = null,
+) {
+    companion object {
+        const val KIND_READ = "read"
+        const val KIND_CLEARED = "cleared"
+        val CODE = Regex("^[PCBU][0-9A-F]{4}$")
+        val VIN = Regex("^[A-HJ-NPR-Z0-9]{17}$")
+    }
+}
+
+/** `DtcReport` (`200` replay or `201` created). */
+@Serializable data class DtcReportDto(
+    val id: String,
+    val vehicleId: String,
+    val createdAt: UtcInstant,
+    val clientReportId: String,
+    val kind: String,
+    val readAt: UtcInstant,
+    val mil: Boolean,
+    val stored: List<String>? = null,
+    val pending: List<String>? = null,
+    val permanent: List<String>? = null,
+    val vin: String? = null,
+    val clientTripId: String? = null,
+    val odometerKm: Int? = null,
+    val distanceSinceMilKm: Int? = null,
+)

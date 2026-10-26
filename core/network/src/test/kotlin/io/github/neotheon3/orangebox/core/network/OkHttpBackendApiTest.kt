@@ -268,6 +268,32 @@ class OkHttpBackendApiTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test fun `dtc report - 201, 200 replay, 404 unknown vehicle`() = runTest {
+        signedIn()
+        val report = DtcReportCreateDto(
+            clientReportId = "5b1d9f3e-0000-4000-8000-000000000001", kind = DtcReportCreateDto.KIND_READ,
+            readAt = Instant.parse("2026-10-23T14:05:00Z"), mil = true, stored = listOf("P0300"), pending = emptyList(),
+        )
+        val created = """{"id":"dtc_1","vehicleId":"veh_1","createdAt":"2026-10-23T14:05:02Z","clientReportId":"${report.clientReportId}",""" +
+            """"kind":"read","readAt":"2026-10-23T14:05:00Z","mil":true,"stored":["P0300"],"pending":[]}"""
+        server.enqueue(json(201, created))
+        server.enqueue(json(200, created))
+        server.enqueue(json(404, problem(404, ApiError.CODE_VEHICLE_NOT_FOUND)))
+        assertEquals("dtc_1", api.createDtcReport("veh_1", report, report.clientReportId).id)
+        assertEquals("dtc_1", api.createDtcReport("veh_1", report, report.clientReportId).id)
+        val missing = runCatching { api.createDtcReport("veh_9", report, report.clientReportId) }.exceptionOrNull() as ApiError.Http
+        assertEquals(ApiError.CODE_VEHICLE_NOT_FOUND, missing.code)
+        assertFalse(missing.isRetryable)
+
+        val r = server.takeRequest()
+        assertEquals("/v1/vehicles/veh_1/dtc-reports", r.url.encodedPath)
+        assertEquals(report.clientReportId, r.headers["Idempotency-Key"])
+        assertEquals(null, r.headers["Content-Encoding"])
+        val body = r.body!!.utf8()
+        assertTrue(body, body.contains("\"kind\":\"read\"") && body.contains("\"stored\":[\"P0300\"]") && body.contains("\"mil\":true"))
+        assertFalse("absent fields are omitted, not null", body.contains("null"))
+    }
+
     @Test fun `deleting an already deleted trip counts as done`() = runTest {
         signedIn()
         server.enqueue(json(404, problem(404, "not_found")))
