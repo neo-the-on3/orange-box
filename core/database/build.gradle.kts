@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.orangebox.android.library)
     alias(libs.plugins.orangebox.hilt)
     alias(libs.plugins.androidx.room)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -18,6 +19,7 @@ room {
 
 dependencies {
     api(project(":core:model"))
+    api(project(":core:sync"))
     implementation(project(":core:datastore"))
     implementation(project(":core:common"))
     implementation(libs.androidx.room.runtime)
