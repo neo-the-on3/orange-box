@@ -47,9 +47,9 @@ and validated. Implemented so far:
   database embedded in the binary, so aliases such as `Asia/Calcutta` work.
   A deleted trip's item in a replayed batch comes back as `trip_deleted`.
   Without `DATABASE_URL` they answer `501`.
-- Server-side trip size limits the spec doesn't state yet (proposed on
-  #161; `internal/httpapi/limits.go`), enforced like schema limits (`422`
-  with a pointer): `vehicleId` ≤ 64 characters, `app.version` ≤ 64,
+- Trip size limits (in the spec since 1.0.0-draft.9; `internal/httpapi/limits.go`
+  also applies them at startup so a spec edit can't loosen them), enforced
+  like schema limits (`422` with a pointer): `vehicleId` ≤ 64 characters, `app.version` ≤ 64,
   `app.os` ≤ 32, `app.osVersion` ≤ 128, `speedBands` ≤ 32 items, each `dtc`
   list ≤ 128 codes; a trip is at most 16 KiB of JSON, and a page of trips
   ends early (with a cursor) before 512 KiB.
