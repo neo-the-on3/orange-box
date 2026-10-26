@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.core.sync
 
+import io.github.neotheon3.orangebox.core.network.DtcReportCreateDto
 import io.github.neotheon3.orangebox.core.network.EventDto
 import io.github.neotheon3.orangebox.core.network.SampleDto
 import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
@@ -115,6 +116,15 @@ interface SyncStore {
     suspend fun pendingTelemetryBatch(): PendingTelemetryBatch?
 
     suspend fun setPendingTelemetryBatch(batch: PendingTelemetryBatch?)
+
+    /** DTC reads and clears waiting for upload, oldest first (#67). */
+    suspend fun dtcReports(): List<QueuedDtcReport>
+
+    /** Uploaded (or rejected, or its vehicle is gone): forget it. */
+    suspend fun removeDtcReport(clientReportId: String)
 }
+
+/** A DTC read or clear waiting for upload, for the vehicle with [clientVehicleId]. */
+data class QueuedDtcReport(val clientVehicleId: String, val report: DtcReportCreateDto)
 
 data class LocalDeletion(val clientTripId: String, val serverId: String?, val pushed: Boolean)
