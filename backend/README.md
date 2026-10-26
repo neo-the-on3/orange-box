@@ -292,12 +292,12 @@ Schema overview (`internal/db/migrations`):
 | Table | Holds |
 | ----- | ----- |
 | `members` | Profile, `version` (ETag), `tokens_valid_after`, `deleted_at`. E-mail is unique among live members only: `DELETE /v1/me` sets it to NULL at once, a job erases the row later and `ON DELETE CASCADE` removes everything the member owns. |
-| `vehicles` | Vehicle fields, `version` (ETag), `archived`. A deleted vehicle with a `clientVehicleId` stays as a data-less tombstone row (`deleted_at` set) so `POST /v1/vehicles` can answer `410`; unique `(member_id, client_vehicle_id)`. |
-| `trips` | Trip summaries, unique `(member_id, client_trip_id)`. Deleting clears every data column and sets `deleted_at` (the tombstone). `writer_xid` is set to `pg_current_xact_id()` by a trigger on every write. A batch upload holds `FOR SHARE` locks on its live vehicles, so a vehicle delete (and its cascade) waits for it or runs first, and the batch then rejects its trips with `vehicle_not_found`. |
+| `vehicles` | Vehicle fields, `version` (ETag), `archived`. A live vehicle needs only `fuel_type`; `make` and `model` may be NULL (00008). A deleted vehicle with a `clientVehicleId` stays as a data-less tombstone row (`deleted_at` set) so `POST /v1/vehicles` can answer `410`; unique `(member_id, client_vehicle_id)`. |
+| `trips` | Trip summaries (including `over_speed_count`, `fuel_cut_count` and `end_reason`, 00009), unique `(member_id, client_trip_id)`. Deleting clears every data column and sets `deleted_at` (the tombstone). `writer_xid` is set to `pg_current_xact_id()` by a trigger on every write. A batch upload holds `FOR SHARE` locks on its live vehicles, so a vehicle delete (and its cascade) waits for it or runs first, and the batch then rejects its trips with `vehicle_not_found`. |
 | `trip_purge_boundaries` | Per member, the latest `deleted_at` and highest `writer_xid` among purged trip tombstones; sync tokens at or below it get `sync_window_expired`. |
 | `telemetry_batches` | One row per uploaded batch: `clientBatchId` (unique per member), counts for duplicate replies, sample time range, object-storage key (raw batches go to R2 with #110). |
 | `trip_events` | Driving events, de-duplicated on insert by `clientEventId` and by the fallback key (`client_trip_id`, `t`, `type`, `active`, `dtc`; `NULLS NOT DISTINCT`). |
-| `dtc_reports` | DTC read/clear records, unique `(member_id, client_report_id)`. |
+| `dtc_reports` | DTC read/clear records, unique `(member_id, client_report_id)`. `mil` is NULL when unknown (00010). |
 | `idempotency_keys` | `Idempotency-Key` per (member, method, route template): fingerprint, in-progress lease and claim token (only the current claim can complete or release it), stored response, expiry (an expired key counts as absent). |
 
 Not here yet: OTP codes, lockout counters and refresh-token families (with
