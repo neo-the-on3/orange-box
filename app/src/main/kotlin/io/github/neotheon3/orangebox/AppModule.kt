@@ -74,6 +74,10 @@ abstract class BackendAccountModule {
     @dagger.Binds
     abstract fun bindBackendAccount(impl: io.github.neotheon3.orangebox.sync.AppBackendAccount): io.github.neotheon3.orangebox.core.datastore.BackendAccount
 
+    /** Server stats, rankings and points (#68): Fake, or Remote signed in. */
+    @dagger.Binds
+    abstract fun bindMemberBackend(impl: io.github.neotheon3.orangebox.sync.AppMemberBackend): io.github.neotheon3.orangebox.core.datastore.MemberBackend
+
     /** Fills the diagnostics' optional report sink: DTC reads and clears are queued for upload (#67). */
     @dagger.Binds
     abstract fun bindDtcReportSink(impl: io.github.neotheon3.orangebox.sync.AppDtcReportSink): io.github.neotheon3.orangebox.core.diagnostics.DtcReportSink

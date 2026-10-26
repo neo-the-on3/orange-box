@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="member_title">Rankings and points</string>
+    <string name="member_back">Back</string>
+    <string name="member_tab_summary">Summary</string>
+    <string name="member_tab_rankings">Rankings</string>
+    <string name="member_tab_points">Points</string>
+    <string name="member_fake_note">Fake server: made-up drivers and points for testing. Nothing leaves the phone.</string>
+
+    <string name="member_period_day">Day</string>
+    <string name="member_period_week">Week</string>
+    <string name="member_period_month">Month</string>
+    <string name="member_period_year">Year</string>
+    <string name="member_period_all">All time</string>
+
+    <!-- Summary -->
+    <string name="member_summary_range">%1$s – %2$s</string>
+    <string name="member_summary_trips">Trips</string>
+    <string name="member_summary_distance">Distance</string>
+    <string name="member_summary_time">Driving time</string>
+    <string name="member_summary_economy">Fuel economy</string>
+    <string name="member_summary_score">Driving score</string>
+    <string name="member_summary_level">Level</string>
+    <string name="member_summary_harsh">Harsh events</string>
+    <string name="member_summary_stars">Ratings</string>
+    <string name="member_stars_description">%1$d of 5 stars</string>
+    <string name="member_star_harsh">Smooth driving</string>
+    <string name="member_star_idling">Idling</string>
+    <string name="member_star_normal">Normal speed</string>
+    <string name="member_star_eco">Eco speed</string>
+    <string name="member_star_over">Over-speed</string>
+    <string name="member_star_load">Engine load</string>
+    <string name="member_star_fuel_cut">Fuel cut</string>
+    <string name="member_summary_empty">No trips on the server for this period yet.</string>
+    <string name="member_summary_local_hint">Trips upload when the sync runs. Local stats in Trips include every trip on this phone.</string>
+
+    <!-- Rankings -->
+    <string name="member_optin_title">Show me on leaderboards</string>
+    <string name="member_optin_body">Others see your display name, %1$s, and your results. Never your e-mail address.</string>
+    <string name="member_optin_body_unknown">Others see your display name and your results. Never your e-mail address.</string>
+    <string name="member_optin_failed">Couldn\'t change this. Try again.</string>
+    <string name="member_metric_driving_score">Driving score</string>
+    <string name="member_metric_eco_speed">Eco speed</string>
+    <string name="member_metric_fuel_cut">Fuel cut</string>
+    <string name="member_metric_harsh_driving">Harsh driving</string>
+    <string name="member_metric_level">Level</string>
+    <string name="member_metric_points">Points</string>
+    <string name="member_metric_fuel_saved">Fuel saved</string>
+    <string name="member_metric_best_trip">Best trip</string>
+    <string name="member_my_rank">You\'re #%1$d of %2$d</string>
+    <string name="member_my_rank_percentile">Better than %1$s of drivers</string>
+    <string name="member_not_ranked">You\'re not ranked for this period</string>
+    <string name="member_not_ranked_hint_off">Turn on \"Show me on leaderboards\" to take part.</string>
+    <string name="member_not_ranked_hint_on">Drive and sync a trip in this period to get a rank. Simulated trips don\'t count.</string>
+    <string name="member_board_empty">Nobody is ranked for this period yet.</string>
+    <string name="member_you">You</string>
+    <string name="member_rank">#%1$d</string>
+    <string name="member_load_more">Load more</string>
+    <string name="member_value_percent">%1$s%%</string>
+    <string name="member_value_per_100km">%1$s per 100 km</string>
+    <string name="member_value_level">Level %1$s</string>
+    <string name="member_value_points">%1$s pts</string>
+    <string name="member_value_litres">%1$s L</string>
+
+    <!-- Points -->
+    <string name="member_points_remaining">Points balance</string>
+    <string name="member_points_earned">Earned</string>
+    <string name="member_points_used">Used</string>
+    <string name="member_points_expiring">%1$s expiring by %2$s</string>
+    <string name="member_points_expiring_undated">%1$s expiring soon</string>
+    <string name="member_points_by_category">Earned from</string>
+    <string name="member_category_driving">Driving</string>
+    <string name="member_category_level">Levels</string>
+    <string name="member_category_ranking">Rankings</string>
+    <string name="member_category_event">Events</string>
+    <string name="member_category_redemption">Redeemed</string>
+    <string name="member_category_expiry">Expired</string>
+    <string name="member_category_adjustment">Adjustment</string>
+    <string name="member_category_other">Other</string>
+    <string name="member_points_history">History</string>
+    <string name="member_points_empty">No points yet.</string>
+
+    <!-- States -->
+    <string name="member_unavailable_title">Not available on this server yet</string>
+    <string name="member_unavailable_body">Your server doesn\'t offer this yet. Trips and local stats keep working.</string>
+    <string name="member_signed_out_title">Sign in to see this</string>
+    <string name="member_signed_out_body">Rankings and points need a server account. Sign in from Settings → Server.</string>
+    <string name="member_failed_network">Couldn\'t reach the server. Check the connection.</string>
+    <string name="member_failed_busy">The server is busy. Try again in a moment.</string>
+    <string name="member_failed_server">Something went wrong on the server.</string>
+    <string name="member_retry">Retry</string>
+</resources>

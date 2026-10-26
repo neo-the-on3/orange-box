@@ -72,4 +72,14 @@ class TripStatsTest {
         repo.start(trip(0, LocalDateTime.of(2026, 10, 2, 10, 0), km = 5.0))
         assertEquals(50.0, vm.uiState.value.current!!.totals.distanceKm, 1e-9)
     }
+
+    @Test fun `view model shows the rankings entry only while the member backend is available`() = runTest {
+        val clock = Clock.fixed(LocalDateTime.of(2026, 10, 25, 12, 0).atZone(TEST_ZONE).toInstant(), TEST_ZONE)
+        val available = kotlinx.coroutines.flow.MutableStateFlow(false)
+        val vm = StatsViewModel(FakeTripRepository(emptyList()), clock, Locale.UK, available)
+        backgroundScope.launch(main.testDispatcher) { vm.uiState.collect {} }
+        assertEquals(false, vm.uiState.value.rankingsAvailable)
+        available.value = true
+        assertEquals(true, vm.uiState.value.rankingsAvailable)
+    }
 }

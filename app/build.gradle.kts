@@ -82,6 +82,7 @@ dependencies {
     implementation(project(":feature:setup"))
     implementation(project(":feature:driving"))
     implementation(project(":feature:diagnostics"))
+    implementation(project(":feature:rankings"))
     implementation(project(":core:diagnostics"))
     implementation(project(":core:driving"))
     implementation(project(":core:database"))

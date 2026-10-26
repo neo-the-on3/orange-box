@@ -12,6 +12,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import io.github.neotheon3.orangebox.core.database.TripPeriodTotals
 import io.github.neotheon3.orangebox.core.designsystem.OrangeBoxTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -72,6 +74,18 @@ class StatsScreenTest {
         compose.onNodeWithText("This month").assertIsDisplayed()
         compose.onNodeWithText("October 2026 · 3 trips").assertIsDisplayed()
         render("stats-monthly-dark")
+    }
+
+    @Test fun `rankings entry - hidden unless the member features are available`() {
+        var available by androidx.compose.runtime.mutableStateOf(false)
+        var opened = 0
+        compose.setContent { OrangeBoxTheme { StatsScreen(state(StatsPeriod.WEEK).copy(rankingsAvailable = available), locale = Locale.UK, onOpenRankings = { opened++ }) } }
+        compose.onNodeWithTag("stats_rankings").assertDoesNotExist()
+        available = true
+        compose.onNodeWithTag("stats_rankings").assertIsDisplayed().performClick()
+        compose.waitForIdle()
+        assertEquals(1, opened)
+        render("stats-with-rankings")
     }
 
     @Test fun `no trips yet`() {

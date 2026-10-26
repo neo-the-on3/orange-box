@@ -77,4 +77,6 @@
         <item quantity="one">%d harsh</item>
         <item quantity="other">%d harsh</item>
     </plurals>
+    <string name="stats_rankings">Rankings and points</string>
+    <string name="stats_rankings_body">Server stats, leaderboards and your points</string>
 </resources>
