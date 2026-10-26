@@ -22,7 +22,7 @@ import javax.crypto.KeyGenerator
 class EncryptedSessionStoreTest {
     @get:Rule val tmp = TemporaryFolder()
     private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-    private val session = Session("access.jwt.value", "refresh-secret", "m-1", 1_000, 2_000)
+    private val session = Session("access.jwt.value", "refresh-secret", "m-1", 1_000, 2_000, email = "kiran@example.com")
 
     private fun TestScope.dataStore() = PreferenceDataStoreFactory.create(scope = backgroundScope) {
         tmp.root.resolve("backend_session.preferences_pb")

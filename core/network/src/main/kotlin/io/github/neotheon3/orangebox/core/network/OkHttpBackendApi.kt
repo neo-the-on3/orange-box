@@ -49,7 +49,7 @@ class OkHttpBackendApi(
 
     override suspend fun signIn(email: String, code: String, device: DeviceInfo?): TokenResponse {
         val tokens: TokenResponse = call(post("auth/token", json(EmailOtpGrant(email.trim(), code.trim(), device))), authenticated = false)
-        sessions.write(tokens.toSession(clock()))
+        sessions.write(tokens.toSession(clock(), email.trim().lowercase()))
         return tokens
     }
 
@@ -148,7 +148,7 @@ class OkHttpBackendApi(
             }
             decode(TokenResponse.serializer(), response.bodyOrThrow())
         }
-        tokens.toSession(clock()).also { sessions.write(it) }
+        tokens.toSession(clock(), current.email).also { sessions.write(it) }
     }
 
     private suspend fun send(request: Request): Response = withContext(Dispatchers.IO) {

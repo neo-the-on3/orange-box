@@ -12,9 +12,12 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.neotheon3.orangebox.core.network.BackendJson
+import io.github.neotheon3.orangebox.core.network.ObservableSessionStore
 import io.github.neotheon3.orangebox.core.network.Session
-import io.github.neotheon3.orangebox.core.network.SessionStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -84,7 +87,7 @@ class AndroidKeystoreSecretBox : AesGcmSecretBox({ keystoreKey() }) {
 class EncryptedSessionStore internal constructor(
     private val dataStore: DataStore<Preferences>,
     private val box: SecretBox,
-) : SessionStore {
+) : ObservableSessionStore {
 
     @Inject constructor(@ApplicationContext context: Context) : this(
         PreferenceDataStoreFactory.create(produceFile = { context.preferencesDataStoreFile(FILE) }),
@@ -97,19 +100,24 @@ class EncryptedSessionStore internal constructor(
         val memberId: String,
         val accessExpiresAtMillis: Long,
         val refreshExpiresAtMillis: Long,
+        val email: String? = null,
     )
 
-    override suspend fun read(): Session? {
-        val sealed = dataStore.data.first()[KEY] ?: return null
+    /** The session as it changes (sign-in, refresh, sign-out); null when signed out. */
+    override val sessions: Flow<Session?> get() = dataStore.data.map { prefs -> prefs[KEY]?.let(::unseal) }.distinctUntilChanged()
+
+    override suspend fun read(): Session? = dataStore.data.first()[KEY]?.let(::unseal)
+
+    private fun unseal(sealed: String): Session? {
         val plain = runCatching { Base64.decode(sealed, Base64.NO_WRAP) }.getOrNull()?.let(box::open) ?: return null
         val s = runCatching { BackendJson.decodeFromString(Stored.serializer(), plain.decodeToString()) }.getOrNull() ?: return null
-        return Session(s.accessToken, s.refreshToken, s.memberId, s.accessExpiresAtMillis, s.refreshExpiresAtMillis)
+        return Session(s.accessToken, s.refreshToken, s.memberId, s.accessExpiresAtMillis, s.refreshExpiresAtMillis, s.email)
     }
 
     override suspend fun write(session: Session) {
         val json = BackendJson.encodeToString(
             Stored.serializer(),
-            Stored(session.accessToken, session.refreshToken, session.memberId, session.accessExpiresAtMillis, session.refreshExpiresAtMillis),
+            Stored(session.accessToken, session.refreshToken, session.memberId, session.accessExpiresAtMillis, session.refreshExpiresAtMillis, session.email),
         )
         val sealed = Base64.encodeToString(box.seal(json.encodeToByteArray()), Base64.NO_WRAP)
         dataStore.edit { it[KEY] = sealed }
