@@ -21,6 +21,8 @@ data class VehicleEntity(
     val createdAtMillis: Long,
     /** Backend `clientVehicleId` (UUID): set once, kept across edits (schema 5, M9). */
     @ColumnInfo(defaultValue = "''") val clientVehicleId: String = UUID.randomUUID().toString(),
+    /** The backend account that added or pulled it (schema 6); null when added signed out. Edits keep it. */
+    val accountId: String? = null,
 ) {
     fun toModel() = Vehicle(
         id = id, name = name, maker = maker, model = model,

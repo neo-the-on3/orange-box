@@ -23,6 +23,7 @@ class InMemorySyncStore : SyncStore {
         val rejected: String? = null,
         val remoteOrigin: Boolean = false,
         val forceUpload: Boolean = false,
+        val account: String? = null,
     )
 
     var since: String? = null
@@ -48,16 +49,33 @@ class InMemorySyncStore : SyncStore {
         }
     }
 
-    fun addVehicle(name: String = "SX4"): String {
+    fun addVehicle(name: String = "SX4", account: String? = null): String {
         val id = UUID.randomUUID().toString()
-        vehicles[id] = SyncVehicle(id, null, VehicleCreateDto(id, "Maruti Suzuki", name, "gasoline"))
+        vehicles[id] = SyncVehicle(id, null, VehicleCreateDto(id, "Maruti Suzuki", name, "gasoline"), account = account)
         return id
     }
 
-    fun record(vehicle: String, at: Instant = Instant.parse("2026-10-20T10:00:00Z"), completed: Boolean = true): String {
+    fun record(vehicle: String, at: Instant = Instant.parse("2026-10-20T10:00:00Z"), completed: Boolean = true, account: String? = null): String {
         val id = UUID.randomUUID().toString()
-        trips[id] = Trip(id, vehicle, at, completed)
+        trips[id] = Trip(id, vehicle, at, completed, account = account)
         return id
+    }
+
+    /** "Merge with account", as RoomSyncStore.mergeInto does: restamp, forget the old server ids, mark vehicles merged. */
+    fun mergeInto(account: String) {
+        val merged = trips.values.filter { it.account != account }
+        merged.forEach { t ->
+            trips[t.clientTripId] = t.copy(
+                account = account, serverId = null, serverUpdatedAt = null, uploadedBefore = false, acceptedSnapshotAt = null,
+                rejected = null, remoteOrigin = false, forceUpload = false,
+            )
+            telemetrySent.remove(t.clientTripId)
+            telemetryDone.remove(t.clientTripId)
+        }
+        val used = merged.mapNotNull { it.clientVehicleId }.toSet()
+        vehicles.values.filter { it.clientVehicleId in used || it.account == null }.forEach {
+            vehicles[it.clientVehicleId] = it.copy(account = account, merged = it.serverId == null || it.merged)
+        }
     }
 
     /** The user deletes a trip on this device. */
@@ -71,7 +89,16 @@ class InMemorySyncStore : SyncStore {
     override suspend fun clearSince() { since = null }
     override suspend fun vehicles() = vehicles.values.toList()
     override suspend fun setVehicleServerId(clientVehicleId: String, serverId: String?) {
-        vehicles[clientVehicleId] = vehicles.getValue(clientVehicleId).copy(serverId = serverId)
+        val v = vehicles.getValue(clientVehicleId)
+        vehicles[clientVehicleId] = v.copy(serverId = serverId, goneOnServer = false, merged = v.merged && serverId == null)
+    }
+
+    override suspend fun renewClientVehicleId(clientVehicleId: String): String? {
+        val v = vehicles.remove(clientVehicleId) ?: return null
+        val fresh = UUID.randomUUID().toString()
+        vehicles[fresh] = v.copy(clientVehicleId = fresh, create = v.create.copy(clientVehicleId = fresh))
+        trips.values.filter { it.clientVehicleId == clientVehicleId }.forEach { trips[it.clientTripId] = it.copy(clientVehicleId = fresh) }
+        return fresh
     }
     val vehicleUpdatedAt = mutableMapOf<String, Instant>()
     val vehicleEdits = mutableMapOf<String, io.github.neotheon3.orangebox.core.network.VehicleDto>()
@@ -98,16 +125,18 @@ class InMemorySyncStore : SyncStore {
             serverUpdatedAt = it.serverUpdatedAt, uploadedBefore = it.uploadedBefore,
             needsUpload = !it.remoteOrigin && it.rejected == null && (it.forceUpload || it.acceptedSnapshotAt == null || it.snapshotAt.isAfter(it.acceptedSnapshotAt)),
             remoteOrigin = it.remoteOrigin, acceptedSnapshotAt = it.acceptedSnapshotAt, completedLocally = it.completed,
+            account = it.account,
         )
     }
 
-    override suspend fun applyRemoteTrip(trip: TripDto) {
+    override suspend fun applyRemoteTrip(trip: TripDto, account: String?) {
         val local = trips[trip.clientTripId]
+        if (local != null && local.account != account) return // another account's trip: left alone
         trips[trip.clientTripId] = local?.copy(serverId = trip.id, serverUpdatedAt = trip.updatedAt)
             ?: Trip(
                 trip.clientTripId, vehicles.values.firstOrNull { it.serverId == trip.vehicleId }?.clientVehicleId, trip.snapshotAt,
                 trip.state == TripUploadDto.STATE_COMPLETED, trip.distanceKm ?: 0.0, trip.id, trip.updatedAt,
-                uploadedBefore = true, acceptedSnapshotAt = trip.snapshotAt, remoteOrigin = true,
+                uploadedBefore = true, acceptedSnapshotAt = trip.snapshotAt, remoteOrigin = true, account = account,
             )
     }
 
@@ -144,8 +173,8 @@ class InMemorySyncStore : SyncStore {
     override suspend fun pendingTripBatch() = pending
     override suspend fun setPendingTripBatch(batch: PendingTripBatch?) { pending = batch }
 
-    override suspend fun telemetryTrips() = trips.values
-        .filter { it.completed && !it.remoteOrigin && it.uploadedBefore && it.clientTripId !in telemetryDone }
+    override suspend fun telemetryTrips(account: String?) = trips.values
+        .filter { it.account == account && it.completed && !it.remoteOrigin && it.uploadedBefore && it.clientTripId !in telemetryDone }
         .mapNotNull { t -> t.clientVehicleId?.let { vehicles[it]?.serverId }?.let { TelemetryTrip(t.clientTripId, it) } }
 
     override suspend fun telemetryChunk(clientTripId: String, maxSamples: Int, maxEvents: Int): TelemetryChunk? {

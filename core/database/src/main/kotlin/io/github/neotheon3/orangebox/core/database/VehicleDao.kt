@@ -26,6 +26,10 @@ interface VehicleDao {
     @Query("DELETE FROM vehicles WHERE id = :id")
     suspend fun delete(id: Long): Int
 
+    /** The signed-in account (see [ACCOUNT_STATE_KEY]), null when signed out. */
+    @Query("SELECT value FROM sync_state WHERE `key` = '" + ACCOUNT_STATE_KEY + "'")
+    suspend fun currentAccount(): String?
+
     @Query("SELECT COUNT(*) FROM vehicles")
     suspend fun count(): Int
 }

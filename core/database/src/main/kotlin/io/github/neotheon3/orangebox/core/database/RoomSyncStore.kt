@@ -20,20 +20,29 @@ import io.github.neotheon3.orangebox.core.sync.TelemetryTrip
 import io.github.neotheon3.orangebox.core.sync.SyncStore
 import io.github.neotheon3.orangebox.core.sync.SyncTrip
 import io.github.neotheon3.orangebox.core.sync.SyncVehicle
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import java.time.Instant
+import java.util.UUID
 import javax.inject.Inject
 import kotlin.math.roundToLong
 
-/** [SyncStore] over Room (schema 5). Behaves like the engine tests' InMemorySyncStore. */
-class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : SyncStore {
-    @Inject constructor(dao: SyncDao) : this(dao, System::currentTimeMillis)
+/** [SyncStore] over Room (schema 6). Behaves like the engine tests' InMemorySyncStore. */
+class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, private val newId: () -> String) : SyncStore {
+    @Inject constructor(dao: SyncDao) : this(dao, System::currentTimeMillis, { UUID.randomUUID().toString() })
+    constructor(dao: SyncDao, clock: () -> Long) : this(dao, clock, { UUID.randomUUID().toString() })
 
     override suspend fun since(): String? = dao.state(KEY_SINCE)
     override suspend fun storeSince(token: String) = dao.putState(SyncStateEntity(KEY_SINCE, token))
     override suspend fun clearSince() = dao.deleteState(KEY_SINCE)
 
-    override suspend fun vehicles(): List<SyncVehicle> = dao.vehiclesWithSync().map { v ->
+    override suspend fun vehicles(): List<SyncVehicle> {
+        val merged = dao.stateKeys(KEY_MERGED_VEHICLE).map { it.removePrefix(KEY_MERGED_VEHICLE) }.toSet()
+        return dao.vehiclesWithSync().map { v -> syncVehicle(v, v.clientVehicleId in merged) }
+    }
+
+    private fun syncVehicle(v: VehicleWithSync, merged: Boolean) =
         SyncVehicle(
             clientVehicleId = v.clientVehicleId,
             serverId = v.serverId,
@@ -50,13 +59,27 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
                 odometerKm = v.odometerKm,
             ),
             goneOnServer = v.goneOnServer == true,
+            account = v.accountId,
+            merged = merged,
         )
-    }
 
     override suspend fun setVehicleServerId(clientVehicleId: String, serverId: String?) {
         val v = dao.vehicleByClientId(clientVehicleId) ?: return
         val row = dao.vehicleSync(v.id) ?: VehicleSyncEntity(v.id)
         dao.upsertVehicleSync(row.copy(serverId = serverId, goneOnServer = false))
+        if (serverId != null) dao.deleteState(KEY_MERGED_VEHICLE + clientVehicleId)
+    }
+
+    override suspend fun renewClientVehicleId(clientVehicleId: String): String? {
+        val v = dao.vehicleByClientId(clientVehicleId) ?: return null
+        val fresh = newId()
+        // Queued DTC reports name the vehicle by clientVehicleId: move them along.
+        val reports = dtcReports().filter { it.clientVehicleId == clientVehicleId }
+        dao.updateVehicle(v.copy(clientVehicleId = fresh))
+        reports.forEach { putDtcReport(fresh, it.report) }
+        dao.deleteState(KEY_MERGED_VEHICLE + clientVehicleId)
+        dao.deleteState(KEY_VEHICLE_UPDATED + clientVehicleId)
+        return fresh
     }
 
     override suspend fun markVehicleGone(clientVehicleId: String) {
@@ -104,6 +127,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
                 remoteOrigin = t.remoteOrigin == true,
                 acceptedSnapshotAt = t.acceptedSnapshotAtMillis?.let(Instant::ofEpochMilli),
                 completedLocally = t.endedAtMillis != null,
+                account = t.accountId,
             )
         }
     }
@@ -115,15 +139,16 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
         return t.lastSampleAtMillis > accepted || (t.endedAtMillis != null && t.acceptedCompleted != true)
     }
 
-    override suspend fun applyRemoteTrip(trip: TripDto) {
+    override suspend fun applyRemoteTrip(trip: TripDto, account: String?) {
         val local = dao.tripByClientId(trip.clientTripId)
+        if (local != null && local.accountId != account) return // another account's trip with the same id: not ours
         val vehicleId = dao.vehicleIdByServerId(trip.vehicleId)
         val tripId = if (local == null) {
-            dao.insertTrip(remoteToEntity(trip, vehicleId))
+            dao.insertTrip(remoteToEntity(trip, vehicleId).copy(accountId = account))
         } else {
             val sync = dao.tripSync(local.id)
             // Our own trips keep their local summary (they have the samples); pulled ones take the newer copy.
-            if (sync?.remoteOrigin == true) dao.updateTrip(remoteToEntity(trip, vehicleId).copy(id = local.id))
+            if (sync?.remoteOrigin == true) dao.updateTrip(remoteToEntity(trip, vehicleId).copy(id = local.id, accountId = local.accountId))
             local.id
         }
         val row = dao.tripSync(tripId) ?: TripSyncEntity(tripId, remoteOrigin = local == null)
@@ -243,9 +268,9 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
         return (p.getOrNull(0)?.toLongOrNull() ?: 0L) to (p.getOrNull(1)?.toLongOrNull() ?: 0L)
     }
 
-    override suspend fun telemetryTrips(): List<TelemetryTrip> {
+    override suspend fun telemetryTrips(account: String?): List<TelemetryTrip> {
         val done = dao.stateKeys(KEY_TELEMETRY).filter { dao.state(it)?.startsWith(DONE) == true }.map { it.removePrefix(KEY_TELEMETRY) }.toSet()
-        return dao.telemetryCandidates(clock() - TELEMETRY_BACKLOG_DAYS * DAY_MILLIS)
+        return dao.telemetryCandidates(clock() - TELEMETRY_BACKLOG_DAYS * DAY_MILLIS, account)
             .filter { it.clientTripId !in done }
             .map { TelemetryTrip(it.clientTripId, it.vehicleServerId) }
     }
@@ -301,9 +326,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
      */
     suspend fun enqueueDtcReport(vehicleId: Long, report: DtcReportCreateDto): Boolean {
         val clientVehicleId = dao.clientVehicleIdOf(vehicleId) ?: return false
-        dao.putState(
-            SyncStateEntity(KEY_DTC_REPORT + report.clientReportId, BackendJson.encodeToString(StoredDtcReport.serializer(), StoredDtcReport(clientVehicleId, report))),
-        )
+        putDtcReport(clientVehicleId, report)
         dtcReports().dropLast(MAX_QUEUED_DTC_REPORTS).forEach { removeDtcReport(it.report.clientReportId) }
         return true
     }
@@ -322,7 +345,82 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
         }.sortedWith(compareBy({ it.report.readAt }, { it.report.clientReportId }))
     }
 
+    private suspend fun putDtcReport(clientVehicleId: String, report: DtcReportCreateDto) = dao.putState(
+        SyncStateEntity(KEY_DTC_REPORT + report.clientReportId, BackendJson.encodeToString(StoredDtcReport.serializer(), StoredDtcReport(clientVehicleId, report))),
+    )
+
     override suspend fun removeDtcReport(clientReportId: String) = dao.deleteState(KEY_DTC_REPORT + clientReportId)
+
+    // --- accounts (Q13): every trip and vehicle carries the account that recorded or pulled it ---
+
+    /** Sign-in: new trips and vehicles from now on belong to [account]; null (sign-out) leaves them unassigned. */
+    suspend fun setAccount(account: String?) {
+        if (account == null) dao.deleteState(ACCOUNT_STATE_KEY) else dao.putState(SyncStateEntity(ACCOUNT_STATE_KEY, account))
+    }
+
+    suspend fun account(): String? = dao.state(ACCOUNT_STATE_KEY)
+
+    /** Trips on this phone that aren't [account]'s: [count], of which [neverUploaded] exist nowhere else. */
+    data class ForeignTrips(val count: Int, val neverUploaded: Int)
+
+    /** Trips recorded signed out (never uploaded to any account) or another account's not uploaded there. */
+    suspend fun foreignTrips(account: String): ForeignTrips {
+        val trips = dao.foreignTrips(account)
+        return ForeignTrips(trips.size, trips.count { it.accountId == null || it.uploadedBefore != true })
+    }
+
+    fun observeForeignTripCount(account: String): Flow<Int> = dao.observeForeignTripCount(account)
+
+    /** The sign-in choice (merge / replace) is waiting for an answer; nothing syncs until it's answered or dismissed. */
+    suspend fun choicePending(): Boolean = dao.state(KEY_CHOICE_PENDING) != null
+
+    fun observeChoicePending(): Flow<Boolean> = dao.observeState(KEY_CHOICE_PENDING).map { it != null }
+
+    suspend fun setChoicePending(pending: Boolean) {
+        if (pending) dao.putState(SyncStateEntity(KEY_CHOICE_PENDING, "1")) else dao.deleteState(KEY_CHOICE_PENDING)
+    }
+
+    /**
+     * "Merge with account": the trips that aren't [account]'s become its own and upload to it, with their vehicles
+     * and those added signed out. The old account's server ids (and telemetry progress) on those rows are dropped;
+     * `clientTripId` / `clientVehicleId` are reused (unique per account). Merged vehicles not yet known to the
+     * account are marked so a `410` re-creates them under a fresh id. Returns how many trips were merged.
+     */
+    suspend fun mergeInto(account: String): Int {
+        val trips = dao.foreignTrips(account)
+        for (t in trips) {
+            dao.stampTrip(t.id, account)
+            dao.deleteTripSync(t.id)
+            dao.deleteState(KEY_TELEMETRY + t.clientTripId)
+        }
+        val vehicles = dao.vehiclesWithSync().associateBy { it.id }
+        val ids = trips.mapNotNull { it.vehicleId }.toSet() + dao.unassignedVehicles()
+        for (id in ids) {
+            val v = vehicles[id] ?: continue
+            if (v.accountId != account) dao.stampVehicle(id, account)
+            if (v.serverId == null) dao.putState(SyncStateEntity(KEY_MERGED_VEHICLE + v.clientVehicleId, "1"))
+        }
+        return trips.size
+    }
+
+    /**
+     * "Replace with account's trips": deletes the trips that aren't [account]'s from this phone (no tombstones: the
+     * other account's server copies stay). Vehicles stay; those added signed out join the account. Returns the count.
+     */
+    suspend fun replaceWith(account: String): Int {
+        val trips = dao.foreignTrips(account)
+        for (t in trips) {
+            dao.deleteTripById(t.id)
+            dao.deleteState(KEY_TELEMETRY + t.clientTripId)
+        }
+        adoptUnassignedVehicles(account)
+        return trips.size
+    }
+
+    /** Vehicles added while signed out join [account] (no trips are involved, so no prompt is needed). */
+    suspend fun adoptUnassignedVehicles(account: String) {
+        dao.unassignedVehicles().forEach { dao.stampVehicle(it, account) }
+    }
 
     override suspend fun pausedUntil(step: String): Long? = dao.state(KEY_PAUSED + step)?.toLongOrNull()
 
@@ -331,6 +429,8 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
     }
 
     companion object {
+        const val KEY_MERGED_VEHICLE = "merged_vehicle:"
+        const val KEY_CHOICE_PENDING = "account_choice_pending"
         const val KEY_PAUSED = "paused:"
         const val KEY_VEHICLE_UPDATED = "vehicle_updated:"
         const val KEY_DTC_REPORT = "dtc_report:"

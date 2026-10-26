@@ -36,6 +36,12 @@ import java.util.UUID
  * our last accepted one, or `in_progress` while ours is completed), with fresh `Idempotency-Key`s; `purged`, `invalid` and anything else
  * drop the uploaded-before trips it didn't return and re-upload nothing. Expiry on a cursor restarts the walk.
  * Retryable failures (`503`, `429`, network) propagate as [ApiError] for the worker to back off.
+ *
+ * Only the trips of [account] (the signed-in member; null in Fake) are synced: a trip recorded while signed
+ * out, or in another account, is never uploaded, re-queued or deleted here, and a pulled trip never overwrites one.
+ * Vehicles go up only for this account's trips and DTC reports. A merged vehicle (see [SyncVehicle.merged]) the
+ * account had deleted is created again under a fresh `clientVehicleId`; a merged trip the account had deleted
+ * (`trip_deleted`) is deleted here like any other, never re-uploaded.
  */
 class SyncEngine(
     private val api: BackendApi,
@@ -44,7 +50,11 @@ class SyncEngine(
     private val maxRestarts: Int = 3,
     private val maxTelemetryBatchesPerRun: Int = MAX_TELEMETRY_BATCHES_PER_RUN,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val account: String? = null,
 ) {
+    /** This account's trips; every step works on these only. */
+    private suspend fun ownTrips(): List<SyncTrip> = store.trips().filter { it.account == account }
+
     data class Report(
         val pulled: Int = 0,
         val deletedByServer: Int = 0,
@@ -136,7 +146,7 @@ class SyncEngine(
     }
 
     private suspend fun walkDeletions(since: String) {
-        val local = store.trips().associateBy { it.clientTripId }
+        val local = ownTrips().associateBy { it.clientTripId }
         var cursor: String? = null
         do {
             val page = api.listTripDeletions(since, cursor)
@@ -153,9 +163,9 @@ class SyncEngine(
     /** Upsert by server id (or our own `clientTripId`); the newer `updatedAt` wins; local deletions win. */
     private suspend fun apply(remote: TripDto) {
         if (store.localDeletions().any { it.clientTripId == remote.clientTripId }) return
-        val local = store.trips().firstOrNull { it.serverId == remote.id || it.clientTripId == remote.clientTripId }
+        val local = ownTrips().firstOrNull { it.serverId == remote.id || it.clientTripId == remote.clientTripId }
         if (local?.serverUpdatedAt != null && !remote.updatedAt.isAfter(local.serverUpdatedAt)) return
-        store.applyRemoteTrip(remote)
+        store.applyRemoteTrip(remote, account)
         report = report.copy(pulled = report.pulled + 1)
     }
 
@@ -179,7 +189,7 @@ class SyncEngine(
 
     /** `purged` / `invalid` / unknown: drop the uploaded-before trips the server didn't return. Never re-upload. */
     private suspend fun dropUnreturned(returned: Set<String>) {
-        store.trips().filter { it.uploadedBefore && it.clientTripId !in returned }.forEach {
+        ownTrips().filter { it.uploadedBefore && it.clientTripId !in returned }.forEach {
             store.deleteTripLocally(it.clientTripId)
             report = report.copy(dropped = report.dropped + 1)
         }
@@ -195,18 +205,16 @@ class SyncEngine(
                 if (known != v.serverId) store.setVehicleServerId(v.clientVehicleId, known)
                 continue
             }
-            if (v.serverId == null && store.trips().none { it.clientVehicleId == v.clientVehicleId }) continue
+            if (v.serverId == null && ownTrips().none { it.clientVehicleId == v.clientVehicleId }) continue
             try {
-                val created = api.createVehicle(v.create, newKey())
-                store.setVehicleServerId(v.clientVehicleId, created.id)
-                report = report.copy(vehiclesCreated = report.vehiclesCreated + 1)
+                createVehicle(v)
             } catch (e: ApiError.Http) {
                 if (e.code != ApiError.CODE_VEHICLE_DELETED) throw e
                 store.deleteVehicle(v.clientVehicleId, keepClientTripIds = walk.returned)
             }
         }
         val deletedHere = store.localDeletions().map { it.clientTripId }.toSet()
-        val own = store.trips().filter { !it.remoteOrigin && it.clientTripId !in deletedHere }
+        val own = ownTrips().filter { !it.remoteOrigin && it.clientTripId !in deletedHere }
         val lost = own.filter { it.clientTripId !in walk.returned }
         // Our own trips whose returned copy is older than what the server had accepted from us (the restore
         // point predates our last upload) go up again too. Trips from other devices keep the newer-updatedAt rule.
@@ -268,20 +276,34 @@ class SyncEngine(
     }
 
     private suspend fun pushVehicles() {
-        val withTrips = store.trips().filter { it.needsUpload }.mapNotNull { it.clientVehicleId }.toSet() +
+        val withTrips = ownTrips().filter { it.needsUpload }.mapNotNull { it.clientVehicleId }.toSet() +
             store.dtcReports().map { it.clientVehicleId }
         for (v in store.vehicles().filter { it.serverId == null && !it.goneOnServer && it.clientVehicleId in withTrips }) {
             try {
-                // A fresh key is fine: the server de-duplicates by clientVehicleId (200 replay).
-                val created = api.createVehicle(v.create, newKey())
-                store.setVehicleServerId(v.clientVehicleId, created.id)
-                store.applyRemoteVehicle(v.clientVehicleId, created) // records its updatedAt
-                report = report.copy(vehiclesCreated = report.vehiclesCreated + 1)
+                createVehicle(v)
             } catch (e: ApiError.Http) {
                 if (e.code != ApiError.CODE_VEHICLE_DELETED) throw e
                 store.markVehicleGone(v.clientVehicleId) // deleted on another device: don't retry
             }
         }
+    }
+
+    /**
+     * `POST /v1/vehicles` (a fresh key is fine: the server de-duplicates by `clientVehicleId`, `200` replay). A merged
+     * vehicle that the account had deleted (`410`) is created again under a fresh `clientVehicleId`; its trips
+     * follow it to the new server id.
+     */
+    private suspend fun createVehicle(v: SyncVehicle) {
+        val created = try {
+            api.createVehicle(v.create, newKey())
+        } catch (e: ApiError.Http) {
+            if (e.code != ApiError.CODE_VEHICLE_DELETED || !v.merged) throw e
+            val fresh = store.renewClientVehicleId(v.clientVehicleId) ?: return
+            return createVehicle(v.copy(clientVehicleId = fresh, create = v.create.copy(clientVehicleId = fresh), merged = false))
+        }
+        store.setVehicleServerId(v.clientVehicleId, created.id)
+        store.applyRemoteVehicle(v.clientVehicleId, created) // records its updatedAt
+        report = report.copy(vehiclesCreated = report.vehiclesCreated + 1)
     }
 
     private suspend fun pushTrips() {
@@ -347,7 +369,7 @@ class SyncEngine(
 
     private suspend fun nextBatch(attempted: Set<String>): PendingTripBatch? {
         val gone = store.vehicles().filter { it.goneOnServer }.map { it.clientVehicleId }.toSet()
-        val uploads = store.trips()
+        val uploads = ownTrips()
             .filter { it.needsUpload && !it.remoteOrigin && it.clientVehicleId !in gone && it.clientTripId !in attempted }
             .mapNotNull { store.uploadOf(it.clientTripId)?.withinLimits() }
             .filter { trip ->
@@ -399,7 +421,7 @@ class SyncEngine(
                 else -> Unit
             }
         }
-        for (trip in store.telemetryTrips()) {
+        for (trip in store.telemetryTrips(account)) {
             if (!uploadTrip(trip.clientTripId, trip.vehicleServerId)) return
         }
     }

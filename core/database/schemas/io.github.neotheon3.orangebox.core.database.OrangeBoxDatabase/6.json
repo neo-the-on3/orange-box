@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 6,
-    "identityHash": "40b2362a3cb0c1f5e154ffd557e9ed87",
+    "identityHash": "1fa301d04afaaa930840d414f63a412d",
     "entities": [
       {
         "tableName": "vehicles",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `maker` TEXT, `model` TEXT, `fuel` TEXT NOT NULL, `displacementCc` INTEGER, `odometerKm` INTEGER, `createdAtMillis` INTEGER NOT NULL, `clientVehicleId` TEXT NOT NULL DEFAULT '')",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `maker` TEXT, `model` TEXT, `fuel` TEXT NOT NULL, `displacementCc` INTEGER, `odometerKm` INTEGER, `createdAtMillis` INTEGER NOT NULL, `clientVehicleId` TEXT NOT NULL DEFAULT '', `accountId` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -58,6 +58,11 @@
             "affinity": "TEXT",
             "notNull": true,
             "defaultValue": "''"
+          },
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -80,7 +85,7 @@
       },
       {
         "tableName": "trips",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `clientTripId` TEXT NOT NULL DEFAULT '', `vehicleId` INTEGER, `startedAtMillis` INTEGER NOT NULL, `endedAtMillis` INTEGER, `lastSampleAtMillis` INTEGER NOT NULL, `endReason` TEXT, `durationS` REAL NOT NULL, `distanceKm` REAL NOT NULL, `fuelLitres` REAL NOT NULL, `co2Grams` REAL NOT NULL, `idleS` REAL NOT NULL, `fuelCutS` REAL NOT NULL, `ecoS` REAL NOT NULL, `overspeedS` REAL NOT NULL, `harshAccelCount` INTEGER NOT NULL, `harshBrakeCount` INTEGER NOT NULL, `overspeedCount` INTEGER NOT NULL, `maxSpeedKph` REAL NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `clientTripId` TEXT NOT NULL DEFAULT '', `vehicleId` INTEGER, `startedAtMillis` INTEGER NOT NULL, `endedAtMillis` INTEGER, `lastSampleAtMillis` INTEGER NOT NULL, `endReason` TEXT, `durationS` REAL NOT NULL, `distanceKm` REAL NOT NULL, `fuelLitres` REAL NOT NULL, `co2Grams` REAL NOT NULL, `idleS` REAL NOT NULL, `fuelCutS` REAL NOT NULL, `ecoS` REAL NOT NULL, `overspeedS` REAL NOT NULL, `harshAccelCount` INTEGER NOT NULL, `harshBrakeCount` INTEGER NOT NULL, `overspeedCount` INTEGER NOT NULL, `maxSpeedKph` REAL NOT NULL, `accountId` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -193,6 +198,11 @@
             "columnName": "maxSpeedKph",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -688,7 +698,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '40b2362a3cb0c1f5e154ffd557e9ed87')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '1fa301d04afaaa930840d414f63a412d')"
     ]
   }
 }
