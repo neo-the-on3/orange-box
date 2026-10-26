@@ -351,7 +351,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
         /**
          * Local event type → spec `EventType`. `fuel_cut` has no spec value, so it isn't sent (its time is in the
          * trip summary's `fuelCutTimeS`).
-         * TODO(M9 question 12 for Go Developer): add `fuel_cut` to `EventType`, or confirm it stays summary-only.
+         * Confirmed: `fuel_cut` stays summary-only; CO2 is not sent (not needed); `ecoSpeedTimeS` is kept.
          */
         val EVENT_TYPES: Map<String, String> = mapOf(
             "harsh_accel" to "harsh_accel",
