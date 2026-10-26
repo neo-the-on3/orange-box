@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,6 +46,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import io.github.neotheon3.orangebox.core.datastore.OtherTrips
 import io.github.neotheon3.orangebox.core.datastore.SignInError
 import io.github.neotheon3.orangebox.core.datastore.SyncError
 import io.github.neotheon3.orangebox.core.datastore.SyncStatus
@@ -63,6 +65,12 @@ data class AccountActions(
     val onSignOutRequested: () -> Unit = {},
     val onSignOutDismissed: () -> Unit = {},
     val onSignOutConfirmed: () -> Unit = {},
+    val onOtherTripsChoose: () -> Unit = {},
+    val onMerge: () -> Unit = {},
+    val onReplace: () -> Unit = {},
+    val onReplaceConfirmed: () -> Unit = {},
+    val onReplaceCancelled: () -> Unit = {},
+    val onOtherTripsDismissed: () -> Unit = {},
 )
 
 /**
@@ -104,6 +112,108 @@ internal fun AccountSettingsSection(
             dismissButton = { TextButton(onClick = actions.onSignOutDismissed) { Text(stringResource(R.string.account_cancel)) } },
         )
     }
+    when (val d = state.otherTripsDialog) {
+        OtherTripsDialog.Choose -> OtherTripsChoiceDialog(state.account.otherTrips, state.account.email, actions)
+        is OtherTripsDialog.ConfirmReplace -> ReplaceConfirmDialog(d.trips, state.account.email, actions)
+        null -> Unit
+    }
+}
+
+/** After sign-in (or from Settings): what to do with the phone's trips that aren't this account's. */
+@Composable
+internal fun OtherTripsChoiceDialog(count: Int, email: String?, actions: AccountActions) {
+    val who = email ?: stringResource(R.string.account_this_account)
+    AlertDialog(
+        onDismissRequest = actions.onOtherTripsDismissed,
+        icon = { Icon(Icons.Filled.AccountCircle, contentDescription = null) },
+        title = { Text(stringResource(R.string.account_other_trips_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(pluralStringResource(R.plurals.account_other_trips_body, count, count, who), style = MaterialTheme.typography.bodyMedium)
+                ChoiceOption(
+                    title = stringResource(R.string.account_merge),
+                    body = stringResource(R.string.account_merge_body, who),
+                    onClick = actions.onMerge,
+                    tag = "account_merge",
+                    primary = true,
+                )
+                ChoiceOption(
+                    title = stringResource(R.string.account_replace),
+                    body = stringResource(R.string.account_replace_body),
+                    onClick = actions.onReplace,
+                    tag = "account_replace",
+                    primary = false,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = actions.onOtherTripsDismissed, modifier = Modifier.testTag("account_other_trips_cancel")) {
+                Text(stringResource(R.string.account_cancel))
+            }
+        },
+        modifier = Modifier.testTag("account_other_trips_dialog"),
+    )
+}
+
+@Composable
+private fun ChoiceOption(title: String, body: String, onClick: () -> Unit, tag: String, primary: Boolean) {
+    val colors = if (primary) {
+        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)
+    } else {
+        CardDefaults.outlinedCardColors()
+    }
+    val shape = MaterialTheme.shapes.medium
+    if (primary) {
+        Card(onClick = onClick, colors = colors, shape = shape, modifier = Modifier.fillMaxWidth().testTag(tag)) { OptionText(title, body) }
+    } else {
+        OutlinedCard(onClick = onClick, colors = colors, shape = shape, modifier = Modifier.fillMaxWidth().testTag(tag)) { OptionText(title, body) }
+    }
+}
+
+@Composable
+private fun OptionText(title: String, body: String) {
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        Text(body, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Second step of Replace: the data loss, with counts, before anything is deleted. */
+@Composable
+internal fun ReplaceConfirmDialog(trips: OtherTrips, email: String?, actions: AccountActions) {
+    val who = email ?: stringResource(R.string.account_this_account)
+    AlertDialog(
+        onDismissRequest = actions.onReplaceCancelled,
+        icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+        title = { Text(pluralStringResource(R.plurals.account_replace_confirm_title, trips.count, trips.count)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(pluralStringResource(R.plurals.account_replace_confirm_body, trips.count, trips.count, who), style = MaterialTheme.typography.bodyMedium)
+                if (trips.neverUploaded > 0) {
+                    Text(
+                        pluralStringResource(R.plurals.account_replace_never_uploaded, trips.neverUploaded, trips.neverUploaded),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("account_replace_never_uploaded"),
+                    )
+                }
+                Text(stringResource(R.string.account_replace_undo), style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = actions.onReplaceConfirmed,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier.testTag("account_replace_confirm"),
+            ) { Text(pluralStringResource(R.plurals.account_replace_confirm, trips.count, trips.count)) }
+        },
+        dismissButton = {
+            TextButton(onClick = actions.onReplaceCancelled, modifier = Modifier.testTag("account_replace_cancel")) {
+                Text(stringResource(R.string.account_cancel))
+            }
+        },
+        modifier = Modifier.testTag("account_replace_dialog"),
+    )
 }
 
 @Composable
@@ -210,6 +320,7 @@ private fun SyncPanel(state: AccountUiState, mode: BackendMode, actions: Account
         }
     }
     SyncStatusCard(account.lastSync, account.syncing)
+    if (mode == BackendMode.REMOTE && account.otherTrips > 0) OtherTripsRow(account.otherTrips, actions)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilledTonalButton(onClick = actions.onSyncNow, enabled = !account.syncing, modifier = Modifier.testTag("account_sync_now")) {
             Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
@@ -219,6 +330,24 @@ private fun SyncPanel(state: AccountUiState, mode: BackendMode, actions: Account
         if (mode == BackendMode.REMOTE) {
             OutlinedButton(onClick = actions.onSignOutRequested, modifier = Modifier.testTag("account_sign_out")) {
                 Text(stringResource(R.string.account_sign_out))
+            }
+        }
+    }
+}
+
+/** Trips on the phone that don't sync to this account, with the choice offered again. */
+@Composable
+private fun OtherTripsRow(count: Int, actions: AccountActions) {
+    OutlinedCard(modifier = Modifier.fillMaxWidth().testTag("account_other_trips")) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.Filled.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(pluralStringResource(R.plurals.account_other_trips_row, count, count), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = actions.onOtherTripsChoose, modifier = Modifier.testTag("account_other_trips_choose")) {
+                Text(stringResource(R.string.account_other_trips_choose))
             }
         }
     }

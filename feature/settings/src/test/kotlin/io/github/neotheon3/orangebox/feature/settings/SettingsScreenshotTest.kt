@@ -168,6 +168,44 @@ class SettingsScreenshotTest {
         File("build/outputs/settings/m9/m9_sign_out_dialog.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
+    private fun dialogShot(name: String, dark: Boolean, state: AccountUiState) {
+        compose.setContent {
+            OrangeBoxTheme(darkTheme = dark) { Surface(Modifier.fillMaxSize()) { AccountSettingsSection(state, remote, true, AccountActions()) } }
+        }
+        val bitmap = compose.onNode(androidx.compose.ui.test.isDialog()).captureToImage().asAndroidBitmap()
+        File("build/outputs/settings/m9/$name.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    private val withOtherTrips = io.github.neotheon3.orangebox.core.datastore.BackendAccountState(
+        signedIn = true, email = "kiran@example.com", otherTrips = 3, otherTripsChoicePending = true,
+    )
+
+    @Test fun otherTripsChoiceDialog() = dialogShot("m9_other_trips_choice_dialog", false, AccountUiState(withOtherTrips, otherTripsDialog = OtherTripsDialog.Choose))
+
+    @Test fun otherTripsChoiceDialogDark() = dialogShot("m9_other_trips_choice_dialog_dark", true, AccountUiState(withOtherTrips, otherTripsDialog = OtherTripsDialog.Choose))
+
+    @Test fun replaceConfirmDialog() = dialogShot(
+        "m9_replace_confirm_dialog", false,
+        AccountUiState(withOtherTrips, otherTripsDialog = OtherTripsDialog.ConfirmReplace(io.github.neotheon3.orangebox.core.datastore.OtherTrips(3, 2))),
+    )
+
+    @Test fun replaceConfirmDialogDark() = dialogShot(
+        "m9_replace_confirm_dialog_dark", true,
+        AccountUiState(withOtherTrips, otherTripsDialog = OtherTripsDialog.ConfirmReplace(io.github.neotheon3.orangebox.core.datastore.OtherTrips(3, 2))),
+    )
+
+    @Test fun otherTripsRow() = m9("m9_other_trips_row") {
+        AccountSettingsSection(
+            AccountUiState(
+                withOtherTrips.copy(
+                    otherTripsChoicePending = false,
+                    lastSync = io.github.neotheon3.orangebox.core.datastore.SyncStatus(at, ok = true, uploadedTrips = 1, pulledTrips = 4),
+                ),
+            ),
+            remote, true, AccountActions(),
+        )
+    }
+
     @Test fun serverRemoteSignedIn() = m9("m9_server_section_signed_in") {
         androidx.compose.foundation.layout.Column {
             ServerSettingsSection(

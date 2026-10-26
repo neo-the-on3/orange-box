@@ -127,4 +127,67 @@ class BackendAccountViewModelTest {
         assertFalse(vm.uiState.value.account.signedIn)
         assertNull(vm.uiState.value.account.email)
     }
+
+    // --- trips that aren't the account's (Q13) ---
+
+    private suspend fun kotlinx.coroutines.test.TestScope.signIn(vm: BackendAccountViewModel) {
+        vm.onEmailChanged("kiran@example.com")
+        vm.onSendCode()
+        runCurrent()
+        vm.onCodeChanged("123456")
+        vm.onVerify()
+        runCurrent()
+    }
+
+    @Test fun `sign-in with other trips on the phone asks before anything syncs, merge answers it`() = runTest(main.testDispatcher) {
+        account.phoneOtherTrips = io.github.neotheon3.orangebox.core.datastore.OtherTrips(3, 1)
+        val vm = vm()
+        signIn(vm)
+        assertEquals(OtherTripsDialog.Choose, vm.uiState.value.otherTripsDialog)
+        vm.onMerge()
+        runCurrent()
+        assertEquals(listOf("merge"), account.choices)
+        assertNull(vm.uiState.value.otherTripsDialog)
+        assertEquals(0, vm.uiState.value.account.otherTrips)
+    }
+
+    @Test fun `no other trips - no dialog`() = runTest(main.testDispatcher) {
+        val vm = vm()
+        signIn(vm)
+        assertNull(vm.uiState.value.otherTripsDialog)
+        assertTrue(account.choices.isEmpty())
+    }
+
+    @Test fun `replace needs a second confirmation with the counts, cancel goes back without a change`() = runTest(main.testDispatcher) {
+        account.phoneOtherTrips = io.github.neotheon3.orangebox.core.datastore.OtherTrips(3, 1)
+        val vm = vm()
+        signIn(vm)
+        vm.onReplace()
+        runCurrent()
+        assertEquals(OtherTripsDialog.ConfirmReplace(io.github.neotheon3.orangebox.core.datastore.OtherTrips(3, 1)), vm.uiState.value.otherTripsDialog)
+        vm.onReplaceCancelled()
+        runCurrent()
+        assertEquals(OtherTripsDialog.Choose, vm.uiState.value.otherTripsDialog)
+        assertTrue("nothing deleted", account.choices.isEmpty())
+        vm.onReplace()
+        runCurrent()
+        vm.onReplaceConfirmed()
+        runCurrent()
+        assertEquals(listOf("replace"), account.choices)
+        assertNull(vm.uiState.value.otherTripsDialog)
+    }
+
+    @Test fun `dismissing keeps the trips separate, and Settings offers the choice again`() = runTest(main.testDispatcher) {
+        account.phoneOtherTrips = io.github.neotheon3.orangebox.core.datastore.OtherTrips(2, 2)
+        val vm = vm()
+        signIn(vm)
+        vm.onOtherTripsDismissed()
+        runCurrent()
+        assertEquals(listOf("keep"), account.choices)
+        assertNull("not shown again by itself", vm.uiState.value.otherTripsDialog)
+        assertEquals(2, vm.uiState.value.account.otherTrips)
+        vm.onOtherTripsChoose()
+        runCurrent()
+        assertEquals(OtherTripsDialog.Choose, vm.uiState.value.otherTripsDialog)
+    }
 }

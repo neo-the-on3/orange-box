@@ -37,6 +37,12 @@ class AccountSettingsSectionTest {
         onSyncNow = { calls += "sync" },
         onSignOutRequested = { calls += "signout?" },
         onSignOutConfirmed = { calls += "signout" },
+        onOtherTripsChoose = { calls += "choose" },
+        onMerge = { calls += "merge" },
+        onReplace = { calls += "replace?" },
+        onReplaceConfirmed = { calls += "replace" },
+        onReplaceCancelled = { calls += "replace-cancel" },
+        onOtherTripsDismissed = { calls += "keep" },
     )
 
     private fun show(state: AccountUiState, mode: BackendMode = BackendMode.REMOTE, ready: Boolean = true) = compose.setContent {
@@ -100,5 +106,38 @@ class AccountSettingsSectionTest {
         show(AccountUiState(BackendAccountState(signedIn = true), confirmSignOut = true))
         compose.onNodeWithTag("account_sign_out_confirm").performClick()
         assertEquals(listOf("signout"), calls)
+    }
+
+    private val signedIn = BackendAccountState(signedIn = true, email = "kiran@example.com", otherTrips = 3)
+
+    @Test fun `trips that don't sync are listed with the choice offered again`() {
+        show(AccountUiState(signedIn))
+        compose.onNodeWithText("3 trips on this phone", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("account_other_trips_choose").performClick()
+        assertEquals(listOf("choose"), calls)
+    }
+
+    @Test fun `the choice dialog offers merge, replace and cancel`() {
+        show(AccountUiState(signedIn, otherTripsDialog = OtherTripsDialog.Choose))
+        compose.onNodeWithText("This phone has 3 trips that aren't in kiran@example.com", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("account_merge").performClick()
+        compose.onNodeWithTag("account_replace").performClick()
+        compose.onNodeWithTag("account_other_trips_cancel").performClick()
+        assertEquals(listOf("merge", "replace?", "keep"), calls)
+    }
+
+    @Test fun `the replace confirmation counts what's deleted and what's lost for good`() {
+        show(AccountUiState(signedIn, otherTripsDialog = OtherTripsDialog.ConfirmReplace(io.github.neotheon3.orangebox.core.datastore.OtherTrips(3, 2))))
+        compose.onNodeWithText("Delete 3 trips from this phone?").assertIsDisplayed()
+        compose.onNodeWithTag("account_replace_never_uploaded").assertTextContains("2 of them were never uploaded and will be lost permanently.")
+        compose.onNodeWithTag("account_replace_cancel").performClick()
+        compose.onNodeWithTag("account_replace_confirm").assertTextContains("Delete 3 trips").performClick()
+        assertEquals(listOf("replace-cancel", "replace"), calls)
+    }
+
+    @Test fun `no never-uploaded line when every trip is on a server`() {
+        show(AccountUiState(signedIn, otherTripsDialog = OtherTripsDialog.ConfirmReplace(io.github.neotheon3.orangebox.core.datastore.OtherTrips(1, 0))))
+        compose.onNodeWithText("Delete 1 trip from this phone?").assertIsDisplayed()
+        compose.onNodeWithTag("account_replace_never_uploaded").assertDoesNotExist()
     }
 }

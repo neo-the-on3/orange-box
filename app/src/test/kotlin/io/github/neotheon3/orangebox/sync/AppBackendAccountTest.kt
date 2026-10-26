@@ -51,8 +51,10 @@ class AppBackendAccountTest {
 
     /** The in-process server behind Remote: like OkHttpBackendApi, sign-in writes the session and logout clears it. */
     private val remote = object : BackendApi by server {
+        /** One member per address (the fake server itself has a single member). */
         override suspend fun signIn(email: String, code: String, device: DeviceInfo?) =
-            server.signIn(email, code, device).also { sessions.write(it.toSession(0, email.lowercase())) }
+            server.signIn(email, code, device).copy(memberId = memberOf(email))
+                .also { sessions.write(it.toSession(0, email.lowercase())) }
 
         override suspend fun logout() {
             server.logout()
@@ -70,7 +72,8 @@ class AppBackendAccountTest {
     private fun TestScope.account(config: FakeBackendConfigRepository): Pair<AppBackendAccount, BackendClients> {
         val clients = BackendClients(sessions).also { it.remoteForTests = remote }
         val account = AppBackendAccount(
-            config, clients, SyncScheduler(context, config), SyncStatusStore(db.syncDao()), db.syncDao(), AppVersion.UNKNOWN, backgroundScope,
+            config, clients, SyncScheduler(context, config), SyncStatusStore(db.syncDao()), db.syncDao(), RoomSyncStore(db.syncDao()),
+            AppVersion.UNKNOWN, backgroundScope,
         )
         account.install()
         testScheduler.runCurrent()
@@ -132,12 +135,12 @@ class AppBackendAccountTest {
         assertEquals(SignInResult.Failed(SignInError.SERVER), account.requestCode("k@example.com"))
     }
 
-    @Test fun `sign out clears the session and the server state, keeps trips recorded here`() = runTest {
+    @Test fun `sign out clears the session and the server state, keeps every trip with its account`() = runTest {
         val config = remoteConfig()
         val (account, clients) = account(config)
         account.verifyCode("k@example.com", "000000")
         val car = db.vehicleDao().insert(VehicleEntity(name = "SX4", maker = "Maruti Suzuki", model = "SX4", fuel = "PETROL", displacementCc = 1586, odometerKm = null, createdAtMillis = 1))
-        db.tripDao().insertTrip(TripEntity(vehicleId = car, startedAtMillis = 1_000, lastSampleAtMillis = 601_000, endedAtMillis = 601_000, distanceKm = 4.0))
+        db.tripDao().insertTrip(TripEntity(vehicleId = car, startedAtMillis = 1_000, lastSampleAtMillis = 601_000, endedAtMillis = 601_000, distanceKm = 4.0, accountId = memberOf("k@example.com")))
         server.seedTrip(
             io.github.neotheon3.orangebox.core.network.TripUploadDto(
                 clientTripId = "00000000-0000-4000-8000-000000000009", vehicleId = "veh_other", state = "completed",
@@ -155,9 +158,12 @@ class AppBackendAccountTest {
         val state = account.state.first()
         assertFalse(state.signedIn)
         assertNull("status is cleared with the account", state.lastSync)
-        assertEquals("the pulled trip goes, ours stays", 1, db.tripDao().observeTrips().first().size)
+        val kept = db.tripDao().observeTrips().first()
+        assertEquals("pulled and recorded trips both stay", 2, kept.size)
+        assertTrue(kept.all { it.accountId == memberOf("k@example.com") })
         assertNull(RoomSyncStore(db.syncDao()).since())
-        assertTrue(RoomSyncStore(db.syncDao()).trips().single().needsUpload)
+        assertNull(RoomSyncStore(db.syncDao()).account())
+        assertTrue("already in that account", RoomSyncStore(db.syncDao()).trips().none { it.needsUpload })
     }
 
     @Test fun `changing the server address signs out locally`() = runTest {
@@ -195,4 +201,119 @@ class AppBackendAccountTest {
         account.syncNow()
         assertTrue(oneOff().any { it == WorkInfo.State.ENQUEUED })
     }
+
+    // --- accounts (Q13) ---
+
+    private suspend fun car(account: String? = null) = db.vehicleDao().insert(
+        VehicleEntity(name = "SX4", maker = "Maruti Suzuki", model = "SX4", fuel = "PETROL", displacementCc = 1586, odometerKm = null, createdAtMillis = 1, accountId = account),
+    )
+
+    private suspend fun trip(car: Long, account: String? = null, start: Long = 1_760_000_000_000) = db.tripDao().insertTrip(
+        TripEntity(vehicleId = car, startedAtMillis = start, lastSampleAtMillis = start + 600_000, endedAtMillis = start + 600_000, distanceKm = 4.0, accountId = account),
+    )
+
+    private fun TestScope.runner(config: FakeBackendConfigRepository, clients: BackendClients) =
+        SyncRunner(config, clients, RoomSyncStore(db.syncDao()), SyncStatusStore(db.syncDao())) { 5_000 }
+
+    @Test fun `sign-in without other trips - no prompt, unassigned vehicles join, the sync is queued`() = runTest {
+        val v = car()
+        val (account, _) = account(remoteConfig())
+        account.verifyCode("k@example.com", "000000")
+        val state = account.state.first()
+        assertFalse(state.otherTripsChoicePending)
+        assertEquals(0, state.otherTrips)
+        assertEquals(memberOf("k@example.com"), db.vehicleDao().get(v)!!.accountId)
+        assertEquals(memberOf("k@example.com"), RoomSyncStore(db.syncDao()).account())
+        assertEquals(1, oneOff().size)
+    }
+
+    @Test fun `sign-in with signed-out trips asks first - nothing syncs until answered`() = runTest {
+        val config = remoteConfig()
+        val v = car()
+        trip(v)
+        trip(v, start = 1_760_000_900_000)
+        val (account, clients) = account(config)
+        account.verifyCode("k@example.com", "000000")
+        val state = account.state.first()
+        assertTrue(state.otherTripsChoicePending)
+        assertEquals(2, state.otherTrips)
+        assertTrue("no sync queued", oneOff().isEmpty())
+        assertEquals(io.github.neotheon3.orangebox.core.datastore.OtherTrips(2, 2), account.otherTrips())
+
+        server.calls.clear()
+        assertEquals(SyncOutcome.Done, runner(config, clients).run())
+        assertTrue("the runner waits for the choice", server.calls.isEmpty())
+    }
+
+    @Test fun `merge uploads the other trips to the account, restamped, and syncs`() = runTest {
+        val config = remoteConfig()
+        val v = car()
+        trip(v)
+        val (account, clients) = account(config)
+        account.verifyCode("k@example.com", "000000")
+        account.mergeOtherTrips()
+        val state = account.state.first()
+        assertFalse(state.otherTripsChoicePending)
+        assertEquals(0, state.otherTrips)
+        assertEquals(1, oneOff().size)
+        runner(config, clients).run()
+        assertEquals(1, server.trips.size)
+        assertTrue(db.tripDao().observeTrips().first().all { it.accountId == memberOf("k@example.com") })
+    }
+
+    @Test fun `replace deletes the other trips from the phone and pulls the account's`() = runTest {
+        val config = remoteConfig()
+        val v = car()
+        val signedOut = trip(v)
+        server.createVehicle(io.github.neotheon3.orangebox.core.network.VehicleCreateDto("srv-car", "Tata", "Nexon", "diesel"), "k")
+        server.seedTrip(
+            io.github.neotheon3.orangebox.core.network.TripUploadDto(
+                "00000000-0000-4000-8000-00000000000a", server.vehicles.single().id, "completed",
+                java.time.Instant.parse("2026-10-20T10:00:00Z"), java.time.Instant.parse("2026-10-20T10:30:00Z"),
+            ),
+        )
+        val (account, clients) = account(config)
+        account.verifyCode("k@example.com", "000000")
+        account.replaceOtherTrips()
+        assertNull(db.tripDao().trip(signedOut))
+        runner(config, clients).run()
+        val trips = db.tripDao().observeTrips().first()
+        assertEquals(listOf("00000000-0000-4000-8000-00000000000a"), trips.map { it.clientTripId })
+        assertEquals("nothing of ours went up", 1, server.trips.size)
+        assertFalse(account.state.first().otherTripsChoicePending)
+    }
+
+    @Test fun `cancel keeps the other trips unsynced and the choice offered in Settings`() = runTest {
+        val config = remoteConfig()
+        val v = car()
+        trip(v)
+        val (account, clients) = account(config)
+        account.verifyCode("k@example.com", "000000")
+        account.keepOtherTripsSeparate()
+        val state = account.state.first()
+        assertFalse(state.otherTripsChoicePending)
+        assertEquals("still offered", 1, state.otherTrips)
+        runner(config, clients).run()
+        assertTrue("never auto-uploaded", server.trips.isEmpty())
+        // A trip recorded now belongs to the account and syncs.
+        trip(v, account = memberOf("k@example.com"), start = 1_760_001_000_000)
+        runner(config, clients).run()
+        assertEquals(1, server.trips.size)
+    }
+
+    @Test fun `another account's trips count as other trips after switching, already uploaded there`() = runTest {
+        val config = remoteConfig()
+        val (account, clients) = account(config)
+        account.verifyCode("a@example.com", "000000")
+        trip(car(memberOf("a@example.com")), account = memberOf("a@example.com"))
+        runner(config, clients).run()
+        account.signOut()
+        account.verifyCode("b@example.com", "000000")
+        val state = account.state.first()
+        assertTrue(state.otherTripsChoicePending)
+        assertEquals(1, state.otherTrips)
+        assertEquals("on A's server already: not lost by Replace", 0, account.otherTrips().neverUploaded)
+    }
+
+    private fun memberOf(email: String) = "member:" + email.trim().lowercase()
 }

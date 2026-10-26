@@ -117,6 +117,12 @@ fun SettingsRoute(
             onSignOutRequested = accountViewModel::onSignOutRequested,
             onSignOutDismissed = accountViewModel::onSignOutDismissed,
             onSignOutConfirmed = accountViewModel::onSignOutConfirmed,
+            onOtherTripsChoose = accountViewModel::onOtherTripsChoose,
+            onMerge = accountViewModel::onMerge,
+            onReplace = accountViewModel::onReplace,
+            onReplaceConfirmed = accountViewModel::onReplaceConfirmed,
+            onReplaceCancelled = accountViewModel::onReplaceCancelled,
+            onOtherTripsDismissed = accountViewModel::onOtherTripsDismissed,
         ),
     )
 }
