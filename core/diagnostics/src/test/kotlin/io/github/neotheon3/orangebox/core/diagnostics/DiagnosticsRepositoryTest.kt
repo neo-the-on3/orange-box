@@ -106,6 +106,40 @@ class DiagnosticsRepositoryTest {
         assertEquals(after, repo.latest.value)
     }
 
+    @Test fun `reads and clears are handed to the report sink, unreadable lists left out (#67)`() = runTest {
+        val readings = mutableListOf<DtcReading>()
+        val reporting = ObdDiagnosticsRepository(connection, history, FakeVehicleRepository(), telemetry, DtcReportSink { readings += it })
+            .apply { clock = { 42_000L } }
+        sim.injectDtc("P0300")
+        sim.addDtc("P0171", DtcList.PENDING)
+        sim.update { it.copy(permanentUnsupported = true) }
+        connect()
+        reporting.scan()
+        val read = readings.single()
+        assertEquals(DtcReading.Kind.READ, read.kind)
+        assertEquals(42_000L, read.atMillis)
+        assertEquals(true, read.milOn)
+        assertEquals(SimulatorState.VIN, read.vin)
+        assertEquals(listOf("P0300"), read.stored)
+        assertEquals(listOf("P0171"), read.pending)
+        assertNull("unsupported list is left out", read.permanent)
+
+        reporting.clear() as ClearResult.Cleared
+        val (cleared, after) = readings.drop(1)
+        assertEquals(DtcReading.Kind.CLEARED, cleared.kind)
+        assertEquals(listOf("P0300"), cleared.stored)
+        assertEquals(listOf("P0171"), cleared.pending)
+        assertEquals(DtcReading.Kind.READ, after.kind)
+        assertEquals(emptyList<String>(), after.stored)
+    }
+
+    @Test fun `a failing sink doesn't fail the scan`() = runTest {
+        val failing = ObdDiagnosticsRepository(connection, history, FakeVehicleRepository(), telemetry, DtcReportSink { error("disk full") })
+        sim.injectDtc("P0300")
+        connect()
+        assertTrue(failing.scan() is ScanResult.Success)
+    }
+
     @Test fun `clear is blocked while moving`() = runTest {
         sim.injectDtc("P0300")
         connect()

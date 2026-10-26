@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.Optional
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -79,12 +80,21 @@ interface DiagnosticsRepository {
 }
 
 @Singleton
-class ObdDiagnosticsRepository @Inject constructor(
+class ObdDiagnosticsRepository(
     private val connection: ObdConnection,
     private val dtcHistory: DtcHistoryRepository,
     private val vehicles: VehicleRepository,
     private val telemetry: TelemetrySource,
+    private val reports: DtcReportSink? = null,
 ) : DiagnosticsRepository {
+    @Inject constructor(
+        connection: ObdConnection,
+        dtcHistory: DtcHistoryRepository,
+        vehicles: VehicleRepository,
+        telemetry: TelemetrySource,
+        reports: Optional<DtcReportSink>,
+    ) : this(connection, dtcHistory, vehicles, telemetry, reports.orElse(null))
+
     var clock: () -> Long = System::currentTimeMillis
 
     private val _latest = MutableStateFlow<DiagnosticsReport?>(null)
@@ -138,6 +148,12 @@ class ObdDiagnosticsRepository @Inject constructor(
         val readable = lists.mapNotNull { (status, list) -> list?.let { status.wire to it } }.toMap()
         runCatching { dtcHistory.recordReading(readable, vehicles.activeVehicle.first()?.id, at) }
             .onFailure { OrangeLog.w(AREA, "history_write_failed", "error" to it.message) }
+        hand(
+            DtcReading(
+                DtcReading.Kind.READ, at, vehicleId, monitor?.milOn, vin,
+                stored = lists[DtcStatus.STORED], pending = lists[DtcStatus.PENDING], permanent = lists[DtcStatus.PERMANENT],
+            ),
+        )
         _latest.value = report
         OrangeLog.i(
             AREA, "scan", "stored" to lists[DtcStatus.STORED]?.size, "pending" to lists[DtcStatus.PENDING]?.size,
@@ -158,10 +174,28 @@ class ObdDiagnosticsRepository @Inject constructor(
             } ?: return@busy ClearResult.NotConnected
             OrangeLog.i(AREA, "clear", "acknowledged" to ack)
             if (!ack) return@busy ClearResult.Rejected
-            runCatching { dtcHistory.recordCleared(clock()) }
+            val at = clock()
+            runCatching { dtcHistory.recordCleared(at) }
                 .onFailure { OrangeLog.w(AREA, "history_write_failed", "error" to it.message) }
+            // What was cleared: the stored and pending codes of the last read (permanent ones stay on the ECU).
+            // TODO(M9 question 15 for Go Developer): confirm a `cleared` report lists the codes that were cleared.
+            val before = _latest.value
+            val vehicleId = runCatching { vehicles.activeVehicle.first()?.id }.getOrNull()
+            hand(
+                DtcReading(
+                    DtcReading.Kind.CLEARED, at, vehicleId, milOn = false, vin = before?.vin,
+                    stored = before?.codes?.filter { it.status == DtcStatus.STORED }?.map { it.code },
+                    pending = before?.codes?.filter { it.status == DtcStatus.PENDING }?.map { it.code },
+                    permanent = null,
+                ),
+            )
             ClearResult.Cleared((scanLocked() as? ScanResult.Success)?.report)
         }
+    }
+
+    private suspend fun hand(reading: DtcReading) {
+        val sink = reports ?: return
+        runCatching { sink.onReading(reading) }.onFailure { OrangeLog.w(AREA, "report_queue_failed", "error" to it.message) }
     }
 
     private inline fun <T> busy(block: () -> T): T {
