@@ -93,6 +93,9 @@ type TripFields struct {
 	AccelTimeS        *float64
 	EcoSpeedTimeS     *float64
 	OverSpeedTimeS    *float64
+	OverSpeedCount    *int64
+	FuelCutCount      *int64
+	EndReason         *string
 	SpeedBands        json.RawMessage
 	EcoScore          *float64
 	SafetyScore       *float64

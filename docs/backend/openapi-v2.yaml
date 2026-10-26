@@ -1983,8 +1983,16 @@ components:
         idleTimeS: {type: number, format: double}
         warmUpTimeS: {type: number, format: double}
         accelTimeS: {type: number, format: double}
-        ecoSpeedTimeS: {type: number, format: double}
+        ecoSpeedTimeS: {type: number, format: double, description: 'Seconds driven in the app''s eco band, as defined in `docs/telemetry.md` (Orange Box''s own definition; the legacy 60–80 km/h "eco speed" is not reproduced).'}
         overSpeedTimeS: {type: number, format: double}
+        overSpeedCount: {type: integer, minimum: 0, description: 'Number of overspeed episodes in the trip (since 1.0.0-draft.9).'}
+        fuelCutCount: {type: integer, minimum: 0, description: 'Number of fuel-cut (deceleration fuel shut-off) episodes; their total time is `fuelCutTimeS` (since 1.0.0-draft.9). Fuel cuts are summary-only: there is no `fuel_cut` event type.'}
+        endReason:
+          type: string
+          maxLength: 32
+          pattern: '^[a-z][a-z0-9_]*$'
+          x-extensible-enum: [user, engine_off, disconnected, process_death, other]
+          description: 'Why the trip ended (since 1.0.0-draft.9; absent while `in_progress`). An **open** set of strings like `Problem.reason`: the known values are listed in `x-extensible-enum`, later versions may add more, and clients must treat an unknown value like `other`. `user`: stopped in the app; `engine_off`: the engine was switched off; `disconnected`: the OBD adapter connection was lost; `process_death`: the app was killed mid-trip and closed it at its last sample.'
         speedBands: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/SpeedBand'}, description: 'Legacy timeIn0To10 … timeIn110Over'}
         ecoScore: {type: [number, 'null'], format: double, description: 'Client-computed (clean-room formula, see docs/telemetry.md). Legacy ecoSafePoint.'}
         safetyScore: {type: [number, 'null'], format: double, description: 'Legacy safePoint'}

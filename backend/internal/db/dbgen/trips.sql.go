@@ -14,7 +14,7 @@ import (
 )
 
 const getTrip = `-- name: GetTrip :one
-SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid FROM trips
+SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid, over_speed_count, fuel_cut_count, end_reason FROM trips
 WHERE member_id = $1 AND id = $2 AND deleted_at IS NULL
 `
 
@@ -68,12 +68,15 @@ func (q *Queries) GetTrip(ctx context.Context, arg GetTripParams) (Trip, error) 
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WriterXid,
+		&i.OverSpeedCount,
+		&i.FuelCutCount,
+		&i.EndReason,
 	)
 	return i, err
 }
 
 const getTripByClientID = `-- name: GetTripByClientID :one
-SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid FROM trips
+SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid, over_speed_count, fuel_cut_count, end_reason FROM trips
 WHERE member_id = $1 AND client_trip_id = $2
 `
 
@@ -128,6 +131,9 @@ func (q *Queries) GetTripByClientID(ctx context.Context, arg GetTripByClientIDPa
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WriterXid,
+		&i.OverSpeedCount,
+		&i.FuelCutCount,
+		&i.EndReason,
 	)
 	return i, err
 }
@@ -234,7 +240,7 @@ func (q *Queries) ListDrivingDays(ctx context.Context, arg ListDrivingDaysParams
 }
 
 const listTripChanges = `-- name: ListTripChanges :many
-SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid FROM trips
+SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid, over_speed_count, fuel_cut_count, end_reason FROM trips
 WHERE member_id = $1
   AND deleted_at IS NULL
   AND writer_xid >= $2::xid8
@@ -312,6 +318,9 @@ func (q *Queries) ListTripChanges(ctx context.Context, arg ListTripChangesParams
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WriterXid,
+			&i.OverSpeedCount,
+			&i.FuelCutCount,
+			&i.EndReason,
 		); err != nil {
 			return nil, err
 		}
@@ -385,7 +394,7 @@ func (q *Queries) ListTripDeletions(ctx context.Context, arg ListTripDeletionsPa
 }
 
 const listTrips = `-- name: ListTrips :many
-SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid FROM trips
+SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid, over_speed_count, fuel_cut_count, end_reason FROM trips
 WHERE member_id = $1
   AND deleted_at IS NULL
   AND ($2::timestamptz IS NULL OR started_at >= $2::timestamptz)
@@ -466,6 +475,9 @@ func (q *Queries) ListTrips(ctx context.Context, arg ListTripsParams) ([]Trip, e
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WriterXid,
+			&i.OverSpeedCount,
+			&i.FuelCutCount,
+			&i.EndReason,
 		); err != nil {
 			return nil, err
 		}
@@ -478,7 +490,7 @@ func (q *Queries) ListTrips(ctx context.Context, arg ListTripsParams) ([]Trip, e
 }
 
 const listTripsByVehicle = `-- name: ListTripsByVehicle :many
-SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid FROM trips
+SELECT id, member_id, client_trip_id, vehicle_id, state, started_at, ended_at, snapshot_at, duration_s, distance_km, engine_distance_km, max_speed_kmh, avg_speed_kmh, max_rpm, harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count, fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s, accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score, battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, points_awarded, created_at, updated_at, deleted_at, writer_xid, over_speed_count, fuel_cut_count, end_reason FROM trips
 WHERE member_id = $1
   AND vehicle_id = $2::uuid
   AND deleted_at IS NULL
@@ -560,6 +572,9 @@ func (q *Queries) ListTripsByVehicle(ctx context.Context, arg ListTripsByVehicle
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WriterXid,
+			&i.OverSpeedCount,
+			&i.FuelCutCount,
+			&i.EndReason,
 		); err != nil {
 			return nil, err
 		}
@@ -739,6 +754,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
+    over_speed_count = NULL, fuel_cut_count = NULL, end_reason = NULL,
     updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()),
         trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END),
     deleted_at = now()
@@ -776,6 +792,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
+    over_speed_count = NULL, fuel_cut_count = NULL, end_reason = NULL,
     updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()),
         trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END),
     deleted_at = now()
@@ -822,7 +839,8 @@ INSERT INTO trips (
     harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count,
     fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s,
     accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score,
-    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, updated_at
+    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app,
+    over_speed_count, fuel_cut_count, end_reason, updated_at
 ) VALUES (
     $1, $2, $3, $4::uuid, $5::text, $6::timestamptz,
     $7, $8::timestamptz,
@@ -835,6 +853,7 @@ INSERT INTO trips (
     $27, $28, $29,
     $30, $31, $32,
     $33, $34, $35::boolean, $36,
+    $37, $38, $39,
     date_trunc('milliseconds', clock_timestamp())
 )
 ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
@@ -870,6 +889,9 @@ ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
     coolant_avg_c         = EXCLUDED.coolant_avg_c,
     dtc                   = EXCLUDED.dtc,
     simulated             = EXCLUDED.simulated,
+    over_speed_count      = EXCLUDED.over_speed_count,
+    fuel_cut_count        = EXCLUDED.fuel_cut_count,
+    end_reason            = EXCLUDED.end_reason,
     app                   = EXCLUDED.app,
     updated_at            = GREATEST(date_trunc('milliseconds', clock_timestamp()),
         trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END)
@@ -916,6 +938,9 @@ type UpsertTripParams struct {
 	Dtc               json.RawMessage
 	Simulated         bool
 	App               json.RawMessage
+	OverSpeedCount    *int64
+	FuelCutCount      *int64
+	EndReason         *string
 }
 
 type UpsertTripRow struct {
@@ -976,6 +1001,9 @@ func (q *Queries) UpsertTrip(ctx context.Context, arg UpsertTripParams) (UpsertT
 		arg.Dtc,
 		arg.Simulated,
 		arg.App,
+		arg.OverSpeedCount,
+		arg.FuelCutCount,
+		arg.EndReason,
 	)
 	var i UpsertTripRow
 	err := row.Scan(&i.ID, &i.Inserted)
