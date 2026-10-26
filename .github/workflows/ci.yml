@@ -40,6 +40,9 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" --install "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" > /dev/null
 
+      - name: OpenAPI spec lint (#69)
+        run: bash scripts/ci/spec-lint.sh
+
       - name: Assemble, lint and unit test
         run: ./gradlew assembleDebug lintDebug testDebugUnitTest :app:testReleaseUnitTest --stacktrace
 
