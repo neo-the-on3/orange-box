@@ -50,6 +50,8 @@ class SpecContractTest {
             "/v1/vehicles" to "get", "/v1/vehicles" to "post", "/v1/trips" to "get", "/v1/trips/deletions" to "get",
             "/v1/trips/batch" to "post", "/v1/trips/{tripId}" to "delete", "/v1/telemetry/batches" to "post",
             "/v1/vehicles/{vehicleId}/dtc-reports" to "post", "/v1/vehicles/{vehicleId}" to "get", "/v1/vehicles/{vehicleId}" to "patch",
+            "/v1/me" to "get", "/v1/me" to "patch", "/v1/stats/summary" to "get", "/v1/rankings/{metric}" to "get",
+            "/v1/rankings/{metric}/me" to "get", "/v1/me/points" to "get", "/v1/me/points/ledger" to "get",
         ).forEach { (path, method) -> assertTrue("$method $path", hasOperation(path, method)) }
     }
 
@@ -63,11 +65,18 @@ class SpecContractTest {
             "TripDeletion" to TripDeletionDto.serializer().descriptor,
             "TelemetryBatchAck" to TelemetryBatchAckDto.serializer().descriptor,
             "DtcReport" to DtcReportDto.serializer().descriptor,
+            "Profile" to ProfileDto.serializer().descriptor,
+            "StatsSummary" to StatsSummaryDto.serializer().descriptor,
+            "RankingEntry" to RankingEntryDto.serializer().descriptor,
+            "RankingPage" to RankingPageDto.serializer().descriptor,
+            "MyRanking" to MyRankingDto.serializer().descriptor,
+            "PointsBalance" to PointsBalanceDto.serializer().descriptor,
+            "PointsLedgerEntry" to PointsLedgerEntryDto.serializer().descriptor,
         ).forEach { (schema, d) ->
             val req = required(schema)
             assertTrue("$schema has no required fields?", req.isNotEmpty())
-            // `archived` defaults to false on purpose (older servers); everything else we model must not default.
-            val modelled = req.intersect(d.names()) - "archived"
+            // `archived` and `nextCursor` (PageMeta, nullable) default on purpose (older servers, last pages).
+            val modelled = req.intersect(d.names()) - "archived" - "nextCursor"
             assertTrue("$schema: $modelled must be non-optional in ${d.nonOptional()}", d.nonOptional().containsAll(modelled))
         }
         assertTrue(TripPage.serializer().descriptor.names().containsAll(required("TripPage")))
@@ -134,6 +143,15 @@ class SpecContractTest {
             "Problem" to ProblemDto.serializer().descriptor,
             "DtcReportCreate" to DtcReportCreateDto.serializer().descriptor,
             "DtcReport" to DtcReportDto.serializer().descriptor,
+            "Profile" to ProfileDto.serializer().descriptor,
+            "ProfilePatch" to ProfilePatchDto.serializer().descriptor,
+            "StatsSummary" to StatsSummaryDto.serializer().descriptor,
+            "RankingEntry" to RankingEntryDto.serializer().descriptor,
+            "RankingPage" to RankingPageDto.serializer().descriptor,
+            "MyRanking" to MyRankingDto.serializer().descriptor,
+            "PointsBalance" to PointsBalanceDto.serializer().descriptor,
+            "PointsLedgerEntry" to PointsLedgerEntryDto.serializer().descriptor,
+            "PointsLedgerPage" to PointsLedgerPageDto.serializer().descriptor,
         ).forEach { (schema, d) ->
             val props = properties(schema)
             assertTrue("$schema has no properties?", props.isNotEmpty())

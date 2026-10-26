@@ -52,6 +52,29 @@ interface BackendApi {
      */
     suspend fun createDtcReport(vehicleServerId: String, report: DtcReportCreateDto, idempotencyKey: String): DtcReportDto
 
+    // --- Remote-only member features (#68). Fake answers them too, for demos and tests. ---
+
+    /** `GET /v1/me` with its `ETag` (for [patchMe]). */
+    suspend fun getMe(): Tagged<ProfileDto>
+
+    /** `PATCH /v1/me` (`application/merge-patch+json`, `If-Match: etag`). `412` / `428` are thrown: fetch again. */
+    suspend fun patchMe(patch: ProfilePatchDto, etag: String?): Tagged<ProfileDto>
+
+    /** `GET /v1/stats/summary`. [date] (`yyyy-MM-dd`) is any day inside the period; [tz] an IANA zone. */
+    suspend fun getStatsSummary(period: String, tz: String, date: String? = null, vehicleId: String? = null): StatsSummaryDto
+
+    /** `GET /v1/rankings/{metric}`: only opted-in members appear. */
+    suspend fun listRanking(metric: String, period: String, tz: String, date: String? = null, cursor: String? = null): RankingPageDto
+
+    /** `GET /v1/rankings/{metric}/me`. `404` (not ranked for this period, or not opted in) is thrown. */
+    suspend fun getMyRanking(metric: String, period: String, tz: String, date: String? = null): MyRankingDto
+
+    /** `GET /v1/me/points`. */
+    suspend fun getPointsBalance(): PointsBalanceDto
+
+    /** `GET /v1/me/points/ledger`, newest first. */
+    suspend fun listPointsLedger(cursor: String? = null): PointsLedgerPageDto
+
     companion object {
         const val MAX_TRIPS_PER_BATCH = 100
 
