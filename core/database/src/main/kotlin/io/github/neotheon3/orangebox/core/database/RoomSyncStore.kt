@@ -10,6 +10,7 @@ import io.github.neotheon3.orangebox.core.network.TripDto
 import io.github.neotheon3.orangebox.core.network.TripUploadDto
 import io.github.neotheon3.orangebox.core.network.UtcInstantSerializer
 import io.github.neotheon3.orangebox.core.network.VehicleCreateDto
+import io.github.neotheon3.orangebox.core.network.VehicleDto
 import io.github.neotheon3.orangebox.core.sync.LocalDeletion
 import io.github.neotheon3.orangebox.core.sync.PendingTelemetryBatch
 import io.github.neotheon3.orangebox.core.sync.PendingTripBatch
@@ -38,7 +39,9 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
             serverId = v.serverId,
             create = VehicleCreateDto(
                 clientVehicleId = v.clientVehicleId,
-                // The spec requires make and model; a vehicle saved with only a name sends the name as the model.
+                // The current spec requires make and model, so a vehicle saved with only a name still sends
+                // make=Unknown and the name as the model; the name always goes in nickname.
+                // TODO(draft.9): send make/model only when known, once VehicleCreate makes them optional.
                 make = v.maker?.takeIf { it.isNotBlank() } ?: UNKNOWN_MAKE,
                 model = v.model?.takeIf { it.isNotBlank() } ?: v.name,
                 fuelType = wireFuel(v.fuel),
@@ -59,6 +62,27 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
     override suspend fun markVehicleGone(clientVehicleId: String) {
         val v = dao.vehicleByClientId(clientVehicleId) ?: return
         dao.upsertVehicleSync((dao.vehicleSync(v.id) ?: VehicleSyncEntity(v.id)).copy(serverId = null, goneOnServer = true))
+    }
+
+    override suspend fun applyRemoteVehicle(clientVehicleId: String, remote: VehicleDto): Boolean {
+        val v = dao.vehicleByClientId(clientVehicleId) ?: return false
+        val key = KEY_VEHICLE_UPDATED + clientVehicleId
+        val seen = dao.state(key)?.toLongOrNull()
+        val at = remote.updatedAt.toEpochMilli()
+        if (seen == null || at > seen) dao.putState(SyncStateEntity(key, at.toString()))
+        if (seen == null || at <= seen) return false
+        // An edit from another device. Fuel types we can't map back (other) keep the local value.
+        dao.updateVehicle(
+            v.copy(
+                name = remote.nickname?.takeIf { it.isNotBlank() } ?: v.name,
+                maker = remote.make ?: v.maker,
+                model = remote.model ?: v.model,
+                fuel = localFuel(remote.fuelType) ?: v.fuel,
+                displacementCc = remote.engineDisplacementCc ?: v.displacementCc,
+                odometerKm = remote.odometerKm ?: v.odometerKm,
+            ),
+        )
+        return true
     }
 
     override suspend fun deleteVehicle(clientVehicleId: String, keepClientTripIds: Set<String>) {
@@ -306,6 +330,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
 
     companion object {
         const val KEY_PAUSED = "paused:"
+        const val KEY_VEHICLE_UPDATED = "vehicle_updated:"
         const val KEY_DTC_REPORT = "dtc_report:"
 
         /** Offline bound on queued DTC reports (a read per drive start is far below it). */
@@ -358,7 +383,20 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
         const val END_REMOTE = "remote"
         const val UNKNOWN_MAKE = "Unknown"
 
-        /** Orange Box fuel → spec `FuelType`. CNG and ethanol have no spec value yet (question for the backend). */
+        /**
+         * Orange Box fuel → spec `FuelType` (`gasoline`, not `petrol`). CNG and ethanol have no spec value yet and
+         * go as `other`.
+         * TODO(draft.9): when FuelType gets cng / gasoline_cng / ethanol / flex, send those and PATCH the vehicles
+         *  already created as `other` (with their ETag).
+         */
+        /** Spec `FuelType` → Orange Box fuel, for edits from another device; null when it has no local match. */
+        fun localFuel(wire: String): String? = when (wire) {
+            "gasoline" -> VehicleFuel.PETROL.name
+            "diesel" -> VehicleFuel.DIESEL.name
+            "lpg" -> VehicleFuel.LPG.name
+            else -> null
+        }
+
         fun wireFuel(fuel: String): String = when (VehicleFuel.entries.firstOrNull { it.name == fuel }) {
             VehicleFuel.PETROL, null -> "gasoline"
             VehicleFuel.DIESEL -> "diesel"

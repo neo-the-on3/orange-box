@@ -13,7 +13,7 @@ interface BackendApi {
 
     suspend fun logout()
 
-    suspend fun listVehicles(cursor: String? = null): VehiclePage
+    suspend fun listVehicles(cursor: String? = null, includeArchived: Boolean = false): VehiclePage
 
     /** `POST /v1/vehicles`: `201` created or `200` replay by `clientVehicleId`. `410 vehicle_deleted` is thrown. */
     suspend fun createVehicle(vehicle: VehicleCreateDto, idempotencyKey: String): VehicleDto

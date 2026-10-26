@@ -62,6 +62,7 @@ val BackendJson: Json = Json {
 
 // --- Vehicles ---
 
+/** Spec `VehicleCreate`. [clientVehicleId] is always sent (de-duplication per account). */
 @Serializable data class VehicleCreateDto(
     val clientVehicleId: String,
     val make: String,
@@ -73,10 +74,14 @@ val BackendJson: Json = Json {
     val odometerKm: Int? = null,
 )
 
+/**
+ * Spec `Vehicle`. [make] and [model] are nullable ahead of draft.9, which makes them optional (a vehicle may be
+ * just a nickname); the current spec still lists them as required.
+ */
 @Serializable data class VehicleDto(
     val id: String,
-    val make: String,
-    val model: String,
+    val make: String? = null,
+    val model: String? = null,
     val fuelType: String,
     val archived: Boolean = false,
     val createdAt: UtcInstant,

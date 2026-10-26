@@ -7,6 +7,7 @@ import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
 import io.github.neotheon3.orangebox.core.network.TripDto
 import io.github.neotheon3.orangebox.core.network.TripUploadDto
 import io.github.neotheon3.orangebox.core.network.VehicleCreateDto
+import io.github.neotheon3.orangebox.core.network.VehicleDto
 import java.time.Instant
 
 /** A local vehicle as the sync sees it. [serverId] is null until `POST /v1/vehicles` succeeded. */
@@ -65,6 +66,12 @@ interface SyncStore {
     suspend fun setVehicleServerId(clientVehicleId: String, serverId: String?)
 
     suspend fun markVehicleGone(clientVehicleId: String)
+
+    /**
+     * The server's copy of a local vehicle. The first copy seen only records its `updatedAt`; a later, newer one
+     * is an edit from another device and is applied locally. Returns true when applied.
+     */
+    suspend fun applyRemoteVehicle(clientVehicleId: String, remote: VehicleDto): Boolean
 
     /** `410` during recovery: delete the vehicle and its local trips except [keepClientTripIds]. */
     suspend fun deleteVehicle(clientVehicleId: String, keepClientTripIds: Set<String>)

@@ -15,7 +15,9 @@ import java.util.UUID
  * 1. push local deletions (`DELETE /v1/trips/{id}`);
  * 2. pull: without a stored token a full `GET /v1/trips` walk; with token S, walk `GET /v1/trips?since=S` to its
  *    last page (S' = its `nextSince`), then `GET /v1/trips/deletions?since=S`, then store S';
- * 3. push vehicles without a server id (`POST /v1/vehicles`, de-duplicated by `clientVehicleId`), then trip
+ * 3. `GET /v1/vehicles?includeArchived=true` in full: a vehicle with a server id that's missing was deleted on
+ *    another device (its device-only trips stay local and aren't uploaded), a newer `updatedAt` is an edit that is
+ *    applied locally; then push vehicles without a server id (`POST /v1/vehicles`, de-duplicated by `clientVehicleId`), then trip
  *    snapshots (`POST /v1/trips/batch`);
  * 4. push telemetry of finished, uploaded trips (`POST /v1/telemetry/batches`, at most 5,000 samples and 500 events
  *    per batch, oldest trip first). A batch is stored before it is sent and resent unchanged (same `clientBatchId`
@@ -50,6 +52,8 @@ class SyncEngine(
         val recovery: SyncWindowReason? = null,
         val dropped: Int = 0,
         val vehiclesCreated: Int = 0,
+        val vehiclesDeletedElsewhere: Int = 0,
+        val vehiclesEdited: Int = 0,
         val telemetryBatches: Int = 0,
         val telemetrySamples: Int = 0,
         val telemetryEvents: Int = 0,
@@ -68,6 +72,7 @@ class SyncEngine(
         report = Report()
         pushDeletions()
         pull()
+        refreshVehicles()
         pushVehicles()
         pushTrips()
         pushTelemetry()
@@ -179,14 +184,7 @@ class SyncEngine(
     /** `deployment_changed`: re-create lost vehicles (remap), then re-upload the trips the server lost. */
     private suspend fun recoverDeployment(walk: FullWalk) {
         store.setPendingTripBatch(null) // re-uploads get fresh Idempotency-Keys
-        val serverVehicles = buildSet {
-            var cursor: String? = null
-            do {
-                val page = api.listVehicles(cursor)
-                page.items.forEach { v -> v.clientVehicleId?.let { add(it to v.id) } }
-                cursor = page.nextCursor
-            } while (cursor != null)
-        }.toMap()
+        val serverVehicles = allVehicles().mapNotNull { v -> v.clientVehicleId?.let { it to v.id } }.toMap()
         for (v in store.vehicles()) {
             val known = serverVehicles[v.clientVehicleId]
             if (known != null) {
@@ -219,6 +217,36 @@ class SyncEngine(
         }
     }
 
+    private suspend fun allVehicles(): List<io.github.neotheon3.orangebox.core.network.VehicleDto> = buildList {
+        var cursor: String? = null
+        do {
+            val page = api.listVehicles(cursor, includeArchived = true)
+            addAll(page.items)
+            cursor = page.nextCursor
+        } while (cursor != null)
+    }
+
+    private suspend fun refreshVehicles() {
+        val known = store.vehicles().filter { it.serverId != null && !it.goneOnServer }
+        if (known.isEmpty()) return
+        val remote = allVehicles()
+        val byId = remote.associateBy { it.id }
+        val byClientId = remote.filter { it.clientVehicleId != null }.associateBy { it.clientVehicleId }
+        for (v in known) {
+            val copy = byId[v.serverId] ?: byClientId[v.clientVehicleId]
+            if (copy == null) {
+                // Deleted elsewhere (archived ones are still listed). Its trips there come back as tombstones;
+                // trips only on this phone stay, unuploaded.
+                // TODO(M9): let the user move those trips to another vehicle (Trips screen); not cheap here.
+                store.markVehicleGone(v.clientVehicleId)
+                report = report.copy(vehiclesDeletedElsewhere = report.vehiclesDeletedElsewhere + 1)
+                continue
+            }
+            if (copy.id != v.serverId) store.setVehicleServerId(v.clientVehicleId, copy.id)
+            if (store.applyRemoteVehicle(v.clientVehicleId, copy)) report = report.copy(vehiclesEdited = report.vehiclesEdited + 1)
+        }
+    }
+
     private suspend fun pushVehicles() {
         val withTrips = store.trips().filter { it.needsUpload }.mapNotNull { it.clientVehicleId }.toSet() +
             store.dtcReports().map { it.clientVehicleId }
@@ -227,6 +255,7 @@ class SyncEngine(
                 // A fresh key is fine: the server de-duplicates by clientVehicleId (200 replay).
                 val created = api.createVehicle(v.create, newKey())
                 store.setVehicleServerId(v.clientVehicleId, created.id)
+                store.applyRemoteVehicle(v.clientVehicleId, created) // records its updatedAt
                 report = report.copy(vehiclesCreated = report.vehiclesCreated + 1)
             } catch (e: ApiError.Http) {
                 if (e.code != ApiError.CODE_VEHICLE_DELETED) throw e

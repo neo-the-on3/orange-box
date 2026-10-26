@@ -73,6 +73,17 @@ class InMemorySyncStore : SyncStore {
     override suspend fun setVehicleServerId(clientVehicleId: String, serverId: String?) {
         vehicles[clientVehicleId] = vehicles.getValue(clientVehicleId).copy(serverId = serverId)
     }
+    val vehicleUpdatedAt = mutableMapOf<String, Instant>()
+    val vehicleEdits = mutableMapOf<String, io.github.neotheon3.orangebox.core.network.VehicleDto>()
+
+    override suspend fun applyRemoteVehicle(clientVehicleId: String, remote: io.github.neotheon3.orangebox.core.network.VehicleDto): Boolean {
+        val seen = vehicleUpdatedAt[clientVehicleId]
+        vehicleUpdatedAt[clientVehicleId] = maxOf(seen ?: remote.updatedAt, remote.updatedAt)
+        if (seen == null || !remote.updatedAt.isAfter(seen)) return false
+        vehicleEdits[clientVehicleId] = remote
+        return true
+    }
+
     override suspend fun markVehicleGone(clientVehicleId: String) {
         vehicles[clientVehicleId] = vehicles.getValue(clientVehicleId).copy(goneOnServer = true)
     }

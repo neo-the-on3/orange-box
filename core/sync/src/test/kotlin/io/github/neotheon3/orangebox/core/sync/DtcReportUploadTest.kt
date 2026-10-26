@@ -78,10 +78,9 @@ class DtcReportUploadTest {
 
     @Test fun `404 forgets the vehicle's server id and the report waits for the next run`() = runTest {
         val car = phone.addVehicle()
-        engine.run()
-        phone.vehicles[car] = phone.vehicles.getValue(car).copy(serverId = "veh_gone")
         queue(car)
         queue(car, at = "2026-10-25T08:05:00Z")
+        server.failNextDtcReport(problem(404, ApiError.CODE_VEHICLE_NOT_FOUND))
         val r = engine.run()
         assertEquals(0, r.dtcReports)
         assertEquals(1, server.dtcReportRequests.size) // the second report waits too
