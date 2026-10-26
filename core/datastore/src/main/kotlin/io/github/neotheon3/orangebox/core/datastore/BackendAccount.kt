@@ -13,6 +13,8 @@ data class SyncStatus(
     val telemetryBatches: Int = 0,
     /** A retry is scheduled (the error should clear by itself). */
     val willRetry: Boolean = false,
+    /** Retryable failures in a row (drives the backoff); 0 after a success or a final failure. */
+    val consecutiveFailures: Int = 0,
 )
 
 /** Why a sync or a sign-in step failed, as Settings words it. */

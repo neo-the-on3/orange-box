@@ -24,46 +24,52 @@ sealed interface SyncOutcome {
     /** Done, or nothing to do (Off, Remote without a session). */
     data object Done : SyncOutcome
 
-    /** Retry with WorkManager's exponential backoff. */
-    data object Retry : SyncOutcome
-
-    /** The server sent `Retry-After`: run again after that many seconds. */
+    /** Run again after that many seconds: the server's `Retry-After` (clamped), or our backoff without one. */
     data class RetryAfter(val seconds: Long) : SyncOutcome
 
-    /** Won't fix itself by retrying (other 4xx, signed out, repeated recovery). */
+    /** Won't fix itself by retrying (other 4xx, signed out, repeated recovery, too many failures in a row). */
     data class Failed(val reason: String) : SyncOutcome
 }
 
 /**
  * One backend sync run ([SyncEngine]). Off: nothing, and no client is built. Remote without a session: nothing
- * (sign in first). Retryable failures (`503`, `429`, network, `409` in flight) retry; other errors end the run.
+ * (sign in first). Retryable failures (`503`, `429`, network, `409` in flight) run again after the server's
+ * `Retry-After` (e.g. `429 upload_in_progress` 1 s, `503 uploads_busy` 5 s), clamped to [BACKOFF_CAP_SECONDS];
+ * without one (a proxy's 502/503/504, network) after an exponential backoff with jitter from
+ * [BACKOFF_BASE_SECONDS], capped at [BACKOFF_CAP_SECONDS]. Other errors end the run.
  */
 class SyncRunner(
     private val backendConfig: BackendConfigRepository,
     private val clients: BackendClients,
     private val store: RoomSyncStore,
     private val status: SyncStatusStore?,
+    private val random: () -> Double = { kotlin.random.Random.nextDouble() },
     private val clock: () -> Long,
 ) {
     @Inject constructor(backendConfig: BackendConfigRepository, clients: BackendClients, store: RoomSyncStore, status: SyncStatusStore) :
-        this(backendConfig, clients, store, status, System::currentTimeMillis)
+        this(backendConfig, clients, store, status, clock = System::currentTimeMillis)
 
     /** Tests without the status table. */
     constructor(backendConfig: BackendConfigRepository, clients: BackendClients, store: RoomSyncStore) :
-        this(backendConfig, clients, store, null, System::currentTimeMillis)
+        this(backendConfig, clients, store, null, clock = System::currentTimeMillis)
 
     internal var storeOverride: SyncStore? = null
 
-    suspend fun run(attempt: Int): SyncOutcome {
+    /** Failures in a row when there is no status table (tests). */
+    private var failuresInMemory = 0
+
+    suspend fun run(): SyncOutcome {
         val config = backendConfig.config.first()
         val api = clients.forConfig(config) ?: return SyncOutcome.Done
         if (config.mode == BackendMode.REMOTE && clients.sessionStore.read() == null) return SyncOutcome.Done
-        val outcome = runEngine(api, config.mode, attempt)
+        val previous = status?.read()?.consecutiveFailures ?: failuresInMemory
+        val outcome = runEngine(api, config.mode, previous)
+        failuresInMemory = outcome.second.consecutiveFailures
         status?.write(outcome.second)
         return outcome.first
     }
 
-    private suspend fun runEngine(api: io.github.neotheon3.orangebox.core.network.BackendApi, mode: BackendMode, attempt: Int): Pair<SyncOutcome, SyncStatus> {
+    private suspend fun runEngine(api: io.github.neotheon3.orangebox.core.network.BackendApi, mode: BackendMode, failures: Int): Pair<SyncOutcome, SyncStatus> {
         val now = clock()
         return try {
             val r = SyncEngine(api, storeOverride ?: store).run()
@@ -71,19 +77,23 @@ class SyncRunner(
                 OrangeLog.Areas.BACKEND, "sync_ok", "mode" to mode.wireName, "pulled" to r.pulled, "uploaded" to r.uploaded,
                 "deleted" to r.deletedByServer, "rejected" to r.rejected, "recovery" to (r.recovery?.name ?: "none"), "dropped" to r.dropped,
                 "telemetry_batches" to r.telemetryBatches, "telemetry_rejected" to r.telemetryRejected,
-                "dtc_reports" to r.dtcReports, "dtc_dropped" to r.dtcReportsDropped,
+                "dtc_reports" to r.dtcReports, "dtc_dropped" to r.dtcReportsDropped, "not_implemented" to r.notImplemented.sorted().joinToString(","),
             )
             SyncOutcome.Done to SyncStatus(now, ok = true, uploadedTrips = r.uploaded, pulledTrips = r.pulled, telemetryBatches = r.telemetryBatches)
         } catch (e: ApiError) {
             OrangeLog.w(OrangeLog.Areas.BACKEND, "sync_failed", "error" to (e.message ?: "?"), "retry" to e.isRetryable)
+            val inARow = failures + 1
             val retryAfter = (e as? ApiError.Http)?.retryAfterSeconds
             val outcome = when {
                 !e.isRetryable -> SyncOutcome.Failed(e.message ?: "error")
-                retryAfter != null -> SyncOutcome.RetryAfter(retryAfter)
-                attempt >= MAX_ATTEMPTS -> SyncOutcome.Failed("gave up after $attempt attempts")
-                else -> SyncOutcome.Retry
+                inARow > MAX_ATTEMPTS -> SyncOutcome.Failed("gave up after $failures attempts")
+                retryAfter != null -> SyncOutcome.RetryAfter(clampRetryAfter(retryAfter))
+                else -> SyncOutcome.RetryAfter(backoffSeconds(inARow, random()))
             }
-            outcome to SyncStatus(now, ok = false, error = errorOf(e), willRetry = outcome !is SyncOutcome.Failed)
+            outcome to SyncStatus(
+                now, ok = false, error = errorOf(e), willRetry = outcome !is SyncOutcome.Failed,
+                consecutiveFailures = if (outcome is SyncOutcome.Failed) 0 else inARow,
+            )
         } catch (e: IllegalStateException) {
             OrangeLog.w(OrangeLog.Areas.BACKEND, "sync_failed", "error" to (e.message ?: "?"), "retry" to false)
             SyncOutcome.Failed(e.message ?: "error") to SyncStatus(now, ok = false, error = SyncError.RECOVERY)
@@ -101,7 +111,23 @@ class SyncRunner(
     }
 
     companion object {
+        /** Retries in a row before the one-off gives up (the 6-hourly sync still runs). */
         const val MAX_ATTEMPTS = 10
+        const val BACKOFF_BASE_SECONDS = 30L
+        const val BACKOFF_CAP_SECONDS = 3_600L
+
+        fun clampRetryAfter(seconds: Long): Long = seconds.coerceIn(1, BACKOFF_CAP_SECONDS)
+
+        /**
+         * Exponential backoff with "equal jitter": failure n waits between half and all of
+         * min(cap, base × 2^(n−1)), so devices that failed together don't retry together.
+         */
+        fun backoffSeconds(failuresInARow: Int, random: Double): Long {
+            val exp = (failuresInARow - 1).coerceIn(0, 20)
+            val ceiling = minOf(BACKOFF_CAP_SECONDS, BACKOFF_BASE_SECONDS shl exp)
+            val half = ceiling / 2.0
+            return (half + half * random.coerceIn(0.0, 1.0)).toLong().coerceAtLeast(1)
+        }
     }
 }
 
@@ -117,9 +143,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     override suspend fun doWork(): Result {
         val deps = EntryPointAccessors.fromApplication(applicationContext, Deps::class.java)
-        return when (val outcome = deps.runner().run(runAttemptCount)) {
+        return when (val outcome = deps.runner().run()) {
             SyncOutcome.Done -> Result.success()
-            SyncOutcome.Retry -> Result.retry()
             is SyncOutcome.RetryAfter -> {
                 deps.scheduler().syncSoon(delaySeconds = outcome.seconds)
                 Result.success()

@@ -70,7 +70,7 @@ class SyncSchedulingTest {
     @Test fun `off - the runner builds no client and makes no request`() = runTest {
         val clients = BackendClients(InMemorySessionStore())
         val runner = SyncRunner(FakeBackendConfigRepository(), clients, RoomSyncStore(db.syncDao()))
-        assertEquals(SyncOutcome.Done, runner.run(attempt = 0))
+        assertEquals(SyncOutcome.Done, runner.run())
         assertNull(clients.forConfig(BackendConfig()))
         assertEquals(0, clients.httpClientsBuilt)
     }
@@ -78,7 +78,7 @@ class SyncSchedulingTest {
     @Test fun `remote without a session does nothing and builds no request`() = runTest {
         val clients = BackendClients(InMemorySessionStore())
         val runner = SyncRunner(FakeBackendConfigRepository(BackendConfig(BackendMode.REMOTE, "https://api.example.invalid")), clients, RoomSyncStore(db.syncDao()))
-        assertEquals(SyncOutcome.Done, runner.run(attempt = 0))
+        assertEquals(SyncOutcome.Done, runner.run())
     }
 
     @Test fun `fake - a run uploads local trips to the in-process backend, without OkHttp`() = runTest {
@@ -86,7 +86,7 @@ class SyncSchedulingTest {
         val v = db.vehicleDao().insert(VehicleEntity(name = "SX4", maker = "Maruti Suzuki", model = "SX4", fuel = "PETROL", displacementCc = 1586, odometerKm = null, createdAtMillis = 1))
         db.tripDao().insertTrip(TripEntity(vehicleId = v, startedAtMillis = 1_000, lastSampleAtMillis = 601_000, endedAtMillis = 601_000, distanceKm = 4.0))
         val runner = SyncRunner(FakeBackendConfigRepository(BackendConfig(BackendMode.FAKE)), clients, RoomSyncStore(db.syncDao()))
-        assertEquals(SyncOutcome.Done, runner.run(attempt = 0))
+        assertEquals(SyncOutcome.Done, runner.run())
         val fake = clients.forConfig(BackendConfig(BackendMode.FAKE)) as FakeBackendApi
         assertEquals(1, fake.trips.size)
         assertEquals(0, clients.httpClientsBuilt)
@@ -99,10 +99,50 @@ class SyncSchedulingTest {
         val runner = SyncRunner(fakeConfig, clients, RoomSyncStore(db.syncDao()))
         val fake = clients.forConfig(BackendConfig(BackendMode.FAKE)) as FakeBackendApi
         fake.failNext(FakeBackendApi.unavailable(retryAfterSeconds = 12))
-        assertEquals(SyncOutcome.RetryAfter(12), runner.run(attempt = 0))
+        assertEquals(SyncOutcome.RetryAfter(12), runner.run())
         fake.failNext(io.github.neotheon3.orangebox.core.network.ApiError.Http(422, null))
-        assertTrue(runner.run(attempt = 0) is SyncOutcome.Failed)
+        assertTrue(runner.run() is SyncOutcome.Failed)
         fake.failNext(io.github.neotheon3.orangebox.core.network.ApiError.Network(java.io.IOException("offline")))
-        assertEquals(SyncOutcome.Retry, runner.run(attempt = 0))
+        assertTrue(runner.run() is SyncOutcome.RetryAfter)
+    }
+
+    @Test fun `Retry-After is honoured but clamped to the cap, upload_in_progress and uploads_busy included`() = runTest {
+        val clients = BackendClients(InMemorySessionStore())
+        val runner = SyncRunner(FakeBackendConfigRepository(BackendConfig(BackendMode.FAKE)), clients, RoomSyncStore(db.syncDao()))
+        val fake = clients.forConfig(BackendConfig(BackendMode.FAKE)) as FakeBackendApi
+        fun http(status: Int, code: String, retryAfter: Long) = io.github.neotheon3.orangebox.core.network.ApiError.Http(
+            status, io.github.neotheon3.orangebox.core.network.ProblemDto(code = code, status = status), retryAfterSeconds = retryAfter,
+        )
+        fake.failNext(http(429, io.github.neotheon3.orangebox.core.network.ApiError.CODE_UPLOAD_IN_PROGRESS, 1))
+        assertEquals(SyncOutcome.RetryAfter(1), runner.run())
+        fake.failNext(http(503, io.github.neotheon3.orangebox.core.network.ApiError.CODE_UPLOADS_BUSY, 5))
+        assertEquals(SyncOutcome.RetryAfter(5), runner.run())
+        fake.failNext(http(503, "service_unavailable", 86_400))
+        assertEquals(SyncOutcome.RetryAfter(SyncRunner.BACKOFF_CAP_SECONDS), runner.run())
+    }
+
+    @Test fun `without Retry-After the backoff doubles from 30 s with jitter, capped at an hour`() {
+        assertEquals(15, SyncRunner.backoffSeconds(1, 0.0))
+        assertEquals(30, SyncRunner.backoffSeconds(1, 1.0))
+        assertEquals(60, SyncRunner.backoffSeconds(2, 1.0))
+        assertEquals(45, SyncRunner.backoffSeconds(2, 0.5))
+        assertEquals(120, SyncRunner.backoffSeconds(3, 1.0))
+        assertEquals(SyncRunner.BACKOFF_CAP_SECONDS, SyncRunner.backoffSeconds(10, 1.0))
+        assertEquals(SyncRunner.BACKOFF_CAP_SECONDS / 2, SyncRunner.backoffSeconds(50, 0.0))
+    }
+
+    @Test fun `failures in a row grow the backoff and a success resets it`() = runTest {
+        val clients = BackendClients(InMemorySessionStore())
+        val status = SyncStatusStore(db.syncDao())
+        val runner = SyncRunner(FakeBackendConfigRepository(BackendConfig(BackendMode.FAKE)), clients, RoomSyncStore(db.syncDao()), status, random = { 1.0 }, clock = { 0L })
+        val fake = clients.forConfig(BackendConfig(BackendMode.FAKE)) as FakeBackendApi
+        val proxy502 = io.github.neotheon3.orangebox.core.network.ApiError.Http(502, null)
+        fake.failNext(proxy502); assertEquals(SyncOutcome.RetryAfter(30), runner.run())
+        fake.failNext(proxy502); assertEquals(SyncOutcome.RetryAfter(60), runner.run())
+        fake.failNext(proxy502); assertEquals(SyncOutcome.RetryAfter(120), runner.run())
+        assertEquals(3, status.read()!!.consecutiveFailures)
+        assertEquals(SyncOutcome.Done, runner.run())
+        assertEquals(0, status.read()!!.consecutiveFailures)
+        fake.failNext(proxy502); assertEquals(SyncOutcome.RetryAfter(30), runner.run())
     }
 }
