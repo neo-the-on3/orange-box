@@ -48,6 +48,7 @@ class SpecContractTest {
             "/v1/health" to "get", "/v1/auth/otp" to "post", "/v1/auth/token" to "post", "/v1/auth/logout" to "post",
             "/v1/vehicles" to "get", "/v1/vehicles" to "post", "/v1/trips" to "get", "/v1/trips/deletions" to "get",
             "/v1/trips/batch" to "post", "/v1/trips/{tripId}" to "delete", "/v1/telemetry/batches" to "post",
+            "/v1/vehicles/{vehicleId}/dtc-reports" to "post",
         ).forEach { (path, method) -> assertTrue("$method $path", hasOperation(path, method)) }
     }
 
@@ -60,6 +61,7 @@ class SpecContractTest {
             "Trip" to TripDto.serializer().descriptor,
             "TripDeletion" to TripDeletionDto.serializer().descriptor,
             "TelemetryBatchAck" to TelemetryBatchAckDto.serializer().descriptor,
+            "DtcReport" to DtcReportDto.serializer().descriptor,
         ).forEach { (schema, d) ->
             val req = required(schema)
             assertTrue("$schema has no required fields?", req.isNotEmpty())
@@ -83,6 +85,7 @@ class SpecContractTest {
             "TelemetryBatch" to TelemetryBatchDto.serializer().descriptor,
             "Sample" to SampleDto.serializer().descriptor,
             "Event" to EventDto.serializer().descriptor,
+            "DtcReportCreate" to DtcReportCreateDto.serializer().descriptor,
         ).forEach { (schema, d) ->
             val req = required(schema)
             assertTrue("$schema has no required fields?", req.isNotEmpty())
@@ -127,6 +130,8 @@ class SpecContractTest {
             "Sample" to SampleDto.serializer().descriptor,
             "Event" to EventDto.serializer().descriptor,
             "Problem" to ProblemDto.serializer().descriptor,
+            "DtcReportCreate" to DtcReportCreateDto.serializer().descriptor,
+            "DtcReport" to DtcReportDto.serializer().descriptor,
         ).forEach { (schema, d) ->
             val props = properties(schema)
             assertTrue("$schema has no properties?", props.isNotEmpty())

@@ -37,6 +37,12 @@ interface BackendApi {
      */
     suspend fun uploadTelemetry(batch: TelemetryBatchDto, idempotencyKey: String): TelemetryBatchAckDto
 
+    /**
+     * `POST /v1/vehicles/{vehicleId}/dtc-reports` with the vehicle's server id: `201` created or `200` replay by
+     * `clientReportId`. `404` (unknown vehicle), `413`, `422` and the retryable errors are thrown as [ApiError].
+     */
+    suspend fun createDtcReport(vehicleServerId: String, report: DtcReportCreateDto, idempotencyKey: String): DtcReportDto
+
     companion object {
         const val MAX_TRIPS_PER_BATCH = 100
 

@@ -202,6 +202,44 @@ class FakeBackendApi(
         ).also { telemetryBatches[batch.clientBatchId] = it }
     }
 
+    private val dtcReportsById = linkedMapOf<String, DtcReportDto>() // by clientReportId
+    private val dtcFailures = ArrayDeque<ApiError>()
+
+    /** Like [failNext], but only for the next DTC report posts. */
+    fun failNextDtcReport(vararg errors: ApiError) {
+        dtcFailures.addAll(errors)
+    }
+
+    /** (vehicle server id, Idempotency-Key) of every DTC report post, failed ones included. */
+    val dtcReportRequests = mutableListOf<Pair<String, String>>()
+
+    /** Stored DTC reports, oldest first. */
+    val dtcReports: List<DtcReportDto> get() = dtcReportsById.values.toList()
+
+    override suspend fun createDtcReport(vehicleServerId: String, report: DtcReportCreateDto, idempotencyKey: String): DtcReportDto {
+        dtcReportRequests += vehicleServerId to idempotencyKey
+        dtcFailures.removeFirstOrNull()?.let { calls += "POST /v1/vehicles/$vehicleServerId/dtc-reports"; throw it }
+        return storeDtcReport(vehicleServerId, report)
+    }
+
+    private suspend fun storeDtcReport(vehicleServerId: String, report: DtcReportCreateDto) =
+        op("POST /v1/vehicles/$vehicleServerId/dtc-reports") {
+            dtcReportsById[report.clientReportId]?.let { return@op it } // 200 replay
+            if (state.vehicles.values.none { it.id == vehicleServerId }) throw http(404, ApiError.CODE_VEHICLE_NOT_FOUND)
+            val codes = report.stored.orEmpty() + report.pending.orEmpty() + report.permanent.orEmpty()
+            if (codes.any { !DtcReportCreateDto.CODE.matches(it) } || report.vin?.let { !DtcReportCreateDto.VIN.matches(it) } == true ||
+                report.kind !in setOf(DtcReportCreateDto.KIND_READ, DtcReportCreateDto.KIND_CLEARED)
+            ) {
+                throw http(422, "validation_failed")
+            }
+            DtcReportDto(
+                id = "dtc_" + (++nextId), vehicleId = vehicleServerId, createdAt = clock(), clientReportId = report.clientReportId,
+                kind = report.kind, readAt = report.readAt, mil = report.mil, stored = report.stored, pending = report.pending,
+                permanent = report.permanent, vin = report.vin, clientTripId = report.clientTripId, odometerKm = report.odometerKm,
+                distanceSinceMilKm = report.distanceSinceMilKm,
+            ).also { dtcReportsById[report.clientReportId] = it }
+        }
+
     override suspend fun deleteTrip(serverId: String) = op("DELETE /v1/trips/$serverId") {
         val trip = state.trips.values.firstOrNull { it.dto.id == serverId } ?: return@op // 404 counts as done
         deleteLocked(trip.dto.clientTripId)

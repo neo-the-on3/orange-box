@@ -99,6 +99,9 @@ class OkHttpBackendApi(
         return call(post("telemetry/batches", gzip(json(batch))).header("Content-Encoding", "gzip").idempotent(idempotencyKey), authenticated = true)
     }
 
+    override suspend fun createDtcReport(vehicleServerId: String, report: DtcReportCreateDto, idempotencyKey: String): DtcReportDto =
+        call(post("vehicles/$vehicleServerId/dtc-reports", json(report)).idempotent(idempotencyKey), authenticated = true)
+
     override suspend fun deleteTrip(serverId: String) {
         try {
             callUnit(Request.Builder().url(url("trips/$serverId")).delete(), authenticated = true)
