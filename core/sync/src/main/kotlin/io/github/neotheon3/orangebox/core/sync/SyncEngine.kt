@@ -20,6 +20,9 @@ import java.util.UUID
  *    per batch, oldest trip first). A batch is stored before it is sent and resent unchanged (same `clientBatchId`
  *    and `Idempotency-Key`) until acknowledged; `413` halves the batch, `422` stops that trip's telemetry,
  *    `404 vehicle_not_found` re-creates the vehicle next run, `trip_deleted` drops the rest.
+ * 5. push queued DTC reads and clears (`POST /v1/vehicles/{vehicleId}/dtc-reports`, oldest first). The
+ *    `clientReportId` is the `Idempotency-Key`, so a resend after a lost response is a `200` replay. Reports wait
+ *    for their vehicle's server id; `404` re-creates the vehicle next run; `400`, `413` and `422` drop the report.
  *
  * `400 sync_window_expired` → a full walk, then by `reason`: `deployment_changed` re-creates vehicles the server
  * lost and re-uploads trips it didn't return (fresh `Idempotency-Key`s); `purged`, `invalid` and anything else
@@ -46,6 +49,9 @@ class SyncEngine(
         val telemetryEvents: Int = 0,
         /** Trips whose telemetry was rejected (`422`, or `413` even at one item). */
         val telemetryRejected: Int = 0,
+        val dtcReports: Int = 0,
+        /** DTC reports the server refused (`400`, `413`, `422`) or whose vehicle is gone; not retried. */
+        val dtcReportsDropped: Int = 0,
     )
 
     private var report = Report()
@@ -57,6 +63,7 @@ class SyncEngine(
         pushVehicles()
         pushTrips()
         pushTelemetry()
+        pushDtcReports()
         return report
     }
 
@@ -205,7 +212,8 @@ class SyncEngine(
     }
 
     private suspend fun pushVehicles() {
-        val withTrips = store.trips().filter { it.needsUpload }.mapNotNull { it.clientVehicleId }.toSet()
+        val withTrips = store.trips().filter { it.needsUpload }.mapNotNull { it.clientVehicleId }.toSet() +
+            store.dtcReports().map { it.clientVehicleId }
         for (v in store.vehicles().filter { it.serverId == null && !it.goneOnServer && it.clientVehicleId in withTrips }) {
             try {
                 // A fresh key is fine: the server de-duplicates by clientVehicleId (200 replay).
@@ -345,6 +353,41 @@ class SyncEngine(
                     return Sent.TRIP_DONE
                 }
                 else -> throw e // retryable or not, the pending batch stays and is resent with the same key
+            }
+        }
+    }
+
+    // --- DTC reports ---
+
+    private suspend fun pushDtcReports() {
+        val vehicles = store.vehicles().associateBy { it.clientVehicleId }
+        val missing = mutableSetOf<String>() // 404 this run: wait for the vehicle to be re-created
+        for (q in store.dtcReports()) {
+            val id = q.report.clientReportId
+            val v = vehicles[q.clientVehicleId]
+            if (v == null || v.goneOnServer) {
+                store.removeDtcReport(id)
+                report = report.copy(dtcReportsDropped = report.dtcReportsDropped + 1)
+                continue
+            }
+            val serverId = v.serverId ?: continue
+            if (q.clientVehicleId in missing) continue
+            try {
+                api.createDtcReport(serverId, q.report, idempotencyKey = id)
+                store.removeDtcReport(id)
+                report = report.copy(dtcReports = report.dtcReports + 1)
+            } catch (e: ApiError.Http) {
+                when {
+                    e.status == 404 -> {
+                        store.setVehicleServerId(q.clientVehicleId, null)
+                        missing += q.clientVehicleId
+                    }
+                    e.status == 400 || e.status == 413 || e.status == 422 -> {
+                        store.removeDtcReport(id)
+                        report = report.copy(dtcReportsDropped = report.dtcReportsDropped + 1)
+                    }
+                    else -> throw e // 401, 409 in flight, 429, 503: retried with the same key
+                }
             }
         }
     }

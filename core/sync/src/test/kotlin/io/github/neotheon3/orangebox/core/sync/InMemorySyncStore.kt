@@ -36,6 +36,7 @@ class InMemorySyncStore : SyncStore {
     val events = linkedMapOf<String, MutableList<Pair<Long, EventDto>>>()
     val telemetrySent = mutableMapOf<String, Pair<Long, Long>>()
     val telemetryDone = mutableMapOf<String, String?>()
+    val dtcQueue = mutableListOf<QueuedDtcReport>()
     var pendingTelemetry: PendingTelemetryBatch? = null
     private var rowId = 0L
 
@@ -150,4 +151,10 @@ class InMemorySyncStore : SyncStore {
     override suspend fun markTelemetryDone(clientTripId: String, code: String?) { telemetryDone[clientTripId] = code }
     override suspend fun pendingTelemetryBatch() = pendingTelemetry
     override suspend fun setPendingTelemetryBatch(batch: PendingTelemetryBatch?) { pendingTelemetry = batch }
+
+    override suspend fun dtcReports(): List<QueuedDtcReport> = dtcQueue.sortedBy { it.report.readAt }
+
+    override suspend fun removeDtcReport(clientReportId: String) {
+        dtcQueue.removeAll { it.report.clientReportId == clientReportId }
+    }
 }
