@@ -1,0 +1,255 @@
+package io.github.neotheon3.orangebox.core.network
+
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.test.runTest
+import mockwebserver3.Dispatcher
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
+import okhttp3.Headers.Companion.headersOf
+import okhttp3.OkHttpClient
+import okio.Buffer
+import okio.GzipSource
+import okio.buffer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import java.time.Instant
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
+
+/** MockWebServer contract tests: request shapes and response handling as docs/backend/openapi-v2.yaml defines them. */
+class OkHttpBackendApiTest {
+    private lateinit var server: MockWebServer
+    private val sessions = InMemorySessionStore()
+    private lateinit var api: OkHttpBackendApi
+
+    @Before fun setUp() {
+        server = MockWebServer()
+        server.start()
+        api = OkHttpBackendApi(server.url("/").toString(), OkHttpClient(), sessions, clock = { 1_000_000L }, allowCleartextForTests = true)
+    }
+
+    @After fun tearDown() = server.close()
+
+    private fun json(code: Int, body: String, vararg headers: Pair<String, String>) = MockResponse.Builder()
+        .code(code)
+        .headers(headersOf("Content-Type", if (code >= 400) "application/problem+json" else "application/json", *headers.flatMap { listOf(it.first, it.second) }.toTypedArray()))
+        .body(body)
+        .build()
+
+    private suspend fun signedIn(access: String = "a1") = sessions.write(Session(access, "r1", "m1", 2_000_000L, 9_000_000L))
+
+    @Test fun `base url must be https`() {
+        assertThrows(IllegalArgumentException::class.java) { OkHttpBackendApi("http://api.example.com", OkHttpClient(), sessions) }
+        assertThrows(IllegalArgumentException::class.java) { OkHttpBackendApi("not a url", OkHttpClient(), sessions) }
+        assertThrows(IllegalArgumentException::class.java) { OkHttpBackendApi("https://api.example.com/?x=1", OkHttpClient(), sessions) }
+        OkHttpBackendApi("https://api.example.com/prefix", OkHttpClient(), sessions)
+    }
+
+    @Test fun `email otp sign-in stores the session and sends no auth header`() = runTest {
+        server.enqueue(json(202, """{"expiresIn":600,"resendAfter":60}"""))
+        server.enqueue(json(200, TOKEN_JSON))
+        assertEquals(600, api.requestOtp(" Kiran@Example.com ").expiresIn)
+        val tokens = api.signIn("kiran@example.com", "012345")
+        assertEquals("m-1", tokens.memberId)
+
+        val otp = server.takeRequest()
+        assertEquals("/v1/auth/otp", otp.url.encodedPath)
+        assertEquals("""{"email":"Kiran@Example.com"}""", otp.body!!.utf8())
+        assertNull(otp.headers["Authorization"])
+        assertNotNull(otp.headers["X-Request-Id"])
+        val token = server.takeRequest()
+        assertEquals("""{"email":"kiran@example.com","code":"012345","grantType":"email_otp"}""", token.body!!.utf8())
+
+        val s = sessions.read()!!
+        assertEquals("acc", s.accessToken)
+        assertEquals("ref", s.refreshToken)
+        assertEquals(1_000_000L + 900_000L, s.accessExpiresAtMillis)
+    }
+
+    @Test fun `bearer token is attached and the member id is never sent`() = runTest {
+        signedIn()
+        server.enqueue(json(200, """{"items":[],"nextCursor":null,"nextSince":"S1"}"""))
+        api.listTrips()
+        val r = server.takeRequest()
+        assertEquals("Bearer a1", r.headers["Authorization"])
+        assertFalse(r.url.toString().contains("m1"))
+    }
+
+    @Test fun `401 refreshes once and concurrent callers share the refresh`() = runTest {
+        signedIn("old")
+        val refreshes = AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.url.encodedPath) {
+                "/v1/auth/token" -> {
+                    refreshes.incrementAndGet()
+                    Thread.sleep(50)
+                    json(200, TOKEN_JSON)
+                }
+                else -> if (request.headers["Authorization"] == "Bearer acc") json(200, """{"items":[],"nextCursor":null,"nextSince":"S"}""")
+                else json(401, problem(401, "token_expired"))
+            }
+        }
+        val pages = List(5) { async { api.listTrips() } }.awaitAll()
+        assertEquals(5, pages.size)
+        assertEquals(1, refreshes.get())
+        assertEquals("acc", sessions.read()!!.accessToken)
+    }
+
+    @Test fun `rejected refresh clears the session`() = runTest {
+        signedIn()
+        server.enqueue(json(401, problem(401, "token_expired")))
+        server.enqueue(json(400, problem(400, "invalid_grant")))
+        try {
+            api.listTrips()
+            fail()
+        } catch (e: ApiError.NotSignedIn) {
+            // expected
+        }
+        assertNull(sessions.read())
+        assertThrows(ApiError.NotSignedIn::class.java) { kotlinx.coroutines.runBlocking { api.listTrips() } }
+    }
+
+    @Test fun `problem+json maps to ApiError with code, reason and request id`() = runTest {
+        signedIn()
+        server.enqueue(json(400, """{"type":"about:blank","title":"Sync window expired","status":400,"code":"sync_window_expired","reason":"deployment_changed","requestId":"req-9"}"""))
+        val e = runCatching { api.listTrips(since = "S") }.exceptionOrNull() as ApiError.Http
+        assertTrue(e.isSyncWindowExpired)
+        assertEquals(SyncWindowReason.DEPLOYMENT_CHANGED, e.syncWindowReason)
+        assertEquals("req-9", e.requestId)
+        assertFalse(e.isRetryable)
+    }
+
+    @Test fun `sync window reason is decoded leniently`() {
+        assertEquals(SyncWindowReason.PURGED, SyncWindowReason.parse("purged"))
+        assertEquals(SyncWindowReason.INVALID, SyncWindowReason.parse("invalid"))
+        assertEquals(SyncWindowReason.UNKNOWN, SyncWindowReason.parse("cosmic_rays"))
+        assertEquals(SyncWindowReason.UNKNOWN, SyncWindowReason.parse(null))
+        val p = BackendJson.decodeFromString(ProblemDto.serializer(), """{"type":"about:blank","title":"x","status":400,"requestId":"r","code":"sync_window_expired","reason":42,"extra":{"a":1}}""")
+        assertEquals(SyncWindowReason.UNKNOWN, SyncWindowReason.parse(p.reason))
+    }
+
+    @Test fun `503 and 429 carry Retry-After and are retryable`() = runTest {
+        signedIn()
+        server.enqueue(json(503, problem(503, "service_unavailable"), "Retry-After" to "7"))
+        val e = runCatching { api.listTrips() }.exceptionOrNull() as ApiError.Http
+        assertEquals(7L, e.retryAfterSeconds)
+        assertTrue(e.isRetryable)
+        server.enqueue(json(429, problem(429, "rate_limited"), "Retry-After" to "3"))
+        val r = runCatching { api.listTrips() }.exceptionOrNull() as ApiError.Http
+        assertEquals(3L, r.retryAfterSeconds)
+        assertTrue(r.isRetryable)
+    }
+
+    @Test fun `vehicle create - 201, 200 replay, 410 vehicle_deleted, 409 in flight`() = runTest {
+        signedIn()
+        val v = VehicleCreateDto(clientVehicleId = "3f0e1c7a-0000-4000-8000-000000000001", make = "Maruti Suzuki", model = "SX4", fuelType = "gasoline")
+        server.enqueue(json(201, VEHICLE_JSON))
+        server.enqueue(json(200, VEHICLE_JSON))
+        server.enqueue(json(410, problem(410, "vehicle_deleted")))
+        server.enqueue(json(409, problem(409, "idempotency_in_flight")))
+        assertEquals("veh_1", api.createVehicle(v, "k1").id)
+        assertEquals("veh_1", api.createVehicle(v, "k2").id)
+        val gone = runCatching { api.createVehicle(v, "k3") }.exceptionOrNull() as ApiError.Http
+        assertEquals(ApiError.CODE_VEHICLE_DELETED, gone.code)
+        assertFalse(gone.isRetryable)
+        val inFlight = runCatching { api.createVehicle(v, "k4") }.exceptionOrNull() as ApiError.Http
+        assertTrue(inFlight.isRetryable)
+        val first = server.takeRequest()
+        assertEquals("k1", first.headers["Idempotency-Key"])
+        assertTrue(first.body!!.utf8().contains("\"clientVehicleId\":\"3f0e1c7a-0000-4000-8000-000000000001\""))
+    }
+
+    @Test fun `trip walk - since only on the first page, cursor afterwards, opaque tokens untouched`() = runTest {
+        signedIn()
+        server.enqueue(json(200, """{"items":[$TRIP_JSON],"nextCursor":"c/2+=","nextSince":null}"""))
+        server.enqueue(json(200, """{"items":[],"nextCursor":null,"nextSince":"S+/2=="}"""))
+        val p1 = api.listTrips(since = "S+/1==")
+        val p2 = api.listTrips(cursor = p1.nextCursor)
+        assertEquals("S+/2==", p2.nextSince)
+        val r1 = server.takeRequest()
+        assertEquals("S+/1==", r1.url.queryParameter("since"))
+        assertNull(r1.url.queryParameter("cursor"))
+        val r2 = server.takeRequest()
+        assertEquals("c/2+=", r2.url.queryParameter("cursor"))
+        assertNull(r2.url.queryParameter("since"))
+        val trip = p1.items.single()
+        assertEquals(Instant.parse("2026-10-23T14:05:00.1Z"), trip.updatedAt)
+    }
+
+    @Test fun `deletions walk sends since on every page`() = runTest {
+        signedIn()
+        server.enqueue(json(200, """{"items":[{"id":"t1","clientTripId":"c1","deletedAt":"2026-10-23T14:05:00Z"}],"nextCursor":"d2","nextSince":null}"""))
+        server.enqueue(json(200, """{"items":[],"nextCursor":null,"nextSince":"ignored"}"""))
+        api.listTripDeletions("S")
+        api.listTripDeletions("S", "d2")
+        assertEquals("/v1/trips/deletions", server.takeRequest().url.encodedPath)
+        val r2 = server.takeRequest()
+        assertEquals("S", r2.url.queryParameter("since"))
+        assertEquals("d2", r2.url.queryParameter("cursor"))
+    }
+
+    @Test fun `trip batch is gzip json with an idempotency key and per-item results`() = runTest {
+        signedIn()
+        server.enqueue(json(200, """{"results":[{"clientId":"c1","status":"created","id":"t1"},{"clientId":"c2","status":"rejected","id":null,"problem":{"type":"about:blank","title":"Deleted","status":410,"code":"trip_deleted","requestId":"r"}}]}"""))
+        val upload = TripUploadDto(
+            clientTripId = "c1", vehicleId = "veh_1", state = TripUploadDto.STATE_COMPLETED,
+            startedAt = Instant.parse("2026-10-23T14:05:00Z"), snapshotAt = Instant.parse("2026-10-23T14:35:00.123Z"),
+            endedAt = Instant.parse("2026-10-23T14:35:00Z"), distanceKm = 12.5,
+        )
+        val result = api.uploadTrips(TripBatchDto(listOf(upload, upload.copy(clientTripId = "c2"))), "batch-key")
+        assertTrue(result.results[0].accepted)
+        assertFalse(result.results[1].accepted)
+        assertEquals(ApiError.CODE_TRIP_DELETED, result.results[1].problem!!.code)
+
+        val r = server.takeRequest()
+        assertEquals("gzip", r.headers["Content-Encoding"])
+        assertEquals("batch-key", r.headers["Idempotency-Key"])
+        val body = GzipSource(Buffer().write(r.body!!)).buffer().readUtf8()
+        assertTrue(body, body.contains("\"startedAt\":\"2026-10-23T14:05:00Z\""))
+        assertTrue(body, body.contains("\"snapshotAt\":\"2026-10-23T14:35:00.123Z\""))
+        assertFalse("absent fields are omitted, not null", body.contains("null"))
+    }
+
+    @Test fun `deleting an already deleted trip counts as done`() = runTest {
+        signedIn()
+        server.enqueue(json(404, problem(404, "not_found")))
+        api.deleteTrip("t1")
+        assertEquals("DELETE", server.takeRequest().method)
+    }
+
+    @Test fun `logout clears the session even when the call fails`() = runTest {
+        signedIn()
+        server.enqueue(json(500, problem(500, "internal_error")))
+        api.logout()
+        assertNull(sessions.read())
+    }
+
+    @Test fun `each request gets its own X-Request-Id`() = runTest {
+        server.enqueue(json(200, HEALTH_JSON))
+        server.enqueue(json(200, HEALTH_JSON))
+        api.health()
+        api.health()
+        val ids = ConcurrentLinkedQueue<String>()
+        repeat(2) { ids.add(server.takeRequest().headers["X-Request-Id"]!!) }
+        assertEquals(2, ids.toSet().size)
+    }
+
+    companion object {
+        fun problem(status: Int, code: String) = """{"type":"about:blank","title":"t","status":$status,"code":"$code","requestId":"req"}"""
+
+        const val TOKEN_JSON = """{"accessToken":"acc","tokenType":"Bearer","expiresIn":900,"refreshToken":"ref","refreshExpiresIn":2592000,"memberId":"m-1","isNewMember":true}"""
+        const val HEALTH_JSON = """{"status":"ok","apiVersion":"1.0.0","time":"2026-10-23T14:05:00Z"}"""
+        const val VEHICLE_JSON = """{"id":"veh_1","clientVehicleId":"3f0e1c7a-0000-4000-8000-000000000001","make":"Maruti Suzuki","model":"SX4","fuelType":"gasoline","archived":false,"createdAt":"2026-10-23T14:05:00.000Z","updatedAt":"2026-10-23T14:05:00.000Z","futureField":true}"""
+        const val TRIP_JSON = """{"id":"t1","clientTripId":"c1","vehicleId":"veh_1","state":"completed","startedAt":"2026-10-23T14:05:00.000Z","endedAt":"2026-10-23T14:35:00.000Z","snapshotAt":"2026-10-23T14:35:00.000Z","createdAt":"2026-10-23T14:05:00.000Z","updatedAt":"2026-10-23T14:05:00.1Z","distanceKm":12.5,"pointsAwarded":null}"""
+    }
+}
