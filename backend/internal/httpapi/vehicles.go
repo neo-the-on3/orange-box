@@ -104,8 +104,8 @@ func (s *Server) CreateVehicle(ctx context.Context, req api.CreateVehicleRequest
 	f := store.VehicleFields{
 		Nickname:             b.Nickname,
 		VariantID:            fromNullable(b.VariantId),
-		Make:                 b.Make,
-		Model:                b.Model,
+		Make:                 fromNullable(b.Make),
+		Model:                fromNullable(b.Model),
 		FuelType:             string(b.FuelType),
 		EngineDisplacementCc: fromNullable(b.EngineDisplacementCc),
 		ModelYear:            fromNullable(b.ModelYear),
@@ -275,12 +275,8 @@ func (s *Server) UpdateVehicle(ctx context.Context, req api.UpdateVehicleRequest
 func applyVehiclePatch(f store.VehicleFields, p api.VehiclePatch) store.VehicleFields {
 	setIf(&f.Nickname, p.Nickname)
 	mergeNullable(&f.VariantID, p.VariantId)
-	if p.Make != nil {
-		f.Make = *p.Make
-	}
-	if p.Model != nil {
-		f.Model = *p.Model
-	}
+	mergeNullable(&f.Make, p.Make)
+	mergeNullable(&f.Model, p.Model)
 	if p.FuelType != nil {
 		f.FuelType = string(*p.FuelType)
 	}
@@ -344,8 +340,8 @@ func toAPIVehicle(v store.Vehicle) api.Vehicle {
 		ClientVehicleId:      api.NullableFrom(v.ClientVehicleID),
 		Nickname:             v.Nickname,
 		VariantId:            api.NullableFrom(v.VariantID),
-		Make:                 v.Make,
-		Model:                v.Model,
+		Make:                 api.NullableFrom(v.Make),
+		Model:                api.NullableFrom(v.Model),
 		FuelType:             api.FuelType(v.FuelType),
 		EngineDisplacementCc: api.NullableFrom(v.EngineDisplacementCc),
 		ModelYear:            api.NullableFrom(v.ModelYear),

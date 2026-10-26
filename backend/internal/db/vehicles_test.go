@@ -28,7 +28,7 @@ func ifVersion(v int64) func(store.Vehicle) error {
 
 func fields() store.VehicleFields {
 	year := 2021
-	return store.VehicleFields{Make: "Hyundai", Model: "i20", FuelType: "gasoline", ModelYear: &year}
+	return store.VehicleFields{Make: ptr("Hyundai"), Model: ptr("i20"), FuelType: "gasoline", ModelYear: &year}
 }
 
 func TestVehicleStoreCreateDedup(t *testing.T) {
@@ -41,13 +41,13 @@ func TestVehicleStoreCreateDedup(t *testing.T) {
 	clientID := newID()
 
 	v, outcome, err := s.CreateVehicle(ctx, member, &clientID, fields())
-	if err != nil || outcome != store.Created || v.Version != 1 || v.Make != "Hyundai" || *v.ModelYear != 2021 || *v.ClientVehicleID != clientID {
+	if err != nil || outcome != store.Created || v.Version != 1 || *v.Make != "Hyundai" || *v.ModelYear != 2021 || *v.ClientVehicleID != clientID {
 		t.Fatalf("create: %+v %v %v", v, outcome, err)
 	}
 	other := fields()
-	other.Make = "Kia"
+	other.Make = ptr("Kia")
 	again, outcome, err := s.CreateVehicle(ctx, member, &clientID, other)
-	if err != nil || outcome != store.Existing || again.ID != v.ID || again.Make != "Hyundai" {
+	if err != nil || outcome != store.Existing || again.ID != v.ID || *again.Make != "Hyundai" {
 		t.Fatalf("duplicate: %+v %v %v", again, outcome, err)
 	}
 	// Another member's identical client id is independent.
@@ -135,7 +135,7 @@ func TestVehicleStoreDeleteRacesPatch(t *testing.T) {
 		var patchErr, deleteErr error
 		wg.Go(func() {
 			_, patchErr = s.UpdateVehicle(ctx, member, v.ID, ifVersion(1), func(f store.VehicleFields) store.VehicleFields {
-				f.Model = "i20 N"
+				f.Model = ptr("i20 N")
 				return f
 			})
 		})
@@ -144,7 +144,7 @@ func TestVehicleStoreDeleteRacesPatch(t *testing.T) {
 		switch {
 		case patchErr == nil && errors.Is(deleteErr, errStale):
 			patchWins++
-			if got, err := s.GetVehicle(ctx, member, v.ID); err != nil || got.Model != "i20 N" || got.Version != 2 {
+			if got, err := s.GetVehicle(ctx, member, v.ID); err != nil || *got.Model != "i20 N" || got.Version != 2 {
 				t.Fatalf("round %d: after patch won: %+v %v", round, got, err)
 			}
 		case deleteErr == nil && errors.Is(patchErr, store.ErrNotFound):

@@ -163,7 +163,7 @@ INSERT INTO vehicles (
     obd_elm_version, obd_protocol, archived
 ) VALUES (
     $1, $2, $3, $4, $5,
-    $6::text, $7::text, $8::text, $9, $10,
+    $6, $7, $8::text, $9, $10,
     $11, $12, $13, $14,
     $15, $16, $17
 )
@@ -177,8 +177,8 @@ type InsertVehicleParams struct {
 	ClientVehicleID      *uuid.UUID
 	Nickname             *string
 	VariantID            *string
-	Make                 string
-	Model                string
+	Make                 *string
+	Model                *string
 	FuelType             string
 	EngineDisplacementCc *int32
 	ModelYear            *int16
@@ -369,8 +369,8 @@ const updateVehicle = `-- name: UpdateVehicle :one
 UPDATE vehicles SET
     nickname               = $1,
     variant_id             = $2,
-    make                   = $3::text,
-    model                  = $4::text,
+    make                   = $3,
+    model                  = $4,
     fuel_type              = $5::text,
     engine_displacement_cc = $6,
     model_year             = $7,
@@ -390,8 +390,8 @@ RETURNING id, member_id, client_vehicle_id, nickname, variant_id, make, model, f
 type UpdateVehicleParams struct {
 	Nickname             *string
 	VariantID            *string
-	Make                 string
-	Model                string
+	Make                 *string
+	Model                *string
 	FuelType             string
 	EngineDisplacementCc *int32
 	ModelYear            *int16

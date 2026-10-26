@@ -193,7 +193,7 @@ func TestVehicleCRUD(t *testing.T) {
 		t.Fatalf("no-op PATCH: %d %v", r.status, r.header)
 	}
 	// Non-nullable fields can't be nulled (422), minProperties 1.
-	for _, bad := range []string{`{"make":null}`, `{"archived":null}`, `{}`, `{"modelYear":1900}`} {
+	for _, bad := range []string{`{"fuelType":null}`, `{"archived":null}`, `{}`, `{"modelYear":1900}`} {
 		if r := m.call(http.MethodPatch, "/v1/vehicles/"+id, bad, "If-Match", newTag); r.status != http.StatusUnprocessableEntity {
 			t.Errorf("PATCH %s: %d %s", bad, r.status, r.body)
 		}
@@ -546,5 +546,46 @@ func TestVehicleConcurrentPatchStress(t *testing.T) {
 	got := m.call(http.MethodGet, loc, "")
 	if etag := got.header.Get("ETag"); etag != `"v`+strconv.Itoa(n+1)+`"` {
 		t.Errorf("after %d patches: ETag %s, want every patch applied", n, etag)
+	}
+}
+
+// TestVehicleWithoutMakeModel: since spec draft.9 only fuelType is
+// required. make and model come back as null (present, not omitted), a
+// PATCH can set them and null clears them again; fuelType is still
+// required.
+func TestVehicleWithoutMakeModel(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("nomake")
+
+	r := m.call(http.MethodPost, "/v1/vehicles", withClientID(`{"nickname":"Swift","fuelType":"gasoline"}`, uuid.New()))
+	if r.status != http.StatusCreated {
+		t.Fatalf("create: %d %s", r.status, r.body)
+	}
+	v := r.json(t)
+	for _, k := range []string{"make", "model"} {
+		if val, present := v[k]; !present || val != nil {
+			t.Errorf("%s = %v (present %v), want null", k, val, present)
+		}
+	}
+	if v["nickname"] != "Swift" || v["fuelType"] != "gasoline" {
+		t.Errorf("create: %v", v)
+	}
+	id, etag := v["id"].(string), r.header.Get("ETag")
+
+	r = m.call(http.MethodPatch, "/v1/vehicles/"+id, `{"make":"Maruti Suzuki","model":"Swift"}`, "If-Match", etag)
+	if r.status != http.StatusOK || r.json(t)["make"] != "Maruti Suzuki" {
+		t.Fatalf("PATCH make: %d %s", r.status, r.body)
+	}
+	r = m.call(http.MethodPatch, "/v1/vehicles/"+id, `{"make":null}`, "If-Match", r.header.Get("ETag"))
+	if v := r.json(t); r.status != http.StatusOK || v["make"] != nil || v["model"] != "Swift" {
+		t.Fatalf("PATCH make null: %d %s", r.status, r.body)
+	}
+
+	if r := m.call(http.MethodPost, "/v1/vehicles", `{"make":"Kia","model":"Rio"}`); r.status != http.StatusUnprocessableEntity {
+		t.Errorf("no fuelType: %d %s", r.status, r.body)
+	}
+	if r := m.call(http.MethodPost, "/v1/vehicles", `{"fuelType":"diesel"}`); r.status != http.StatusCreated {
+		t.Errorf("fuelType only: %d %s", r.status, r.body)
 	}
 }
