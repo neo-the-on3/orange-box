@@ -150,6 +150,38 @@
     <string name="account_sync_now">Sync now</string>
     <string name="account_sign_out">Sign out</string>
     <string name="account_sign_out_title">Sign out?</string>
-    <string name="account_sign_out_body">Trips from your other devices are removed from this phone. Trips recorded here stay, and upload again when you sign in.</string>
+    <string name="account_sign_out_body">Your trips stay on this phone and stay with this account: they sync again only when you sign back in to it.</string>
+    <string name="account_this_account">this account</string>
+    <string name="account_other_trips_title">Trips on this phone</string>
+    <plurals name="account_other_trips_body">
+        <item quantity="one">This phone has %1$d trip that isn\'t in %2$s: recorded while signed out, or in another account. It won\'t sync unless you merge it.</item>
+        <item quantity="other">This phone has %1$d trips that aren\'t in %2$s: recorded while signed out, or in another account. They won\'t sync unless you merge them.</item>
+    </plurals>
+    <string name="account_merge">Merge with account</string>
+    <string name="account_merge_body">Upload these trips and their vehicles to %1$s, then add its trips to this phone.</string>
+    <string name="account_replace">Replace with account\'s trips</string>
+    <string name="account_replace_body">Delete these trips from this phone and show only the account\'s trips.</string>
+    <plurals name="account_replace_confirm_title">
+        <item quantity="one">Delete %1$d trip from this phone?</item>
+        <item quantity="other">Delete %1$d trips from this phone?</item>
+    </plurals>
+    <plurals name="account_replace_confirm_body">
+        <item quantity="one">%1$d trip will be deleted from this phone and replaced with the trips of %2$s.</item>
+        <item quantity="other">%1$d trips will be deleted from this phone and replaced with the trips of %2$s.</item>
+    </plurals>
+    <plurals name="account_replace_never_uploaded">
+        <item quantity="one">%1$d of them was never uploaded and will be lost permanently.</item>
+        <item quantity="other">%1$d of them were never uploaded and will be lost permanently.</item>
+    </plurals>
+    <string name="account_replace_undo">This can\'t be undone.</string>
+    <plurals name="account_replace_confirm">
+        <item quantity="one">Delete %1$d trip</item>
+        <item quantity="other">Delete %1$d trips</item>
+    </plurals>
+    <plurals name="account_other_trips_row">
+        <item quantity="one">%1$d trip on this phone isn\'t in this account and doesn\'t sync.</item>
+        <item quantity="other">%1$d trips on this phone aren\'t in this account and don\'t sync.</item>
+    </plurals>
+    <string name="account_other_trips_choose">Choose…</string>
     <string name="account_cancel">Cancel</string>
 </resources>

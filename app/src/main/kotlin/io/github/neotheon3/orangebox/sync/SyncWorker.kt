@@ -33,7 +33,8 @@ sealed interface SyncOutcome {
 
 /**
  * One backend sync run ([SyncEngine]). Off: nothing, and no client is built. Remote without a session: nothing
- * (sign in first). Retryable failures (`503`, `429`, network, `409` in flight) run again after the server's
+ * (sign in first); Remote syncs only the signed-in member's trips, and nothing while the sign-in choice about
+ * the phone's other trips is unanswered. Retryable failures (`503`, `429`, network, `409` in flight) run again after the server's
  * `Retry-After` (e.g. `429 upload_in_progress` 1 s, `503 uploads_busy` 5 s), clamped to [BACKOFF_CAP_SECONDS];
  * without one (a proxy's 502/503/504, network) after an exponential backoff with jitter from
  * [BACKOFF_BASE_SECONDS], capped at [BACKOFF_CAP_SECONDS]. Other errors end the run.
@@ -61,18 +62,28 @@ class SyncRunner(
     suspend fun run(): SyncOutcome {
         val config = backendConfig.config.first()
         val api = clients.forConfig(config) ?: return SyncOutcome.Done
-        if (config.mode == BackendMode.REMOTE && clients.sessionStore.read() == null) return SyncOutcome.Done
+        val session = clients.sessionStore.read()
+        if (config.mode == BackendMode.REMOTE && session == null) return SyncOutcome.Done
+        // Just signed in with other trips on the phone: nothing syncs until merge / replace / cancel is chosen.
+        if (config.mode == BackendMode.REMOTE && store.choicePending()) return SyncOutcome.Done
+        // Remote syncs the member's own trips; Fake has no account (the trips recorded without one).
+        val account = if (config.mode == BackendMode.REMOTE) session?.memberId else null
         val previous = status?.read()?.consecutiveFailures ?: failuresInMemory
-        val outcome = runEngine(api, config.mode, previous)
+        val outcome = runEngine(api, config.mode, previous, account)
         failuresInMemory = outcome.second.consecutiveFailures
         status?.write(outcome.second)
         return outcome.first
     }
 
-    private suspend fun runEngine(api: io.github.neotheon3.orangebox.core.network.BackendApi, mode: BackendMode, failures: Int): Pair<SyncOutcome, SyncStatus> {
+    private suspend fun runEngine(
+        api: io.github.neotheon3.orangebox.core.network.BackendApi,
+        mode: BackendMode,
+        failures: Int,
+        account: String?,
+    ): Pair<SyncOutcome, SyncStatus> {
         val now = clock()
         return try {
-            val r = SyncEngine(api, storeOverride ?: store).run()
+            val r = SyncEngine(api, storeOverride ?: store, account = account).run()
             OrangeLog.i(
                 OrangeLog.Areas.BACKEND, "sync_ok", "mode" to mode.wireName, "pulled" to r.pulled, "uploaded" to r.uploaded,
                 "deleted" to r.deletedByServer, "rejected" to r.rejected, "recovery" to (r.recovery?.name ?: "none"), "dropped" to r.dropped,

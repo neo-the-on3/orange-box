@@ -27,7 +27,17 @@ data class BackendAccountState(
     val lastSync: SyncStatus? = null,
     /** A "Sync now" run is queued or running. */
     val syncing: Boolean = false,
+    /**
+     * Remote, signed in: trips on this phone that aren't this account's (recorded signed out, or in another
+     * account). They never sync to it unless merged; Settings offers the choice while there are any.
+     */
+    val otherTrips: Int = 0,
+    /** Just signed in with [otherTrips] on the phone: ask merge / replace before anything syncs. */
+    val otherTripsChoicePending: Boolean = false,
 )
+
+/** The trips "Replace with account's trips" would delete: [count], of which [neverUploaded] exist nowhere else. */
+data class OtherTrips(val count: Int, val neverUploaded: Int)
 
 /** Result of the e-mail + one-time-code steps. */
 sealed interface SignInResult {
@@ -80,6 +90,18 @@ interface BackendAccount {
 
     /** Queues a sync run now (Fake, or Remote when signed in). */
     suspend fun syncNow()
+
+    /** What "Replace" would delete (see [BackendAccountState.otherTrips]). */
+    suspend fun otherTrips(): OtherTrips = OtherTrips(0, 0)
+
+    /** "Merge with account": the other trips (and their vehicles) become this account's and upload; then sync. */
+    suspend fun mergeOtherTrips() {}
+
+    /** "Replace with account's trips": deletes the other trips from this phone, then syncs the account's. */
+    suspend fun replaceOtherTrips() {}
+
+    /** Cancel / dismiss: no change; only this account's own trips sync. The choice stays in Settings. */
+    suspend fun keepOtherTripsSeparate() {}
 
     companion object {
         /** The spec's e-mail codes are 6 digits. */

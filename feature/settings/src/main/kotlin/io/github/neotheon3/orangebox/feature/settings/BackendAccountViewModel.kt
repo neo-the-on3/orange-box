@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.neotheon3.orangebox.core.datastore.BackendAccount
 import io.github.neotheon3.orangebox.core.datastore.BackendAccountState
+import io.github.neotheon3.orangebox.core.datastore.OtherTrips
 import io.github.neotheon3.orangebox.core.datastore.SignInError
 import io.github.neotheon3.orangebox.core.datastore.SignInResult
 import kotlinx.coroutines.Job
@@ -33,10 +34,20 @@ data class SignInForm(
     val resendInSeconds: Int = 0,
 )
 
+/** The dialogs about the phone's trips that aren't the signed-in account's (Q13). */
+sealed interface OtherTripsDialog {
+    /** Merge with account / Replace with account's trips / Cancel. */
+    data object Choose : OtherTripsDialog
+
+    /** Second step of Replace: what will be deleted from this phone. */
+    data class ConfirmReplace(val trips: OtherTrips) : OtherTripsDialog
+}
+
 data class AccountUiState(
     val account: BackendAccountState = BackendAccountState(),
     val form: SignInForm = SignInForm(),
     val confirmSignOut: Boolean = false,
+    val otherTripsDialog: OtherTripsDialog? = null,
 )
 
 /** Settings → Server → Account and sync (M9): e-mail + one-time code sign-in, status, Sync now, sign-out. */
@@ -46,8 +57,47 @@ class BackendAccountViewModel @Inject constructor(private val account: BackendAc
     private val confirmSignOut = MutableStateFlow(false)
     private var countdown: Job? = null
 
-    val uiState: StateFlow<AccountUiState> = combine(account.state, form, confirmSignOut) { a, f, c -> AccountUiState(a, f, c) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountUiState())
+    /** A dialog opened here (from Settings, or the Replace confirmation). */
+    private val dialog = MutableStateFlow<OtherTripsDialog?>(null)
+
+    /** Answered in this screen: don't show the sign-in prompt again while the account catches up. */
+    private val answered = MutableStateFlow(false)
+
+    val uiState: StateFlow<AccountUiState> = combine(account.state, form, confirmSignOut, dialog, answered) { a, f, c, d, done ->
+        val prompt = if (a.signedIn && a.otherTripsChoicePending && !done) OtherTripsDialog.Choose else null
+        AccountUiState(a, f, c, d ?: prompt)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountUiState())
+
+    init {
+        viewModelScope.launch { account.state.collect { if (!it.otherTripsChoicePending) answered.value = false } }
+    }
+
+    /** Settings: "Choose…" next to the trips that don't sync. */
+    fun onOtherTripsChoose() { dialog.value = OtherTripsDialog.Choose }
+
+    fun onMerge() = answer { account.mergeOtherTrips() }
+
+    /** Shows what Replace would delete; nothing is deleted before [onReplaceConfirmed]. */
+    fun onReplace() {
+        viewModelScope.launch {
+            val trips = account.otherTrips()
+            dialog.value = if (trips.count > 0) OtherTripsDialog.ConfirmReplace(trips) else null
+        }
+    }
+
+    fun onReplaceConfirmed() = answer { account.replaceOtherTrips() }
+
+    /** Back from the confirmation to the choice; nothing changes. */
+    fun onReplaceCancelled() { dialog.value = OtherTripsDialog.Choose }
+
+    /** Cancel or dismiss the choice: no change, only this account's trips sync. */
+    fun onOtherTripsDismissed() = answer { account.keepOtherTripsSeparate() }
+
+    private fun answer(action: suspend () -> Unit) {
+        answered.value = true
+        dialog.value = null
+        viewModelScope.launch { action() }
+    }
 
     fun onEmailChanged(value: String) = form.update { it.copy(email = value.trim().take(MAX_EMAIL), error = null) }
 
