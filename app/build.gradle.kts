@@ -89,6 +89,9 @@ dependencies {
     implementation(project(":core:obd"))
     implementation(project(":core:bluetooth"))
     implementation(project(":core:telemetry"))
+    implementation(project(":core:network"))
+    implementation(project(":core:sync"))
+    implementation(libs.androidx.work.runtime)
     // Simulated ELM327 + Simulator screen: debug only, never on the release classpath.
     debugImplementation(project(":core:simulator"))
     debugImplementation(libs.androidx.hilt.navigation.compose)
@@ -104,6 +107,8 @@ dependencies {
 
     testImplementation(project(":core:testing"))
     testImplementation(libs.hilt.android.testing)
+    testImplementation(libs.androidx.work.testing)
+    testImplementation(libs.androidx.room.runtime)
     kspTest(libs.hilt.compiler)
     testImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.test.manifest)

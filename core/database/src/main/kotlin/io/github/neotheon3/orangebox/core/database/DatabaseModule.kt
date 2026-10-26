@@ -22,6 +22,7 @@ object DatabaseModule {
     @Provides fun provideVehicleDao(db: OrangeBoxDatabase): VehicleDao = db.vehicleDao()
     @Provides fun provideTripDao(db: OrangeBoxDatabase): TripDao = db.tripDao()
     @Provides fun provideDtcRecordDao(db: OrangeBoxDatabase): DtcRecordDao = db.dtcRecordDao()
+    @Provides fun provideSyncDao(db: OrangeBoxDatabase): SyncDao = db.syncDao()
 }
 
 @Module
