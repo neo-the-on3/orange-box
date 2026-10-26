@@ -17,6 +17,13 @@ data class SyncVehicle(
     val create: VehicleCreateDto,
     /** `410 vehicle_deleted` outside recovery: deleted on another device. Its trips aren't uploaded. */
     val goneOnServer: Boolean = false,
+    /** The account that created or pulled it (null: added while signed out). */
+    val account: String? = null,
+    /**
+     * Brought into this account by "Merge with account". A `410` on its create means the account deleted that
+     * vehicle: it's created again under a fresh `clientVehicleId` instead of being given up.
+     */
+    val merged: Boolean = false,
 )
 
 /** A local trip as the sync sees it. */
@@ -36,6 +43,8 @@ data class SyncTrip(
     val acceptedSnapshotAt: Instant? = null,
     /** The trip has ended on this device. */
     val completedLocally: Boolean = false,
+    /** The account that recorded or pulled it (null: recorded while signed out). Only its own account syncs it. */
+    val account: String? = null,
 )
 
 /** A trip upload request kept until it succeeds, so retries resend the same body with the same key. */
@@ -67,7 +76,14 @@ interface SyncStore {
 
     suspend fun vehicles(): List<SyncVehicle>
 
+    /** Also ends a [SyncVehicle.merged] vehicle's merge once it has a server id. */
     suspend fun setVehicleServerId(clientVehicleId: String, serverId: String?)
+
+    /**
+     * Gives a merged vehicle a fresh `clientVehicleId` (its old one was deleted in the account). Its trips follow
+     * it, since they point at the local vehicle. Returns the new id, or null if the vehicle is gone.
+     */
+    suspend fun renewClientVehicleId(clientVehicleId: String): String?
 
     suspend fun markVehicleGone(clientVehicleId: String)
 
@@ -82,8 +98,11 @@ interface SyncStore {
 
     suspend fun trips(): List<SyncTrip>
 
-    /** Upserts a pulled trip. Called only when it's new or its `updatedAt` is newer than the stored one. */
-    suspend fun applyRemoteTrip(trip: TripDto)
+    /**
+     * Upserts a pulled trip of [account], stamped with it. Called only when it's new or its `updatedAt` is newer than
+     * the stored one. A local trip of another account with the same `clientTripId` is left alone.
+     */
+    suspend fun applyRemoteTrip(trip: TripDto, account: String? = null)
 
     /** Deletes the trip locally (deleted elsewhere, or `trip_deleted` on upload). No local tombstone is kept. */
     suspend fun deleteTripLocally(clientTripId: String)
@@ -114,7 +133,7 @@ interface SyncStore {
      * Trips whose telemetry isn't fully uploaded, oldest first: finished, recorded on this device, summary
      * uploaded before, vehicle with a server id, not marked done, and not older than the backlog bound.
      */
-    suspend fun telemetryTrips(): List<TelemetryTrip>
+    suspend fun telemetryTrips(account: String? = null): List<TelemetryTrip>
 
     /** Up to [maxSamples] samples and [maxEvents] events after the acknowledged cursors, or null when nothing is left. */
     suspend fun telemetryChunk(clientTripId: String, maxSamples: Int, maxEvents: Int): TelemetryChunk?

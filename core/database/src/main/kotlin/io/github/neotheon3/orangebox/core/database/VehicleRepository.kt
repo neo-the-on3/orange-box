@@ -42,11 +42,11 @@ class RoomVehicleRepository @Inject constructor(
 
     override suspend fun save(vehicle: Vehicle): Long {
         val id = if (vehicle.id == 0L) {
-            dao.insert(VehicleEntity.from(vehicle, clock()))
+            dao.insert(VehicleEntity.from(vehicle, clock()).copy(accountId = dao.currentAccount()))
         } else {
             val existing = dao.get(vehicle.id)
             val updated = VehicleEntity.from(vehicle, existing?.createdAtMillis ?: clock())
-            dao.update(existing?.let { updated.copy(clientVehicleId = it.clientVehicleId) } ?: updated); vehicle.id
+            dao.update(existing?.let { updated.copy(clientVehicleId = it.clientVehicleId, accountId = it.accountId) } ?: updated); vehicle.id
         }
         OrangeLog.i(OrangeLog.Areas.APP, "vehicle_saved", "id" to id, "fuel" to vehicle.fuel.name)
         return id

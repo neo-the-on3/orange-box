@@ -23,6 +23,7 @@ data class TripWithSync(
     val rejectedCode: String?,
     val forceUpload: Boolean?,
     val remoteOrigin: Boolean?,
+    val accountId: String? = null,
 )
 
 data class VehicleWithSync(
@@ -36,7 +37,11 @@ data class VehicleWithSync(
     val odometerKm: Int?,
     val serverId: String?,
     val goneOnServer: Boolean?,
+    val accountId: String? = null,
 )
+
+/** A trip that isn't the signed-in account's (recorded signed out, or another account's). */
+data class ForeignTrip(val id: Long, val clientTripId: String, val vehicleId: Long?, val accountId: String?, val uploadedBefore: Boolean?)
 
 data class TelemetryCandidate(val clientTripId: String, val vehicleServerId: String)
 
@@ -45,14 +50,14 @@ interface SyncDao {
     @Query(
         """SELECT t.id, t.clientTripId, t.vehicleId, t.startedAtMillis, t.endedAtMillis, t.lastSampleAtMillis,
                   s.serverId, s.serverUpdatedAt, s.uploadedBefore, s.acceptedSnapshotAtMillis, s.acceptedCompleted,
-                  s.rejectedCode, s.forceUpload, s.remoteOrigin
+                  s.rejectedCode, s.forceUpload, s.remoteOrigin, t.accountId
            FROM trips t LEFT JOIN trip_sync s ON s.tripId = t.id ORDER BY t.startedAtMillis""",
     )
     suspend fun tripsWithSync(): List<TripWithSync>
 
     @Query(
         """SELECT v.id, v.clientVehicleId, v.name, v.maker, v.model, v.fuel, v.displacementCc, v.odometerKm,
-                  s.serverId, s.goneOnServer
+                  s.serverId, s.goneOnServer, v.accountId
            FROM vehicles v LEFT JOIN vehicle_sync s ON s.vehicleId = v.id ORDER BY v.id""",
     )
     suspend fun vehiclesWithSync(): List<VehicleWithSync>
@@ -84,9 +89,10 @@ interface SyncDao {
            JOIN vehicle_sync vs ON vs.vehicleId = t.vehicleId
            WHERE t.endedAtMillis IS NOT NULL AND s.uploadedBefore = 1 AND s.remoteOrigin = 0
              AND vs.serverId IS NOT NULL AND vs.goneOnServer = 0 AND t.startedAtMillis >= :notBeforeMillis
+             AND t.accountId IS :account
            ORDER BY t.startedAtMillis""",
     )
-    suspend fun telemetryCandidates(notBeforeMillis: Long): List<TelemetryCandidate>
+    suspend fun telemetryCandidates(notBeforeMillis: Long, account: String?): List<TelemetryCandidate>
 
     @Query(
         """SELECT sm.* FROM trip_samples sm JOIN trips t ON t.id = sm.tripId
@@ -109,32 +115,52 @@ interface SyncDao {
     @Upsert suspend fun putState(row: SyncStateEntity)
     @Query("DELETE FROM sync_state WHERE `key` = :key") suspend fun deleteState(key: String)
 
-    @Query("DELETE FROM trips WHERE id IN (SELECT tripId FROM trip_sync WHERE remoteOrigin = 1)") suspend fun deleteRemoteTrips()
-    @Query("DELETE FROM trip_sync") suspend fun clearTripSync()
     @Query("DELETE FROM vehicle_sync") suspend fun clearVehicleSync()
     @Query("DELETE FROM local_trip_deletions") suspend fun clearLocalDeletions()
-    @Query("DELETE FROM sync_state") suspend fun clearSyncState()
+
+    /** Everything in `sync_state` but per-trip telemetry progress, which belongs to the trip's own account. */
+    @Query("DELETE FROM sync_state WHERE `key` NOT LIKE '" + RoomSyncStore.KEY_TELEMETRY + "%'") suspend fun clearSessionState()
 
     /**
-     * Sign-out: forget everything this device knew about the server account (tokens, ids, queued uploads) and
-     * the trips pulled from it, so another account starts clean. Trips recorded here are kept and upload again
-     * to whoever signs in next.
+     * Sign-out: forget the session's server state (the account, sync token, queued batches and DTC reports,
+     * vehicle server ids, unpushed deletions). Trips keep their account stamp and its server ids (`trip_sync`,
+     * telemetry progress): they're that account's, never uploaded by another one, and current again when it
+     * signs back in. Nothing is deleted.
      */
     @Transaction
     suspend fun forgetServer() {
-        deleteRemoteTrips()
-        clearTripSync()
         clearVehicleSync()
         clearLocalDeletions()
-        clearSyncState()
+        clearSessionState()
     }
 
-    /** Deletes a trip on this device and remembers it for the sync (`DELETE /v1/trips/{id}`, never re-uploaded). */
+    /**
+     * Deletes a trip on this device and remembers it for the sync (`DELETE /v1/trips/{id}`, never re-uploaded).
+     * Another account's trip is only deleted here: its server copy isn't this account's to delete.
+     */
     @Transaction
     suspend fun deleteTripHere(clientTripId: String, nowMillis: Long) {
         val trip = tripByClientId(clientTripId) ?: return
-        val serverId = tripSync(trip.id)?.serverId
-        insertLocalDeletion(LocalTripDeletionEntity(clientTripId, serverId, nowMillis))
+        val own = trip.accountId == state(ACCOUNT_STATE_KEY)
+        val serverId = tripSync(trip.id)?.serverId.takeIf { own }
+        insertLocalDeletion(LocalTripDeletionEntity(clientTripId, serverId, nowMillis, pushed = !own))
         deleteTrip(clientTripId)
     }
+
+    // --- accounts (Q13) ---
+
+    @Query(
+        """SELECT t.id, t.clientTripId, t.vehicleId, t.accountId, s.uploadedBefore FROM trips t
+           LEFT JOIN trip_sync s ON s.tripId = t.id WHERE t.accountId IS NOT :account""",
+    )
+    suspend fun foreignTrips(account: String): List<ForeignTrip>
+
+    @Query("SELECT COUNT(*) FROM trips WHERE accountId IS NOT :account")
+    fun observeForeignTripCount(account: String): kotlinx.coroutines.flow.Flow<Int>
+
+    @Query("UPDATE trips SET accountId = :account WHERE id = :id") suspend fun stampTrip(id: Long, account: String)
+    @Query("UPDATE vehicles SET accountId = :account WHERE id = :id") suspend fun stampVehicle(id: Long, account: String)
+    @Query("SELECT id FROM vehicles WHERE accountId IS NULL") suspend fun unassignedVehicles(): List<Long>
+    @Query("DELETE FROM trip_sync WHERE tripId = :tripId") suspend fun deleteTripSync(tripId: Long)
+    @Query("DELETE FROM trips WHERE id = :id") suspend fun deleteTripById(id: Long)
 }

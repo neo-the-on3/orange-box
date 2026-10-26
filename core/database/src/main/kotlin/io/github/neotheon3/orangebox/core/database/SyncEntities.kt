@@ -10,6 +10,12 @@ import androidx.room.PrimaryKey
  * editor's whole-row updates can never overwrite what the sync wrote. Only used in Remote / Fake mode.
  */
 
+/**
+ * `sync_state` key of the signed-in backend account (its member id), written on sign-in and removed on sign-out.
+ * New trips and vehicles are stamped with it ([TripEntity.accountId], [VehicleEntity.accountId]).
+ */
+const val ACCOUNT_STATE_KEY = "account"
+
 /** Server-side state of one trip. No row means "never uploaded, nothing known". */
 @Entity(
     tableName = "trip_sync",

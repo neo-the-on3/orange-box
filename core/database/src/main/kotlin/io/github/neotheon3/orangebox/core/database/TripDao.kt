@@ -19,8 +19,14 @@ interface TripDao {
     suspend fun checkpoint(trip: TripEntity, samples: List<TripSampleEntity>, events: List<TripEventEntity>) {
         if (samples.isNotEmpty()) insertSamples(samples)
         if (events.isNotEmpty()) insertEvents(events)
-        updateTrip(trip)
+        // The account stamp belongs to sign-in and "Merge", not to the recorder's in-memory copy.
+        updateTrip(trip.copy(accountId = accountOf(trip.id)))
     }
+
+    @Query("SELECT accountId FROM trips WHERE id = :id") suspend fun accountOf(id: Long): String?
+
+    /** The signed-in account (see [ACCOUNT_STATE_KEY]), null when signed out. */
+    @Query("SELECT value FROM sync_state WHERE `key` = '" + ACCOUNT_STATE_KEY + "'") suspend fun currentAccount(): String?
 
     @Query("SELECT * FROM trips WHERE id = :id") suspend fun trip(id: Long): TripEntity?
     @Query("SELECT * FROM trips ORDER BY startedAtMillis DESC") fun observeTrips(): Flow<List<TripEntity>>

@@ -35,7 +35,11 @@ interface TripRepository {
 
 class RoomTripRepository @Inject constructor(private val dao: TripDao) : TripRepository {
     override val trips: Flow<List<TripEntity>> = dao.observeTrips()
-    override suspend fun start(trip: TripEntity) = trip.copy(id = dao.insertTrip(trip.copy(id = 0)))
+    /** A trip recorded while signed in belongs to that account. */
+    override suspend fun start(trip: TripEntity): TripEntity {
+        val stamped = trip.copy(id = 0, accountId = dao.currentAccount())
+        return stamped.copy(id = dao.insertTrip(stamped))
+    }
     override suspend fun checkpoint(trip: TripEntity, samples: List<TripSampleEntity>, events: List<TripEventEntity>) =
         dao.checkpoint(trip, samples, events)
     override suspend fun closeOrphans() = dao.closeOrphans()

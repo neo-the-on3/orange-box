@@ -36,6 +36,11 @@ data class TripEntity(
     val harshBrakeCount: Int = 0,
     val overspeedCount: Int = 0,
     val maxSpeedKph: Double = 0.0,
+    /**
+     * The backend account that recorded or pulled the trip (the member id; schema 6). Null: recorded signed out
+     * (or in Fake mode). Kept on sign-out; only that account syncs it. The recorder's checkpoints never change it.
+     */
+    val accountId: String? = null,
 )
 
 /** About one per second while recording. Location columns are null without a fix or permission. */

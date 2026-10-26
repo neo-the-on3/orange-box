@@ -90,7 +90,7 @@ class MigrationTest {
         }
     }
 
-    @Test fun `5 to 6 adds the raw fuel-rate and MAF columns, empty for old samples`() {
+    @Test fun `5 to 6 adds the raw fuel-rate and MAF columns and the account stamps, empty for old rows`() {
         helper.createDatabase(DB, 5).use { db ->
             db.execSQL("INSERT INTO trips (vehicleId, startedAtMillis, lastSampleAtMillis, durationS, distanceKm, fuelLitres, co2Grams, idleS, fuelCutS, ecoS, overspeedS, harshAccelCount, harshBrakeCount, overspeedCount, maxSpeedKph, clientTripId) VALUES (NULL, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'c1')")
             db.execSQL("INSERT INTO trip_samples (tripId, timestampMillis, speedKph, rpm, fuelFlowLph, coolantC) VALUES (1, 1, 40, 1800, 2.5, 90)")
@@ -101,6 +101,7 @@ class MigrationTest {
                 assertTrue(c.isNull(0) && c.isNull(1))
                 assertEquals(2.5, c.getDouble(2), 0.0)
             }
+            db.query("SELECT accountId FROM trips").use { c -> c.moveToFirst(); assertTrue("trips from before M9 are unassigned", c.isNull(0)) }
         }
     }
 
