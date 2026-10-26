@@ -42,5 +42,8 @@ sealed class ApiError(message: String, cause: Throwable? = null) : Exception(mes
         const val CODE_TRIP_DELETED = "trip_deleted"
         const val CODE_IDEMPOTENCY_IN_FLIGHT = "idempotency_in_flight"
         const val CODE_INVALID_GRANT = "invalid_grant"
+        const val CODE_OTP_ATTEMPTS_EXCEEDED = "otp_attempts_exceeded"
+        const val CODE_OTP_LOCKED = "otp_locked"
+        const val CODE_TEST_ADDRESS_REJECTED = "test_address_rejected"
     }
 }

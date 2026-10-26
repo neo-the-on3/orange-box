@@ -14,6 +14,7 @@ import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
 import io.github.neotheon3.orangebox.core.model.BackendMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -67,6 +68,15 @@ class SyncScheduler @Inject constructor(
                 .build(),
         )
     }
+
+    /**
+     * A one-off sync ("Sync now", after sign-in) is queued or running. Not for Off (it would start WorkManager);
+     * false while WorkManager isn't initialised (e.g. a test application without the startup initializer).
+     */
+    val syncing: kotlinx.coroutines.flow.Flow<Boolean>
+        get() = if (!WorkManager.isInitialized()) kotlinx.coroutines.flow.flowOf(false) else work.getWorkInfosForUniqueWorkFlow(ONE_OFF).map { infos ->
+            infos.any { it.state == androidx.work.WorkInfo.State.RUNNING || it.state == androidx.work.WorkInfo.State.ENQUEUED }
+        }
 
     fun cancelAll() {
         work.cancelUniqueWork(ONE_OFF)

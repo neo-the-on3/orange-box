@@ -67,3 +67,10 @@ object VehicleProfiles {
         displacementLitres = v.displacementCc?.let { it / 1000.0 },
     )
 }
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class BackendAccountModule {
+    @dagger.Binds
+    abstract fun bindBackendAccount(impl: io.github.neotheon3.orangebox.sync.AppBackendAccount): io.github.neotheon3.orangebox.core.datastore.BackendAccount
+}
