@@ -1798,8 +1798,8 @@ components:
       description: ISO 3166-1 alpha-2
     FuelType:
       type: string
-      description: 'Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other. Unknown future values must be tolerated.'
-      enum: [gasoline, diesel, lpg, gasoline_lpg, hybrid, plug_in_hybrid, electric, other]
+      description: 'Legacy CarSrcCd (gasolineLpg → gasoline_lpg) plus plug_in_hybrid and other; since 1.0.0-draft.9 also `cng` (compressed natural gas only), `gasoline_cng` (bi-fuel petrol + CNG, common in India), `ethanol` (dedicated ethanol, e.g. E100) and `flex` (flex-fuel petrol/ethanol blends). `gasoline` is petrol. Unknown future values must be tolerated.'
+      enum: [gasoline, diesel, lpg, gasoline_lpg, cng, gasoline_cng, ethanol, flex, hybrid, plug_in_hybrid, electric, other]
     BodyType:
       type: string
       description: 'Legacy CarTypeCd.'

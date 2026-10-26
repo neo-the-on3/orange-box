@@ -589,3 +589,20 @@ func TestVehicleWithoutMakeModel(t *testing.T) {
 		t.Errorf("fuelType only: %d %s", r.status, r.body)
 	}
 }
+
+// TestVehicleFuelTypesDraft9: the fuel types added in spec draft.9 are
+// accepted and returned as sent.
+func TestVehicleFuelTypesDraft9(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("fuel9")
+	for _, fuel := range []string{"cng", "gasoline_cng", "ethanol", "flex"} {
+		r := m.call(http.MethodPost, "/v1/vehicles", withClientID(`{"fuelType":"`+fuel+`"}`, uuid.New()))
+		if r.status != http.StatusCreated || r.json(t)["fuelType"] != fuel {
+			t.Errorf("%s: %d %s", fuel, r.status, r.body)
+		}
+	}
+	if r := m.call(http.MethodPost, "/v1/vehicles", `{"fuelType":"petrol"}`); r.status != http.StatusUnprocessableEntity {
+		t.Errorf("petrol: %d %s", r.status, r.body)
+	}
+}
