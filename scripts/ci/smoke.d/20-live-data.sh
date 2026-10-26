@@ -13,8 +13,17 @@ shot 20-simulator-highway-playing
 adb shell input keyevent KEYCODE_BACK
 wait_for_regex 'content-desc="Speed [1-9][0-9]* km/h"' live-home
 wait_for_regex 'content-desc="Engine speed [1-9][0-9]* rpm"' live-home-rpm
-grep -Eq 'text="Coolant: 85 °C"' "$OUT/live-home-rpm.xml"
-grep -Eq 'text="Fuel flow: [0-9]+\.[0-9]{2} L/h"' "$OUT/live-home-rpm.xml"
+# The Drive button (#192) moved the card down: the readings row can wrap below the fold, and uiautomator
+# only dumps what is on screen. Scroll a little until it shows.
+for i in 1 2 3 4; do
+  if grep -Eq 'text="Coolant: 85 °C"' "$OUT/live-home-rpm.xml" && grep -Eq 'text="Fuel flow: [0-9]+\.[0-9]{2} L/h"' "$OUT/live-home-rpm.xml"; then
+    break
+  fi
+  [ "$i" -eq 4 ] && { echo "coolant / fuel flow readings not shown" >&2; exit 1; }
+  adb shell input swipe 500 1500 500 1100 300
+  sleep 1
+  ui_dump live-home-rpm
+done
 shot 21-home-live-data
 grep -o '\(text\|content-desc\)="\(Speed\|Engine speed\|Coolant\|Fuel level\|Fuel flow\|Trip\)[^"]*"' "$OUT/live-home-rpm.xml" | tee "$OUT/live-values.txt"
 echo "live data smoke OK"
