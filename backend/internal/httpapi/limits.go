@@ -7,13 +7,14 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// Server-side size limits on trip fields that the spec (openapi-v2.yaml)
-// leaves unbounded. They are proposed for the spec on #161; until it adopts
-// them the server adds them to its in-memory copy of the spec at startup,
-// so prescan (maxItems, before decoding) and validation (maxLength) enforce
-// them like any other schema limit: 422 validation_failed with a pointer.
-// Without them one member could store 8 MiB trips and every page of
-// GET /v1/trips would cost hundreds of MiB to serve.
+// Server-side size limits on trip fields. The spec declares them since
+// 1.0.0-draft.9 (#161 item 18); the server still applies them to its
+// in-memory copy of the spec at startup, tightening only, so a later spec
+// edit that drops or loosens one can't silently lift it. Prescan (maxItems,
+// before decoding) and validation (maxLength) enforce them like any other
+// schema limit: 422 validation_failed with a pointer. Without them one
+// member could store 8 MiB trips and every page of GET /v1/trips would cost
+// hundreds of MiB to serve.
 const (
 	maxTripVehicleIDLength    = 64  // server ids are 36-character UUIDs
 	maxTripAppVersionLength   = 64  // e.g. 1.4.2 (1402)

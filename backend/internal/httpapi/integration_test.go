@@ -19,7 +19,7 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("GET: %d %v %s", r.status, r.header, r.body)
 	}
 	m := r.json(t)
-	if m["status"] != "ok" || m["apiVersion"] != "1.0.0-draft.8" || m["time"] == nil {
+	if m["status"] != "ok" || m["apiVersion"] != "1.0.0-draft.9" || m["time"] == nil {
 		t.Errorf("body = %v", m)
 	}
 	if _, err := uuid.Parse(r.header.Get("X-Request-Id")); err != nil {

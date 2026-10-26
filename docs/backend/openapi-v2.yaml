@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Orange Box API
-  version: 1.0.0-draft.8
+  version: 1.0.0-draft.9
   summary: REST API (v1) for the optional Orange Box backend. Replaces the legacy CarooLive RPC contract.
   description: |
     Contract for the **optional** backend of the Orange Box Android app (`io.github.neotheon3.orangebox`).
@@ -153,6 +153,34 @@ info:
         `400` (`code=sync_window_expired`, `reason=purged`). The app then does a full `GET /v1/trips` without
         `since` and drops the local trips it had uploaded that the server no longer returns. A token never expires just because of its age while nothing
         it depends on has been purged.
+    * **Request limits** (enforced by the server; clients should check them before sending):
+      - **Bodies.** Upload operations (`POST /v1/trips/batch`, `POST /v1/telemetry/batches`,
+        `POST /v1/vehicles/{vehicleId}/dtc-reports`): at most 1 MiB gzipped and 8 MiB uncompressed (or inflated),
+        and at most 500,000 JSON values, where objects, arrays, scalars and member names each count as one (a full
+        telemetry batch is about 220,000). Every other body: at most 16 KiB and 4,096 JSON values. Nesting: at most
+        64 levels. Over any of these: `413` (`code=batch_too_large`). Member names are case-sensitive; a duplicate
+        name, or one that differs from a declared property only by case, is `422`.
+      - **Counts and field sizes** are schema limits (`maxItems`, `maxLength`): over one is `422`
+        (`code=validation_failed`) with a pointer to the field, never `413`, so don't retry it smaller. An array
+        over its `maxItems` is rejected before its items are validated. Batches: 100 trips
+        (`TripBatch.trips`), 5,000 samples and 500 events (`TelemetryBatch`).
+      - **Per trip:** at most 16 KiB of JSON per `TripUpload`; a larger one fails the batch with `422` at
+        `/trips/{i}`. A trip at every field limit is about 7.4 KiB, so only a future loosening of the field
+        limits could reach it.
+      - **Per page** (`GET /v1/trips`, history and sync): the server ends a page early, with a `nextCursor`,
+        before its items pass 512 KiB of JSON, and always returns at least one item. A page with fewer than
+        `limit` items is not the last one; only `nextCursor: null` is.
+      - **Body arrival:** a body that doesn't arrive in time (uploads 10 s, other bodies 5 s) gets `408`
+        (`code=request_timeout`) with `Connection: close`; retry it.
+      - **One upload at a time per member:** an upload while the same member's previous upload is still being
+        processed gets `429` (`code=upload_in_progress`, `Retry-After: 1`). Send batches one after another.
+    * **Busy and unavailable (`503`)**: every `503` from the server carries `Retry-After` and one of these codes:
+      `server_busy` (every body slot is busy; `Retry-After: 1`), `uploads_busy` (every upload slot is busy;
+      `Retry-After: 5`), `service_unavailable` (the database is unreachable, read-only or being switched, or the
+      instance can't confirm its database cluster; `Retry-After: 5`) and `email_sign_in_unavailable` (e-mail
+      sign-in is not available on this server yet; `Retry-After: 3600`). A `502`, `503` or `504` without `Retry-After` comes from a
+      proxy or load balancer in front of the server: back off exponentially with jitter (e.g. from 30 s, capped at
+      1 h) and clamp a very large `Retry-After` to the same cap.
     * **Rate limits**: every response carries `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (seconds),
       set by middleware (declared explicitly only on a few operations to keep the document readable). Every
       operation documents `429`. `429` and `503` carry `Retry-After`. Clients back off exponentially with jitter.
@@ -983,6 +1011,7 @@ paths:
               schema: {$ref: '#/components/schemas/BatchResult'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '408': {$ref: '#/components/responses/RequestTimeout'}
         '409': {$ref: '#/components/responses/Conflict'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
@@ -1201,8 +1230,9 @@ paths:
         `202` and `status=trip_deleted`, so the app can drop it. Otherwise `vehicleId` must be one of the caller's
         vehicles; if it is not (unknown, another member's, or deleted), the response is `404`.
 
-        Size limits (proposal): at most 5,000 samples + 500 events per batch and 1 MiB compressed / 8 MiB
-        uncompressed body; otherwise `413`.
+        Size limits: at most 5,000 samples and 500 events per batch (more is `422` with a pointer), and at most
+        1 MiB compressed / 8 MiB uncompressed and 500,000 JSON values per body (more is `413`); see Conventions →
+        Request limits.
       x-legacy-mapping:
         replaces: ['/smart.json cmd=carMessage (msgList[].location + msgList[].event, gathering server)']
         notes: Legacy SmartRecord PID fields (vss, ect, maf, map, iat, tp, fli, auxBat ...) are renamed to unit-bearing names; `video` references (dashcam) are dropped.
@@ -1233,6 +1263,7 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+        '408': {$ref: '#/components/responses/RequestTimeout'}
         '409': {$ref: '#/components/responses/Conflict'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
@@ -1279,6 +1310,7 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '408': {$ref: '#/components/responses/RequestTimeout'}
         '409': {$ref: '#/components/responses/Conflict'}
         '413': {$ref: '#/components/responses/PayloadTooLarge'}
         '415': {$ref: '#/components/responses/UnsupportedMediaType'}
@@ -1572,7 +1604,12 @@ components:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     PayloadTooLarge:
-      description: Body exceeds the batch limits
+      description: 'The body is too large (`code=batch_too_large`): over 1 MiB gzipped, 8 MiB uncompressed or 500,000 JSON values on uploads; 16 KiB or 4,096 values elsewhere. Too many items in an array is a `422` instead (see Conventions → Request limits).'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    RequestTimeout:
+      description: 'The body did not arrive in time (`code=request_timeout`; uploads 10 s, other bodies 5 s). Sent with `Connection: close`. Safe to retry.'
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
@@ -1598,7 +1635,7 @@ components:
               - {pointer: /modelYear, detail: must be between 1980 and 2100}
               - {pointer: /vin, detail: must be 17 characters}
     TooManyRequests:
-      description: Rate limit exceeded
+      description: 'Rate limit exceeded, or (`code=upload_in_progress`, `Retry-After: 1`) another upload from this member is still being processed.'
       headers:
         Retry-After: {$ref: '#/components/headers/Retry-After'}
         RateLimit-Limit: {$ref: '#/components/headers/RateLimit-Limit'}
@@ -1622,7 +1659,7 @@ components:
             code: internal_error
             requestId: 0192f1b2-7c1e-7a55-9f0e-2b1d7d2c9a13
     ServiceUnavailable:
-      description: Temporarily unavailable / maintenance
+      description: 'Temporarily unavailable, with `Retry-After` and `code` `server_busy`, `uploads_busy`, `service_unavailable` or `email_sign_in_unavailable` (see Conventions → Busy and unavailable).'
       headers:
         Retry-After: {$ref: '#/components/headers/Retry-After'}
       content:
@@ -1642,7 +1679,7 @@ components:
         instance: {type: string, format: uri-reference}
         code:
           type: string
-          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `test_address_rejected`, `internal_error`, `etag_mismatch`, `batch_too_large`, `unsupported_encoding`, `idempotency_in_flight`, `vehicle_deleted`, `vehicle_not_found`, `trip_deleted`, `sync_window_expired`).
+          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `test_address_rejected`, `internal_error`, `etag_mismatch`, `batch_too_large`, `unsupported_encoding`, `idempotency_in_flight`, `vehicle_deleted`, `vehicle_not_found`, `trip_deleted`, `sync_window_expired`, `request_timeout` (408), `upload_in_progress` (429), `precondition_required` (428), `server_busy`, `uploads_busy`, `service_unavailable` and `email_sign_in_unavailable` (503); see Conventions → Request limits and Busy and unavailable).
         requestId: {type: string}
         errors:
           type: array
@@ -1915,16 +1952,16 @@ components:
     DtcSet:
       type: object
       properties:
-        stored: {type: array, items: {$ref: '#/components/schemas/DtcCode'}}
-        pending: {type: array, items: {$ref: '#/components/schemas/DtcCode'}}
-        permanent: {type: array, items: {$ref: '#/components/schemas/DtcCode'}}
+        stored: {type: array, maxItems: 128, items: {$ref: '#/components/schemas/DtcCode'}}
+        pending: {type: array, maxItems: 128, items: {$ref: '#/components/schemas/DtcCode'}}
+        permanent: {type: array, maxItems: 128, items: {$ref: '#/components/schemas/DtcCode'}}
     TripUpload:
       type: object
-      description: 'Trip summary. Legacy SmartTrip, minus ip/weather/mobileCarrier (unnecessary personal data), fuelEconomyA/B/C and maxHp/maxTorq (meaning or source not documented in the client).'
+      description: 'Trip summary, at most 16 KiB of JSON (see Conventions → Request limits). Legacy SmartTrip, minus ip/weather/mobileCarrier (unnecessary personal data), fuelEconomyA/B/C and maxHp/maxTorq (meaning or source not documented in the client).'
       required: [clientTripId, vehicleId, state, startedAt, snapshotAt]
       properties:
         clientTripId: {type: string, format: uuid}
-        vehicleId: {type: string, description: 'Server vehicle id'}
+        vehicleId: {type: string, maxLength: 64, description: 'Server vehicle id'}
         state: {type: string, enum: [in_progress, completed], description: 'Legacy opened/updating → in_progress, closed → completed'}
         startedAt: {type: string, format: date-time}
         endedAt: {type: [string, 'null'], format: date-time}
@@ -1947,7 +1984,7 @@ components:
         accelTimeS: {type: number, format: double}
         ecoSpeedTimeS: {type: number, format: double}
         overSpeedTimeS: {type: number, format: double}
-        speedBands: {type: array, items: {$ref: '#/components/schemas/SpeedBand'}, description: 'Legacy timeIn0To10 … timeIn110Over'}
+        speedBands: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/SpeedBand'}, description: 'Legacy timeIn0To10 … timeIn110Over'}
         ecoScore: {type: [number, 'null'], format: double, description: 'Client-computed (clean-room formula, see docs/telemetry.md). Legacy ecoSafePoint.'}
         safetyScore: {type: [number, 'null'], format: double, description: 'Legacy safePoint'}
         batteryMaxV: {type: [number, 'null'], format: double}
@@ -1959,9 +1996,9 @@ components:
         app:
           type: object
           properties:
-            version: {type: string}
-            os: {type: string, examples: [android]}
-            osVersion: {type: string}
+            version: {type: string, maxLength: 64}
+            os: {type: string, maxLength: 32, examples: [android]}
+            osVersion: {type: string, maxLength: 128}
     Trip:
       allOf:
         - $ref: '#/components/schemas/TripUpload'
