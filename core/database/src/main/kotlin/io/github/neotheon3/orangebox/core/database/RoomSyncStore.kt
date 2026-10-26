@@ -359,7 +359,11 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
             "overspeed" to "overspeed",
         )
 
-        /** Spec `Sample` from a recorded sample. TODO(M9 question 11): fuel flow (L/h) has no `Sample` field, so it isn't sent. */
+        /**
+         * Spec `Sample` from a recorded sample. Fuel flow goes only as the car's own PID 5E (`pids["0x5E"]`, L/h),
+         * with `mafGps` when PID 10 was read; our computed flow isn't sent.
+         * TODO(draft.9): a `fuelRateLph` field for the computed flow is still to be asked for.
+         */
         fun sampleDto(s: TripSampleEntity) = SampleDto(
             t = Instant.ofEpochMilli(s.timestampMillis),
             lat = s.latitude,
@@ -367,7 +371,11 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
             speedKmh = s.speedKph,
             rpm = s.rpm,
             coolantC = s.coolantC,
+            mafGps = s.mafGps,
+            pids = s.fuelRatePidLph?.let { mapOf(PID_FUEL_RATE to it) },
         )
+
+        const val PID_FUEL_RATE = "0x5E"
 
         fun eventDto(e: TripEventEntity): EventDto? = EVENT_TYPES[e.type]?.let { type ->
             EventDto(

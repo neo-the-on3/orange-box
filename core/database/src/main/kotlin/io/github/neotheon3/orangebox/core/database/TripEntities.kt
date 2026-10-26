@@ -55,6 +55,10 @@ data class TripSampleEntity(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val accuracyM: Float? = null,
+    /** Raw PID 5E (L/h), only when the car answered it (schema 6). Uploaded as `pids["0x5E"]`. */
+    val fuelRatePidLph: Double? = null,
+    /** Raw PID 10 (g/s), only when the car answered it (schema 6). Uploaded as `mafGps`. */
+    val mafGps: Double? = null,
 )
 
 /**
