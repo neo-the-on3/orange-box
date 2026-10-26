@@ -334,4 +334,25 @@ class SyncEngineTest {
         assertEquals("Family car", phone.vehicleEdits.getValue(car).nickname)
         assertEquals(0, engine.run().vehiclesEdited)
     }
+
+    @Test fun `deployment_changed - our own trips with a stale returned copy go up again, other devices' don't`() = runTest {
+        val car = phone.addVehicle()
+        val ongoing = phone.record(car, completed = false)
+        val (tablet, tabletEngine) = otherDevice()
+        tablet.record(tablet.addVehicle("Tablet car"))
+        tabletEngine.run()
+        engine.run()
+        val backup = server.snapshot()
+        // After the backup the trip completes here and that snapshot is accepted; then the database is restored.
+        phone.trips[ongoing] = phone.trips.getValue(ongoing).copy(completed = true, snapshotAt = Instant.parse("2026-10-20T11:00:00Z"))
+        assertEquals(1, engine.run().uploaded)
+        server.restoreFromBackup(backup)
+
+        val r = engine.run()
+        assertEquals(SyncWindowReason.DEPLOYMENT_CHANGED, r.recovery)
+        assertEquals("only our stale trip", 1, r.uploaded)
+        val copy = server.trips.single { it.clientTripId == ongoing }
+        assertEquals(TripUploadDto.STATE_COMPLETED, copy.state)
+        assertEquals(Instant.parse("2026-10-20T11:00:00Z"), copy.snapshotAt)
+    }
 }

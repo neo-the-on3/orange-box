@@ -102,6 +102,8 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
                 uploadedBefore = t.uploadedBefore == true,
                 needsUpload = needsUpload(t),
                 remoteOrigin = t.remoteOrigin == true,
+                acceptedSnapshotAt = t.acceptedSnapshotAtMillis?.let(Instant::ofEpochMilli),
+                completedLocally = t.endedAtMillis != null,
             )
         }
     }

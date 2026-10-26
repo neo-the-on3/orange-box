@@ -32,7 +32,8 @@ import java.util.UUID
  * never drops data and doesn't fail the run.
  *
  * `400 sync_window_expired` → a full walk, then by `reason`: `deployment_changed` re-creates vehicles the server
- * lost and re-uploads trips it didn't return (fresh `Idempotency-Key`s); `purged`, `invalid` and anything else
+ * lost and re-uploads trips it didn't return, and our own trips whose returned copy is stale (`snapshotAt` before
+ * our last accepted one, or `in_progress` while ours is completed), with fresh `Idempotency-Key`s; `purged`, `invalid` and anything else
  * drop the uploaded-before trips it didn't return and re-upload nothing. Expiry on a cursor restarts the walk.
  * Retryable failures (`503`, `429`, network) propagate as [ApiError] for the worker to back off.
  */
@@ -101,17 +102,20 @@ class SyncEngine(
         recover(reason)
     }
 
-    private class FullWalk(val returned: Set<String>, val nextSince: String)
+    /** The trips a full walk returned, by `clientTripId`. */
+    private class FullWalk(val copies: Map<String, TripDto>, val nextSince: String) {
+        val returned: Set<String> get() = copies.keys
+    }
 
     /** Full `GET /v1/trips` without `since`. Expiry on a cursor discards the walk and starts it over. */
     private suspend fun fullWalk(): FullWalk {
         repeat(maxRestarts + 1) {
-            val returned = mutableSetOf<String>()
+            val returned = mutableMapOf<String, TripDto>()
             try {
                 var cursor: String? = null
                 while (true) {
                     val page = api.listTrips(since = null, cursor = cursor)
-                    page.items.forEach { apply(it); returned += it.clientTripId }
+                    page.items.forEach { apply(it); returned[it.clientTripId] = it }
                     cursor = page.nextCursor ?: return FullWalk(returned, page.nextSince ?: error("last page without nextSince"))
                 }
             } catch (e: ApiError.Http) {
@@ -202,11 +206,17 @@ class SyncEngine(
             }
         }
         val deletedHere = store.localDeletions().map { it.clientTripId }.toSet()
-        val lost = store.trips()
-            .filter { !it.remoteOrigin && it.clientTripId !in walk.returned && it.clientTripId !in deletedHere }
-            .map { it.clientTripId }.toSet()
-        store.requeueUpload(lost)
+        val own = store.trips().filter { !it.remoteOrigin && it.clientTripId !in deletedHere }
+        val lost = own.filter { it.clientTripId !in walk.returned }
+        // Our own trips whose returned copy is older than what the server had accepted from us (the restore
+        // point predates our last upload) go up again too. Trips from other devices keep the newer-updatedAt rule.
+        val stale = own.filter { t -> walk.copies[t.clientTripId]?.let { isStale(it, t) } == true }
+        store.requeueUpload((lost + stale).map { it.clientTripId }.toSet())
     }
+
+    private fun isStale(copy: TripDto, local: SyncTrip): Boolean =
+        (local.acceptedSnapshotAt != null && copy.snapshotAt.isBefore(local.acceptedSnapshotAt)) ||
+            (copy.state == TripUploadDto.STATE_IN_PROGRESS && local.completedLocally)
 
     // --- push ---
 
