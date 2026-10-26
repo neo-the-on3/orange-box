@@ -8,12 +8,14 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
 import io.github.neotheon3.orangebox.core.model.BackendMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
@@ -58,6 +60,27 @@ class SyncScheduler @Inject constructor(
         )
     }
 
+    /**
+     * A one-off run after a trip ends, unless that would cut a backoff short: a one-off that is already queued
+     * (waiting for network, delayed by `Retry-After`, or backing off) or running is kept, and nothing is queued
+     * while the periodic sync is backing off after a failure (its retry uploads the trip). Returns true when a
+     * run was queued.
+     */
+    suspend fun syncAfterTrip(): Boolean {
+        val oneOff = work.getWorkInfosForUniqueWorkFlow(ONE_OFF).first()
+        val periodic = work.getWorkInfosForUniqueWorkFlow(PERIODIC).first()
+        if (!shouldQueueAfterTrip(oneOff, periodic)) return false
+        work.enqueueUniqueWork(
+            ONE_OFF,
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<SyncWorker>()
+                .setConstraints(networkConstraint)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_SECONDS, TimeUnit.SECONDS)
+                .build(),
+        )
+        return true
+    }
+
     private fun schedulePeriodic() {
         work.enqueueUniquePeriodicWork(
             PERIODIC,
@@ -89,5 +112,12 @@ class SyncScheduler @Inject constructor(
         const val ONE_OFF = "backend_sync_now"
         const val PERIODIC = "backend_sync_periodic"
         const val BACKOFF_SECONDS = 30L
+
+        /** See [syncAfterTrip]. */
+        internal fun shouldQueueAfterTrip(oneOff: List<WorkInfo>, periodic: List<WorkInfo>): Boolean {
+            val pending = oneOff.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.BLOCKED }
+            val periodicBackingOff = periodic.any { it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0 }
+            return !pending && !periodicBackingOff
+        }
     }
 }
