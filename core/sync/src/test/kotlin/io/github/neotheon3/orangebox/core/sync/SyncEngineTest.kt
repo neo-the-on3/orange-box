@@ -284,4 +284,27 @@ class SyncEngineTest {
         assertEquals(TripUploadDto.STATE_COMPLETED, server.trips.single().state)
         assertEquals(0, engine.run().uploaded)
     }
+
+    @Test fun `a batch 422 at trips index rejects only that trip and the rest go up in a fresh batch`() = runTest {
+        val car = phone.addVehicle()
+        phone.record(car)
+        engine.run() // the vehicle now has a server id
+        val fresh = List(3) { phone.record(car) }
+        phone.trips[fresh[1]] = phone.trips.getValue(fresh[1]).copy(distanceKm = 123456789.123456789)
+        server.maxTripBytes = phone.uploadOf(fresh[0])!!.encodedBytes()
+        val r = engine.run()
+        assertEquals(1, r.rejected)
+        assertEquals(ApiError.CODE_VALIDATION_FAILED, phone.trips.getValue(fresh[1]).rejected)
+        assertEquals(2, r.uploaded)
+        assertNull(phone.pending)
+        assertEquals("rejected trips aren't retried", 0, engine.run().uploaded)
+    }
+
+    @Test fun `free-text fields are cut to the server's limits`() {
+        val t = TripUploadDto("c", "v", TripUploadDto.STATE_COMPLETED, now, now, app = io.github.neotheon3.orangebox.core.network.AppInfo("1".repeat(99), "a".repeat(99), "o".repeat(999)))
+        val cut = t.withinLimits().app!!
+        assertEquals(TripUploadDto.MAX_APP_VERSION, cut.version!!.length)
+        assertEquals(TripUploadDto.MAX_APP_OS, cut.os!!.length)
+        assertEquals(TripUploadDto.MAX_APP_OS_VERSION, cut.osVersion!!.length)
+    }
 }

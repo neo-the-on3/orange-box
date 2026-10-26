@@ -120,7 +120,28 @@ val BackendJson: Json = Json {
     companion object {
         const val STATE_IN_PROGRESS = "in_progress"
         const val STATE_COMPLETED = "completed"
+
+        /** Server limits (`422` at `/trips/<i>` past them). */
+        const val MAX_TRIP_BYTES = 16 * 1024
+        const val MAX_VEHICLE_ID = 64
+        const val MAX_APP_VERSION = 64
+        const val MAX_APP_OS = 32
+        const val MAX_APP_OS_VERSION = 128
+
+        /** Not sent yet; the limits for when they are. */
+        const val MAX_SPEED_BANDS = 32
+        const val MAX_DTC_CODES_PER_LIST = 128
     }
+
+    /** Cuts the free-text fields to the server's limits (the rest is bounded by construction). */
+    fun withinLimits(): TripUploadDto = copy(
+        app = app?.let {
+            AppInfo(it.version?.take(MAX_APP_VERSION), it.os?.take(MAX_APP_OS), it.osVersion?.take(MAX_APP_OS_VERSION))
+        },
+    )
+
+    /** The JSON size the server checks against [MAX_TRIP_BYTES]. */
+    fun encodedBytes(): Int = BackendJson.encodeToString(serializer(), this).toByteArray().size
 }
 
 /** Spec `Trip`: a [TripUploadDto] plus the server's `id`, `createdAt` and `updatedAt`. */
