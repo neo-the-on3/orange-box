@@ -4,8 +4,8 @@ import io.github.neotheon3.orangebox.core.network.ApiError
 import io.github.neotheon3.orangebox.core.network.FakeBackendApi
 import io.github.neotheon3.orangebox.core.network.ProblemDto
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -169,6 +169,30 @@ class TelemetryUploadTest {
         assertEquals(422, e.status)
         assertEquals(ApiError.CODE_VALIDATION_FAILED, e.code)
         assertTrue(!e.isRetryable)
+    }
+
+    @Test fun `501 keeps the batch queued with its key, pauses telemetry for a long interval and doesn't fail the run`() = runTest {
+        var clock = 1_000_000L
+        val engine = SyncEngine(server, phone, clock = { clock })
+        val trip = phone.record(phone.addVehicle())
+        phone.addTelemetry(trip, sampleCount = 10)
+        server.failNextTelemetry(problem(501, "not_implemented"))
+        val r = engine.run()
+        assertEquals(setOf(SyncEngine.STEP_TELEMETRY), r.notImplemented)
+        assertEquals(1, r.uploaded) // the trip summary still went up
+        val kept = phone.pendingTelemetry!!
+        assertTrue("nothing marked done", phone.telemetryDone.isEmpty())
+
+        clock += SyncEngine.NOT_IMPLEMENTED_RETRY_MILLIS - 1
+        assertEquals(setOf(SyncEngine.STEP_TELEMETRY), engine.run().notImplemented)
+        assertEquals("not retried while paused", 1, server.telemetryRequests.size)
+
+        clock += 1
+        val after = engine.run()
+        assertTrue(after.notImplemented.isEmpty())
+        assertEquals(1, after.telemetryBatches)
+        assertEquals(listOf(kept.idempotencyKey to kept.batch.clientBatchId), server.telemetryRequests.drop(1))
+        assertNull(phone.pendingTelemetry)
     }
 
     /** Creates [car] on the server through a normal run (a trip makes the engine create its vehicle). */

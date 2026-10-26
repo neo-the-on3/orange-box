@@ -24,6 +24,10 @@ import java.util.UUID
  *    `clientReportId` is the `Idempotency-Key`, so a resend after a lost response is a `200` replay. Reports wait
  *    for their vehicle's server id; `404` re-creates the vehicle next run; `400`, `413` and `422` drop the report.
  *
+ * Telemetry and DTC reports aren't implemented on the server yet (`501`): that step stops, keeps everything queued
+ * (the pending batch with its key, every report) and is skipped for [NOT_IMPLEMENTED_RETRY_MILLIS]; a `501`
+ * never drops data and doesn't fail the run.
+ *
  * `400 sync_window_expired` → a full walk, then by `reason`: `deployment_changed` re-creates vehicles the server
  * lost and re-uploads trips it didn't return (fresh `Idempotency-Key`s); `purged`, `invalid` and anything else
  * drop the uploaded-before trips it didn't return and re-upload nothing. Expiry on a cursor restarts the walk.
@@ -35,6 +39,7 @@ class SyncEngine(
     private val newKey: () -> String = { UUID.randomUUID().toString() },
     private val maxRestarts: Int = 3,
     private val maxTelemetryBatchesPerRun: Int = MAX_TELEMETRY_BATCHES_PER_RUN,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     data class Report(
         val pulled: Int = 0,
@@ -52,6 +57,8 @@ class SyncEngine(
         val dtcReports: Int = 0,
         /** DTC reports the server refused (`400`, `413`, `422`) or whose vehicle is gone; not retried. */
         val dtcReportsDropped: Int = 0,
+        /** Steps the server answered `501` to (or still paused after one): nothing dropped, retried later. */
+        val notImplemented: Set<String> = emptySet(),
     )
 
     private var report = Report()
@@ -268,18 +275,35 @@ class SyncEngine(
 
     // --- telemetry (#67) ---
 
-    private enum class Sent { OK, TOO_LARGE, TRIP_DONE, VEHICLE_MISSING }
+    private enum class Sent { OK, TOO_LARGE, TRIP_DONE, VEHICLE_MISSING, NOT_IMPLEMENTED }
 
     /** Batch size for this run; `413` halves it for the rest of the run. */
     private var maxSamples = BackendApi.MAX_SAMPLES_PER_BATCH
     private var maxEvents = BackendApi.MAX_EVENTS_PER_BATCH
 
+    /** True while [step] waits out an earlier `501`. */
+    private suspend fun paused(step: String): Boolean {
+        val until = store.pausedUntil(step) ?: return false
+        if (clock() >= until) {
+            store.pauseUntil(step, null)
+            return false
+        }
+        report = report.copy(notImplemented = report.notImplemented + step)
+        return true
+    }
+
+    private suspend fun pauseNotImplemented(step: String) {
+        store.pauseUntil(step, clock() + NOT_IMPLEMENTED_RETRY_MILLIS)
+        report = report.copy(notImplemented = report.notImplemented + step)
+    }
+
     private suspend fun pushTelemetry() {
+        if (paused(STEP_TELEMETRY)) return
         maxSamples = BackendApi.MAX_SAMPLES_PER_BATCH
         maxEvents = BackendApi.MAX_EVENTS_PER_BATCH
         store.pendingTelemetryBatch()?.let { pending ->
             when (send(pending)) {
-                Sent.VEHICLE_MISSING -> return
+                Sent.VEHICLE_MISSING, Sent.NOT_IMPLEMENTED -> return
                 Sent.TOO_LARGE -> shrink(pending.batch.samples.size, pending.batch.events.size)
                 else -> Unit
             }
@@ -309,7 +333,7 @@ class SyncEngine(
             when (send(pending)) {
                 Sent.OK -> Unit
                 Sent.TRIP_DONE -> return true
-                Sent.VEHICLE_MISSING -> return false
+                Sent.VEHICLE_MISSING, Sent.NOT_IMPLEMENTED -> return false
                 Sent.TOO_LARGE -> {
                     if (chunk.samples.size + chunk.events.size <= 1) {
                         store.markTelemetryDone(clientTripId, ApiError.CODE_BATCH_TOO_LARGE)
@@ -337,6 +361,10 @@ class SyncEngine(
             return if (ack.tripDeleted) Sent.TRIP_DONE else Sent.OK
         } catch (e: ApiError.Http) {
             when {
+                e.status == 501 -> {
+                    pauseNotImplemented(STEP_TELEMETRY) // the pending batch stays, with its clientBatchId and key
+                    return Sent.NOT_IMPLEMENTED
+                }
                 e.status == 413 -> {
                     store.setPendingTelemetryBatch(null) // the halves are new bodies: new clientBatchId and key
                     return Sent.TOO_LARGE
@@ -360,6 +388,7 @@ class SyncEngine(
     // --- DTC reports ---
 
     private suspend fun pushDtcReports() {
+        if (paused(STEP_DTC_REPORTS)) return
         val vehicles = store.vehicles().associateBy { it.clientVehicleId }
         val missing = mutableSetOf<String>() // 404 this run: wait for the vehicle to be re-created
         for (q in store.dtcReports()) {
@@ -378,6 +407,10 @@ class SyncEngine(
                 report = report.copy(dtcReports = report.dtcReports + 1)
             } catch (e: ApiError.Http) {
                 when {
+                    e.status == 501 -> {
+                        pauseNotImplemented(STEP_DTC_REPORTS) // every report stays queued
+                        return
+                    }
                     e.status == 404 -> {
                         store.setVehicleServerId(q.clientVehicleId, null)
                         missing += q.clientVehicleId
@@ -395,5 +428,11 @@ class SyncEngine(
     companion object {
         /** Keeps one run short; the rest goes out on the next run. */
         const val MAX_TELEMETRY_BATCHES_PER_RUN = 50
+
+        const val STEP_TELEMETRY = "telemetry"
+        const val STEP_DTC_REPORTS = "dtc_reports"
+
+        /** After a `501`, the step waits this long before trying again (the server may ship it any day). */
+        const val NOT_IMPLEMENTED_RETRY_MILLIS = 24L * 60 * 60 * 1000
     }
 }

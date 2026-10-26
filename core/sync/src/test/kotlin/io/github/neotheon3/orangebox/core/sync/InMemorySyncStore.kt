@@ -37,6 +37,7 @@ class InMemorySyncStore : SyncStore {
     val telemetrySent = mutableMapOf<String, Pair<Long, Long>>()
     val telemetryDone = mutableMapOf<String, String?>()
     val dtcQueue = mutableListOf<QueuedDtcReport>()
+    val paused = mutableMapOf<String, Long>()
     var pendingTelemetry: PendingTelemetryBatch? = null
     private var rowId = 0L
 
@@ -156,5 +157,11 @@ class InMemorySyncStore : SyncStore {
 
     override suspend fun removeDtcReport(clientReportId: String) {
         dtcQueue.removeAll { it.report.clientReportId == clientReportId }
+    }
+
+    override suspend fun pausedUntil(step: String): Long? = paused[step]
+
+    override suspend fun pauseUntil(step: String, atMillis: Long?) {
+        if (atMillis == null) paused.remove(step) else paused[step] = atMillis
     }
 }

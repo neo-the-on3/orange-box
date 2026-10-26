@@ -117,6 +117,11 @@ interface SyncStore {
 
     suspend fun setPendingTelemetryBatch(batch: PendingTelemetryBatch?)
 
+    /** Epoch millis before which the [step] (see [SyncEngine.STEP_TELEMETRY]) isn't tried, or null. */
+    suspend fun pausedUntil(step: String): Long?
+
+    suspend fun pauseUntil(step: String, atMillis: Long?)
+
     /** DTC reads and clears waiting for upload, oldest first (#67). */
     suspend fun dtcReports(): List<QueuedDtcReport>
 
