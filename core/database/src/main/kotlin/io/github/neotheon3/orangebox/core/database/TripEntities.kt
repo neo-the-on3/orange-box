@@ -1,18 +1,22 @@
 package io.github.neotheon3.orangebox.core.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 /**
  * One recorded drive. [endedAtMillis] is null while recording; the summary columns are checkpointed
  * every few seconds, so a trip left open by process death keeps its last checkpoint and is closed by
  * [TripDao.closeOrphans] with [endReason] `process_death`.
  */
-@Entity(tableName = "trips", indices = [Index("startedAtMillis")])
+@Entity(tableName = "trips", indices = [Index("startedAtMillis"), Index(value = ["clientTripId"], unique = true)])
 data class TripEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Backend `clientTripId` (UUID): set once when the trip starts, never changed (schema 5, M9). */
+    @ColumnInfo(defaultValue = "''") val clientTripId: String = UUID.randomUUID().toString(),
     val vehicleId: Long?,
     val startedAtMillis: Long,
     val endedAtMillis: Long? = null,
@@ -66,6 +70,8 @@ data class TripSampleEntity(
 )
 data class TripEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Backend `clientEventId` (UUID): assigned when the event is recorded, sent unchanged on every upload. */
+    @ColumnInfo(defaultValue = "''") val clientEventId: String = UUID.randomUUID().toString(),
     val tripId: Long,
     val timestampMillis: Long,
     val type: String,

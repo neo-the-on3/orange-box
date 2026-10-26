@@ -44,8 +44,9 @@ class RoomVehicleRepository @Inject constructor(
         val id = if (vehicle.id == 0L) {
             dao.insert(VehicleEntity.from(vehicle, clock()))
         } else {
-            val created = dao.get(vehicle.id)?.createdAtMillis ?: clock()
-            dao.update(VehicleEntity.from(vehicle, created)); vehicle.id
+            val existing = dao.get(vehicle.id)
+            val updated = VehicleEntity.from(vehicle, existing?.createdAtMillis ?: clock())
+            dao.update(existing?.let { updated.copy(clientVehicleId = it.clientVehicleId) } ?: updated); vehicle.id
         }
         OrangeLog.i(OrangeLog.Areas.APP, "vehicle_saved", "id" to id, "fuel" to vehicle.fuel.name)
         return id
