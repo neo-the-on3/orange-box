@@ -111,7 +111,13 @@ info:
            survived: the app deletes the vehicle locally, with its local trips that the walk didn't return
            (they were deleted with it, or belong to a deleted vehicle), and doesn't upload them.
         3. Re-uploads, through `POST /v1/trips/batch` with fresh `Idempotency-Key`s, every local trip whose
-           `clientTripId` the full walk didn't return, except trips the user deleted on this device.
+           `clientTripId` the full walk didn't return, except trips the user deleted on this device. It also
+           re-uploads its **own** trips that the walk returned stale: the returned `snapshotAt` is older than the
+           last snapshot the server had accepted from this device, or the returned trip is `in_progress` while the
+           local one is `completed` (the restore lost the later snapshots). The server only updates a live
+           `in_progress` trip from a newer snapshot and answers `unchanged` otherwise, so this is harmless.
+           Trips pulled from other devices are not re-uploaded; they keep the newer-`updatedAt` rule, and the
+           device that recorded them re-uploads them in its own recovery.
         4. Updates the local server `id` of each re-uploaded trip from the batch result, matching by
            `clientTripId` (a re-created trip gets a new server id).
 
