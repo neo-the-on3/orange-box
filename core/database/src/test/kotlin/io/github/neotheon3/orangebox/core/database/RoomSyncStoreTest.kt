@@ -2,6 +2,7 @@ package io.github.neotheon3.orangebox.core.database
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import io.github.neotheon3.orangebox.core.network.DtcReportCreateDto
 import io.github.neotheon3.orangebox.core.network.FakeBackendApi
 import io.github.neotheon3.orangebox.core.network.SyncWindowReason
 import io.github.neotheon3.orangebox.core.network.TripUploadDto
@@ -234,5 +235,43 @@ class RoomSyncStoreTest {
         server.failNextTelemetry(io.github.neotheon3.orangebox.core.network.ApiError.Http(422, null))
         assertEquals(1, run().telemetryRejected)
         assertTrue(store.telemetryTrips().none { it.clientTripId == t.clientTripId })
+    }
+
+    private fun dtc(id: String, atMillis: Long = clockMillis - 60_000) =
+        DtcReportCreateDto(id, DtcReportCreateDto.KIND_READ, Instant.ofEpochMilli(atMillis), mil = true, stored = listOf("P0300"))
+
+    @Test fun `a queued DTC report survives a reopen and goes up once with its vehicle (#67)`() = runBlocking {
+        val v = car()
+        assertTrue(store.enqueueDtcReport(v, dtc("00000000-0000-4000-8000-0000000000d1")))
+        assertFalse("unknown vehicle", store.enqueueDtcReport(9_999, dtc("00000000-0000-4000-8000-0000000000d2")))
+        db.close()
+        open()
+        assertEquals(1, store.dtcReports().size)
+        val r = run()
+        assertEquals(1, r.vehiclesCreated)
+        assertEquals(1, r.dtcReports)
+        assertEquals(listOf("P0300"), server.dtcReports.single().stored)
+        assertTrue(store.dtcReports().isEmpty())
+    }
+
+    @Test fun `the DTC queue is bounded, drops stale reports and those of deleted vehicles, and sign-out clears it`() = runBlocking {
+        val v = car()
+        repeat(RoomSyncStore.MAX_QUEUED_DTC_REPORTS + 5) {
+            store.enqueueDtcReport(v, dtc("00000000-0000-4000-8000-%012d".format(it), atMillis = clockMillis - 3_600_000 + it))
+        }
+        val queued = store.dtcReports()
+        assertEquals(RoomSyncStore.MAX_QUEUED_DTC_REPORTS, queued.size)
+        assertEquals("oldest dropped", "00000000-0000-4000-8000-%012d".format(5), queued.first().report.clientReportId)
+
+        store.enqueueDtcReport(v, dtc("00000000-0000-4000-8000-0000000000aa", atMillis = clockMillis - (RoomSyncStore.TELEMETRY_BACKLOG_DAYS + 1) * 86_400_000))
+        assertTrue(store.dtcReports().none { it.report.clientReportId.endsWith("aa") })
+
+        val other = car("Swift")
+        store.enqueueDtcReport(other, dtc("00000000-0000-4000-8000-0000000000bb"))
+        db.vehicleDao().delete(other)
+        assertTrue(store.dtcReports().none { it.report.clientReportId.endsWith("bb") })
+
+        db.syncDao().forgetServer()
+        assertTrue(store.dtcReports().isEmpty())
     }
 }
