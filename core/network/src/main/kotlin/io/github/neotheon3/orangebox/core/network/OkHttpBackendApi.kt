@@ -75,6 +75,22 @@ class OkHttpBackendApi(
     override suspend fun createVehicle(vehicle: VehicleCreateDto, idempotencyKey: String): VehicleDto =
         call(post("vehicles", json(vehicle)).idempotent(idempotencyKey), authenticated = true)
 
+    override suspend fun getVehicle(serverId: String): Tagged<VehicleDto> =
+        tagged(VehicleDto.serializer(), get("vehicles/$serverId"))
+
+    /** JSON merge patch with the vehicle's `ETag` in `If-Match` (`428` without it, `412` when stale). */
+    override suspend fun patchVehicle(serverId: String, patch: VehiclePatchDto, etag: String): Tagged<VehicleDto> = tagged(
+        VehicleDto.serializer(),
+        Request.Builder().url(url("vehicles/$serverId"))
+            .patch(BackendJson.encodeToString(VehiclePatchDto.serializer(), patch).toRequestBody(MERGE_PATCH))
+            .header("If-Match", etag),
+    )
+
+    private suspend fun <T> tagged(serializer: KSerializer<T>, builder: Request.Builder): Tagged<T> {
+        val (body, etag) = execute(builder, authenticated = true) { it.bodyOrThrow() to it.header("ETag") }
+        return Tagged(decode(serializer, body), etag)
+    }
+
     override suspend fun listTrips(since: String?, cursor: String?): TripPage = call(
         get("trips") {
             since?.let { addQueryParameter("since", it) }
@@ -105,7 +121,11 @@ class OkHttpBackendApi(
     }
 
     override suspend fun createDtcReport(vehicleServerId: String, report: DtcReportCreateDto, idempotencyKey: String): DtcReportDto =
-        call(post("vehicles/$vehicleServerId/dtc-reports", json(report)).idempotent(idempotencyKey), authenticated = true)
+        call(
+            post("vehicles/$vehicleServerId/dtc-reports", BackendJson.encodeToString(DtcReportCreateDto.Wire, report).toRequestBody(JSON))
+                .idempotent(idempotencyKey),
+            authenticated = true,
+        )
 
     override suspend fun deleteTrip(serverId: String) {
         try {
@@ -131,16 +151,20 @@ class OkHttpBackendApi(
     }
 
     /** Runs the request (refreshing once on 401) and returns the 2xx body text. */
-    private suspend fun execute(builder: Request.Builder, authenticated: Boolean): String {
+    private suspend fun execute(builder: Request.Builder, authenticated: Boolean): String =
+        execute(builder, authenticated) { it.bodyOrThrow() }
+
+    /** Runs the request (refreshing once on 401) and reads the response with [read] (which throws on non-2xx). */
+    private suspend fun <T> execute(builder: Request.Builder, authenticated: Boolean, read: (Response) -> T): T {
         builder.header("X-Request-Id", requestId()).header("Accept", "application/json")
-        if (!authenticated) return send(builder.build()).use { it.bodyOrThrow() }
+        if (!authenticated) return send(builder.build()).use(read)
 
         val session = sessions.read() ?: throw ApiError.NotSignedIn()
         send(builder.bearer(session.accessToken).build()).use { first ->
-            if (first.code != 401) return first.bodyOrThrow()
+            if (first.code != 401) return read(first)
         }
         val fresh = refresh(staleAccessToken = session.accessToken)
-        return send(builder.bearer(fresh.accessToken).build()).use { it.bodyOrThrow() }
+        return send(builder.bearer(fresh.accessToken).build()).use(read)
     }
 
     /** Single-flight: whoever gets the lock first refreshes; the others see the new token and reuse it. */
@@ -212,6 +236,7 @@ class OkHttpBackendApi(
 
     companion object {
         private val JSON = "application/json".toMediaType()
+        private val MERGE_PATCH = "application/merge-patch+json".toMediaType()
 
         /** Accepts `https://host[:port][/prefix]` only (or `http://` when [allowCleartext]), without query or fragment. */
         fun parseBaseUrl(raw: String, allowCleartext: Boolean = false): HttpUrl {

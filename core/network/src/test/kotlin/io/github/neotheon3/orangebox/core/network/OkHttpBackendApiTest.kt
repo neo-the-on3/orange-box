@@ -305,6 +305,66 @@ class OkHttpBackendApiTest {
         assertFalse("absent fields are omitted, not null", body.contains("null"))
     }
 
+    @Test fun `408 request_timeout is retryable and carries Retry-After (draft 9)`() = runTest {
+        signedIn()
+        server.enqueue(json(408, problem(408, ApiError.CODE_REQUEST_TIMEOUT), "Retry-After" to "4"))
+        val e = runCatching { api.listTrips() }.exceptionOrNull() as ApiError.Http
+        assertEquals(4L, e.retryAfterSeconds)
+        assertTrue(e.isRetryable)
+    }
+
+    @Test fun `vehicle PATCH is merge-patch with If-Match and returns the new ETag`() = runTest {
+        signedIn()
+        server.enqueue(json(200, VEHICLE_JSON, "ETag" to "\"v1\""))
+        server.enqueue(json(200, VEHICLE_JSON.replace("\"gasoline\"", "\"gasoline_cng\""), "ETag" to "\"v2\""))
+        server.enqueue(json(412, problem(412, ApiError.CODE_ETAG_MISMATCH)))
+        val got = api.getVehicle("veh_1")
+        assertEquals("\"v1\"", got.etag)
+        val patched = api.patchVehicle("veh_1", VehiclePatchDto(fuelType = "gasoline_cng"), got.etag!!)
+        assertEquals("gasoline_cng", patched.value.fuelType)
+        assertEquals("\"v2\"", patched.etag)
+        val stale = runCatching { api.patchVehicle("veh_1", VehiclePatchDto(fuelType = "cng"), "\"v1\"") }.exceptionOrNull() as ApiError.Http
+        assertEquals(412, stale.status)
+        assertEquals(ApiError.CODE_ETAG_MISMATCH, stale.code)
+
+        assertEquals("GET", server.takeRequest().method)
+        val patch = server.takeRequest()
+        assertEquals("PATCH", patch.method)
+        assertEquals("/v1/vehicles/veh_1", patch.url.encodedPath)
+        assertEquals("\"v1\"", patch.headers["If-Match"])
+        assertTrue(patch.headers["Content-Type"]!!.startsWith("application/merge-patch+json"))
+        assertEquals("""{"fuelType":"gasoline_cng"}""", patch.body!!.utf8())
+    }
+
+    @Test fun `vehicle create leaves unknown make and model out, and blank ones read as unknown`() = runTest {
+        signedIn()
+        server.enqueue(json(201, """{"id":"veh_3","make":"","model":null,"fuelType":"hydrogen","archived":false,"createdAt":"2026-10-23T14:05:00Z","updatedAt":"2026-10-23T14:05:00Z"}"""))
+        val v = api.createVehicle(VehicleCreateDto(clientVehicleId = "c3", nickname = "Car", fuelType = "gasoline"), "k")
+        assertNull(v.knownMake)
+        assertNull(v.knownModel)
+        assertEquals("unknown fuel types in responses are tolerated", "hydrogen", v.fuelType)
+        val body = server.takeRequest().body!!.utf8()
+        assertFalse(body, body.contains("make") || body.contains("model"))
+    }
+
+    @Test fun `trip endReason - unknown reads as other`() {
+        assertEquals(EndReasons.OTHER, EndReasons.read("battery_died"))
+        assertEquals(EndReasons.ENGINE_OFF, EndReasons.read("engine_off"))
+        assertNull(EndReasons.read(null))
+    }
+
+    @Test fun `dtc report sends mil null when unknown`() = runTest {
+        signedIn()
+        val report = DtcReportCreateDto(
+            clientReportId = "5b1d9f3e-0000-4000-8000-000000000002", kind = DtcReportCreateDto.KIND_CLEARED,
+            readAt = Instant.parse("2026-10-23T14:05:00Z"), mil = null, stored = emptyList(), pending = emptyList(),
+        )
+        server.enqueue(json(201, """{"id":"dtc_2","vehicleId":"veh_1","createdAt":"2026-10-23T14:05:02Z","clientReportId":"${report.clientReportId}","kind":"cleared","readAt":"2026-10-23T14:05:00Z","mil":null}"""))
+        assertNull(api.createDtcReport("veh_1", report, report.clientReportId).mil)
+        val body = server.takeRequest().body!!.utf8()
+        assertTrue(body, body.contains("\"mil\":null"))
+    }
+
     @Test fun `deleting an already deleted trip counts as done`() = runTest {
         signedIn()
         server.enqueue(json(404, problem(404, "not_found")))
