@@ -90,6 +90,20 @@ class MigrationTest {
         }
     }
 
+    @Test fun `5 to 6 adds the raw fuel-rate and MAF columns, empty for old samples`() {
+        helper.createDatabase(DB, 5).use { db ->
+            db.execSQL("INSERT INTO trips (vehicleId, startedAtMillis, lastSampleAtMillis, durationS, distanceKm, fuelLitres, co2Grams, idleS, fuelCutS, ecoS, overspeedS, harshAccelCount, harshBrakeCount, overspeedCount, maxSpeedKph, clientTripId) VALUES (NULL, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'c1')")
+            db.execSQL("INSERT INTO trip_samples (tripId, timestampMillis, speedKph, rpm, fuelFlowLph, coolantC) VALUES (1, 1, 40, 1800, 2.5, 90)")
+        }
+        helper.runMigrationsAndValidate(DB, 6, true, *Migrations.ALL).use { db ->
+            db.query("SELECT fuelRatePidLph, mafGps, fuelFlowLph FROM trip_samples").use { c ->
+                c.moveToFirst()
+                assertTrue(c.isNull(0) && c.isNull(1))
+                assertEquals(2.5, c.getDouble(2), 0.0)
+            }
+        }
+    }
+
     @Test fun `all migrations reach the current version`() {
         helper.createDatabase(DB, 1).close()
         helper.runMigrationsAndValidate(DB, OrangeBoxDatabase.VERSION, true, *Migrations.ALL).close()

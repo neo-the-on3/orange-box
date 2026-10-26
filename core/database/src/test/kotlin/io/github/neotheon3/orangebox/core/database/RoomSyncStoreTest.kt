@@ -299,4 +299,16 @@ class RoomSyncStoreTest {
         car() // with make and model: those are sent as they are
         assertTrue(store.vehicles().any { it.create.make == "Maruti Suzuki" && it.create.nickname == "SX4" })
     }
+
+    @Test fun `fuel flow goes only as the car's PID 5E, with MAF when read, never our computed flow`() {
+        val computed = TripSampleEntity(tripId = 1, timestampMillis = 0, speedKph = 40.0, rpm = 1800.0, fuelFlowLph = 2.1, coolantC = 85.0)
+        val none = RoomSyncStore.sampleDto(computed)
+        assertNull(none.pids)
+        assertNull(none.mafGps)
+        val read = RoomSyncStore.sampleDto(computed.copy(fuelRatePidLph = 2.35, mafGps = 4.2))
+        assertEquals(mapOf("0x5E" to 2.35), read.pids)
+        assertEquals(4.2, read.mafGps!!, 0.0)
+        val mafOnly = RoomSyncStore.sampleDto(computed.copy(mafGps = 4.2))
+        assertNull("flow computed from MAF isn't sent", mafOnly.pids)
+    }
 }

@@ -162,6 +162,7 @@ class TripRecorder(
                 tripId = current.id, timestampMillis = s.timestampMillis,
                 speedKph = s.instant.speedKph, rpm = s.instant.rpm, fuelFlowLph = s.instant.fuelFlowLph, coolantC = s.instant.coolantC,
                 latitude = f?.latitude, longitude = f?.longitude, accuracyM = f?.accuracyM,
+                fuelRatePidLph = s.instant.fuelRatePidLph, mafGps = s.instant.mafGps,
             )
             lastSampleAt = s.timestampMillis
         }

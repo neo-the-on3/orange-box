@@ -46,6 +46,10 @@ data class InstantTelemetry(
     val milOn: Boolean? = null,
     /** Stored DTC count from PID 01 01, null if unknown. */
     val dtcCount: Int? = null,
+    /** PID 5E as the car reported it (engine fuel rate, L/h); null when not answered. Not our computed flow. */
+    val fuelRatePidLph: Double? = null,
+    /** PID 10 as the car reported it (mass air flow, g/s); null when not answered. */
+    val mafGps: Double? = null,
 )
 
 /** Totals since [TelemetryEngine.reset]. Times in seconds. */
@@ -197,6 +201,8 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
             instantKmPerL = kmPerL,
             milOn = sample.monitor?.milOn,
             dtcCount = sample.monitor?.dtcCount,
+            fuelRatePidLph = sample[ObdPid.FUEL_RATE],
+            mafGps = sample[ObdPid.MAF],
         )
 
         if (dtS != null && prev != null) integrate(prev, dtS, speed, flow)

@@ -14,8 +14,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     version = OrangeBoxDatabase.VERSION,
     exportSchema = true,
     // 1 -> 2 only adds the trip tables (M4); 2 -> 3 adds trip_events.durationS (#164); 3 -> 4 adds
-    // dtc_records (#51). Room generates all three. 4 -> 5 (M9 sync) is manual: it backfills UUIDs.
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
+    // dtc_records (#51). Room generates all three. 4 -> 5 (M9 sync) is manual: it backfills UUIDs. 5 -> 6 (M9)
+    // adds nullable columns only.
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4),
+        AutoMigration(from = 5, to = 6),
+    ],
 )
 abstract class OrangeBoxDatabase : RoomDatabase() {
     abstract fun vehicleDao(): VehicleDao
@@ -24,7 +28,7 @@ abstract class OrangeBoxDatabase : RoomDatabase() {
     abstract fun syncDao(): SyncDao
 
     companion object {
-        const val VERSION = 5
+        const val VERSION = 6
         const val NAME = "orangebox.db"
     }
 }
