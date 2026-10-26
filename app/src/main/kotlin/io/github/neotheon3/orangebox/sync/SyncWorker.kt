@@ -71,6 +71,7 @@ class SyncRunner(
                 OrangeLog.Areas.BACKEND, "sync_ok", "mode" to mode.wireName, "pulled" to r.pulled, "uploaded" to r.uploaded,
                 "deleted" to r.deletedByServer, "rejected" to r.rejected, "recovery" to (r.recovery?.name ?: "none"), "dropped" to r.dropped,
                 "telemetry_batches" to r.telemetryBatches, "telemetry_rejected" to r.telemetryRejected,
+                "dtc_reports" to r.dtcReports, "dtc_dropped" to r.dtcReportsDropped,
             )
             SyncOutcome.Done to SyncStatus(now, ok = true, uploadedTrips = r.uploaded, pulledTrips = r.pulled, telemetryBatches = r.telemetryBatches)
         } catch (e: ApiError) {
