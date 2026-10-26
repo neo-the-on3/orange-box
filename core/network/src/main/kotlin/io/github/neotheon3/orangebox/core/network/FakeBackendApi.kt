@@ -166,7 +166,23 @@ class FakeBackendApi(
     /** Batches larger than this many samples + events answer `413` (to test splitting). */
     var maxTelemetryItems: Int = BackendApi.MAX_SAMPLES_PER_BATCH + BackendApi.MAX_EVENTS_PER_BATCH
 
-    override suspend fun uploadTelemetry(batch: TelemetryBatchDto, idempotencyKey: String) = op("POST /v1/telemetry/batches") {
+    private val telemetryFailures = ArrayDeque<ApiError>()
+
+    /** Like [failNext], but only for the next telemetry uploads. */
+    fun failNextTelemetry(vararg errors: ApiError) {
+        telemetryFailures.addAll(errors)
+    }
+
+    /** (Idempotency-Key, clientBatchId) of every telemetry request, failed ones included. */
+    val telemetryRequests = mutableListOf<Pair<String, String>>()
+
+    override suspend fun uploadTelemetry(batch: TelemetryBatchDto, idempotencyKey: String): TelemetryBatchAckDto {
+        telemetryRequests += idempotencyKey to batch.clientBatchId
+        telemetryFailures.removeFirstOrNull()?.let { calls += "POST /v1/telemetry/batches"; throw it }
+        return storeTelemetry(batch)
+    }
+
+    private suspend fun storeTelemetry(batch: TelemetryBatchDto) = op("POST /v1/telemetry/batches") {
         telemetryBatches[batch.clientBatchId]?.let { return@op it.copy(status = TelemetryBatchAckDto.STATUS_DUPLICATE) }
         if (batch.samples.size + batch.events.size > maxTelemetryItems) throw http(413, "payload_too_large")
         if (batch.clientTripId in state.tombstones) {

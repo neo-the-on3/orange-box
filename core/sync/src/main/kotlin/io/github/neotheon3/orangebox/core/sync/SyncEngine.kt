@@ -3,6 +3,7 @@ package io.github.neotheon3.orangebox.core.sync
 import io.github.neotheon3.orangebox.core.network.ApiError
 import io.github.neotheon3.orangebox.core.network.BackendApi
 import io.github.neotheon3.orangebox.core.network.SyncWindowReason
+import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
 import io.github.neotheon3.orangebox.core.network.TripBatchDto
 import io.github.neotheon3.orangebox.core.network.TripDto
 import java.util.UUID
@@ -14,7 +15,11 @@ import java.util.UUID
  * 2. pull: without a stored token a full `GET /v1/trips` walk; with token S, walk `GET /v1/trips?since=S` to its
  *    last page (S' = its `nextSince`), then `GET /v1/trips/deletions?since=S`, then store S';
  * 3. push vehicles without a server id (`POST /v1/vehicles`, de-duplicated by `clientVehicleId`), then trip
- *    snapshots (`POST /v1/trips/batch`).
+ *    snapshots (`POST /v1/trips/batch`);
+ * 4. push telemetry of finished, uploaded trips (`POST /v1/telemetry/batches`, at most 5,000 samples and 500 events
+ *    per batch, oldest trip first). A batch is stored before it is sent and resent unchanged (same `clientBatchId`
+ *    and `Idempotency-Key`) until acknowledged; `413` halves the batch, `422` stops that trip's telemetry,
+ *    `404 vehicle_not_found` re-creates the vehicle next run, `trip_deleted` drops the rest.
  *
  * `400 sync_window_expired` → a full walk, then by `reason`: `deployment_changed` re-creates vehicles the server
  * lost and re-uploads trips it didn't return (fresh `Idempotency-Key`s); `purged`, `invalid` and anything else
@@ -26,6 +31,7 @@ class SyncEngine(
     private val store: SyncStore,
     private val newKey: () -> String = { UUID.randomUUID().toString() },
     private val maxRestarts: Int = 3,
+    private val maxTelemetryBatchesPerRun: Int = MAX_TELEMETRY_BATCHES_PER_RUN,
 ) {
     data class Report(
         val pulled: Int = 0,
@@ -35,6 +41,11 @@ class SyncEngine(
         val recovery: SyncWindowReason? = null,
         val dropped: Int = 0,
         val vehiclesCreated: Int = 0,
+        val telemetryBatches: Int = 0,
+        val telemetrySamples: Int = 0,
+        val telemetryEvents: Int = 0,
+        /** Trips whose telemetry was rejected (`422`, or `413` even at one item). */
+        val telemetryRejected: Int = 0,
     )
 
     private var report = Report()
@@ -45,6 +56,7 @@ class SyncEngine(
         pull()
         pushVehicles()
         pushTrips()
+        pushTelemetry()
         return report
     }
 
@@ -244,5 +256,102 @@ class SyncEngine(
             .take(BackendApi.MAX_TRIPS_PER_BATCH)
         if (uploads.isEmpty()) return null
         return PendingTripBatch(newKey(), uploads).also { store.setPendingTripBatch(it) }
+    }
+
+    // --- telemetry (#67) ---
+
+    private enum class Sent { OK, TOO_LARGE, TRIP_DONE, VEHICLE_MISSING }
+
+    /** Batch size for this run; `413` halves it for the rest of the run. */
+    private var maxSamples = BackendApi.MAX_SAMPLES_PER_BATCH
+    private var maxEvents = BackendApi.MAX_EVENTS_PER_BATCH
+
+    private suspend fun pushTelemetry() {
+        maxSamples = BackendApi.MAX_SAMPLES_PER_BATCH
+        maxEvents = BackendApi.MAX_EVENTS_PER_BATCH
+        store.pendingTelemetryBatch()?.let { pending ->
+            when (send(pending)) {
+                Sent.VEHICLE_MISSING -> return
+                Sent.TOO_LARGE -> shrink(pending.batch.samples.size, pending.batch.events.size)
+                else -> Unit
+            }
+        }
+        for (trip in store.telemetryTrips()) {
+            if (!uploadTrip(trip.clientTripId, trip.vehicleServerId)) return
+        }
+    }
+
+    private fun shrink(samples: Int, events: Int) {
+        maxSamples = maxOf(1, minOf(maxSamples, samples) / 2)
+        maxEvents = maxOf(1, minOf(maxEvents, events) / 2)
+    }
+
+    /** Uploads a trip's remaining telemetry in batches. Returns false when this run should stop uploading telemetry. */
+    private suspend fun uploadTrip(clientTripId: String, vehicleId: String): Boolean {
+        while (true) {
+            if (report.telemetryBatches >= maxTelemetryBatchesPerRun) return false
+            val chunk = store.telemetryChunk(clientTripId, maxSamples, maxEvents) ?: return true
+            val pending = PendingTelemetryBatch(
+                idempotencyKey = newKey(),
+                batch = TelemetryBatchDto(newKey(), clientTripId, vehicleId, chunk.samples, chunk.events),
+                samplesUpTo = chunk.samplesUpTo,
+                eventsUpTo = chunk.eventsUpTo,
+            )
+            store.setPendingTelemetryBatch(pending)
+            when (send(pending)) {
+                Sent.OK -> Unit
+                Sent.TRIP_DONE -> return true
+                Sent.VEHICLE_MISSING -> return false
+                Sent.TOO_LARGE -> {
+                    if (chunk.samples.size + chunk.events.size <= 1) {
+                        store.markTelemetryDone(clientTripId, CODE_PAYLOAD_TOO_LARGE)
+                        report = report.copy(telemetryRejected = report.telemetryRejected + 1)
+                        return true
+                    }
+                    shrink(chunk.samples.size, chunk.events.size)
+                }
+            }
+        }
+    }
+
+    private suspend fun send(p: PendingTelemetryBatch): Sent {
+        val clientTripId = p.batch.clientTripId
+        try {
+            val ack = api.uploadTelemetry(p.batch, p.idempotencyKey)
+            if (ack.tripDeleted) store.markTelemetryDone(clientTripId, ack.status)
+            else store.markTelemetrySent(clientTripId, p.samplesUpTo, p.eventsUpTo)
+            store.setPendingTelemetryBatch(null)
+            report = report.copy(
+                telemetryBatches = report.telemetryBatches + 1,
+                telemetrySamples = report.telemetrySamples + ack.acceptedSamples,
+                telemetryEvents = report.telemetryEvents + ack.acceptedEvents,
+            )
+            return if (ack.tripDeleted) Sent.TRIP_DONE else Sent.OK
+        } catch (e: ApiError.Http) {
+            when {
+                e.status == 413 -> {
+                    store.setPendingTelemetryBatch(null) // the halves are new bodies: new clientBatchId and key
+                    return Sent.TOO_LARGE
+                }
+                e.status == 404 && e.code == ApiError.CODE_VEHICLE_NOT_FOUND -> {
+                    store.setPendingTelemetryBatch(null)
+                    store.vehicles().firstOrNull { it.serverId == p.batch.vehicleId }?.let { store.setVehicleServerId(it.clientVehicleId, null) }
+                    return Sent.VEHICLE_MISSING
+                }
+                e.status == 422 -> {
+                    store.setPendingTelemetryBatch(null)
+                    store.markTelemetryDone(clientTripId, e.code ?: "unprocessable")
+                    report = report.copy(telemetryRejected = report.telemetryRejected + 1)
+                    return Sent.TRIP_DONE
+                }
+                else -> throw e // retryable or not, the pending batch stays and is resent with the same key
+            }
+        }
+    }
+
+    companion object {
+        /** Keeps one run short; the rest goes out on the next run. */
+        const val MAX_TELEMETRY_BATCHES_PER_RUN = 50
+        const val CODE_PAYLOAD_TOO_LARGE = "payload_too_large"
     }
 }
