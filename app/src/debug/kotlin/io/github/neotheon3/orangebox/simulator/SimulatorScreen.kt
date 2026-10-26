@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.neotheon3.orangebox.core.model.BackendMode
+import io.github.neotheon3.orangebox.core.network.FakeBackendApi
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import io.github.neotheon3.orangebox.core.obd.VinDecoder
@@ -172,6 +173,22 @@ fun SimulatorScreen(state: SimulatorUiState, actions: SimulatorActions, onBack: 
                     Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }, Modifier.padding(start = 12.dp))
                 }
             }
+
+            Section("Fake server (Fake mode)")
+            Text("Arms one failure for the next matching call to the in-process server.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { actions.armFakeFailure(FakeBackendApi.Scenario.CONFLICT_412) }, modifier = Modifier.testTag("sim_fake_412")) {
+                    Text("Next PATCH: 412 conflict")
+                }
+                OutlinedButton(onClick = { actions.armFakeFailure(FakeBackendApi.Scenario.PROBLEM_500) }, modifier = Modifier.testTag("sim_fake_500")) {
+                    Text("Next call: 500 problem+json")
+                }
+                OutlinedButton(onClick = { actions.armFakeFailure(FakeBackendApi.Scenario.UNAVAILABLE_503) }, modifier = Modifier.testTag("sim_fake_503")) {
+                    Text("Next call: 503 busy")
+                }
+            }
+            state.fakeArmed?.let { Text("Last armed: ${it.name}", Modifier.testTag("sim_fake_armed")) }
+            ToggleRow("Stats, rankings and points exist (off: 501)", state.fakeMemberFeatures, "sim_fake_member_features", actions::setFakeMemberFeatures)
 
             HorizontalDivider()
             Button(onClick = actions::reset, modifier = Modifier.testTag("sim_reset")) { Text("Reset simulator") }

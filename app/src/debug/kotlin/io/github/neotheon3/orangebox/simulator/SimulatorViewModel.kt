@@ -7,6 +7,8 @@ import io.github.neotheon3.orangebox.core.bluetooth.DefaultObdDongleProvider
 import io.github.neotheon3.orangebox.core.bluetooth.ObdDongleProvider
 import io.github.neotheon3.orangebox.core.datastore.BackendConfigRepository
 import io.github.neotheon3.orangebox.core.model.BackendMode
+import io.github.neotheon3.orangebox.core.network.FakeBackendApi
+import io.github.neotheon3.orangebox.sync.BackendClients
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvents
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionManager
@@ -38,6 +40,10 @@ data class SimulatorUiState(
     /** What the app itself computed (TelemetryEngine), for the debug readout. */
     val telemetry: TelemetrySnapshot? = null,
     val readout: DiagnosticsReadout? = null,
+    /** Fake server: the stats, rankings and points endpoints exist (off: they answer 501). */
+    val fakeMemberFeatures: Boolean = true,
+    /** The last Fake failure armed, for the readout ("next PATCH answers 412"). */
+    val fakeArmed: FakeBackendApi.Scenario? = null,
 )
 
 /** DTCs and VIN as the app read them from the (simulated or real) car through the live session. */
@@ -65,6 +71,12 @@ interface SimulatorActions {
     /** Raises the crash prompt as if the accelerometer had detected an impact (M7, #56). */
     fun injectImpact()
     fun reset()
+
+    /** Fake mode (#66): the next matching call to the in-process server fails like a real server can. */
+    fun armFakeFailure(scenario: FakeBackendApi.Scenario) {}
+
+    /** Fake mode: off makes the stats, rankings and points endpoints answer 501 (not built yet). */
+    fun setFakeMemberFeatures(on: Boolean) {}
 }
 
 @HiltViewModel
@@ -77,8 +89,10 @@ class SimulatorViewModel @Inject constructor(
     private val player: DriveScriptPlayer,
     telemetry: TelemetrySource,
     private val crash: io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor,
+    private val clients: BackendClients,
 ) : ViewModel(), SimulatorActions {
     private val readout = MutableStateFlow<DiagnosticsReadout?>(null)
+    private val fake = MutableStateFlow(clients.fakeServer.memberFeaturesImplemented to null as FakeBackendApi.Scenario?)
 
     val uiState: StateFlow<SimulatorUiState> = combine(
         combine(controller.state, manager.state, manager.lastLinkEvent, backend.config, dongles.selected) { sim, conn, link, cfg, selected ->
@@ -86,7 +100,8 @@ class SimulatorViewModel @Inject constructor(
         },
         telemetry.latest,
         readout,
-    ) { base, snap, r -> base.copy(telemetry = snap, readout = r) }
+        fake,
+    ) { base, snap, r, f -> base.copy(telemetry = snap, readout = r, fakeMemberFeatures = f.first, fakeArmed = f.second) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SimulatorUiState(sim = controller.state.value))
 
     override fun setUseSimulatedDongle(on: Boolean) {
@@ -126,6 +141,16 @@ class SimulatorViewModel @Inject constructor(
     override fun stopScript() = player.stop()
 
     override fun injectImpact() = crash.injectImpact()
+
+    override fun armFakeFailure(scenario: FakeBackendApi.Scenario) {
+        clients.fakeServer.arm(scenario)
+        fake.value = fake.value.first to scenario
+    }
+
+    override fun setFakeMemberFeatures(on: Boolean) {
+        clients.fakeServer.memberFeaturesImplemented = on
+        fake.value = on to fake.value.second
+    }
 
     override fun reset() {
         player.stop()

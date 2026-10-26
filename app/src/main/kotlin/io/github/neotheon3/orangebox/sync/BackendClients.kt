@@ -30,6 +30,9 @@ class BackendClients(private val sessions: ObservableSessionStore) {
 
     val sessionStore: ObservableSessionStore get() = sessions
 
+    /** The in-process server of Fake mode (debug Simulator: failure scenarios, the 501 switch). */
+    val fakeServer: FakeBackendApi get() = fake
+
     /** Tests: answer Remote with this instead of building an OkHttp client. */
     internal var remoteForTests: BackendApi? = null
 
