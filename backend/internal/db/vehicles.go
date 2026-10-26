@@ -215,8 +215,8 @@ func toVehicle(r dbgen.Vehicle) store.Vehicle {
 		VehicleFields: store.VehicleFields{
 			Nickname:             r.Nickname,
 			VariantID:            r.VariantID,
-			Make:                 deref(r.Make),
-			Model:                deref(r.Model),
+			Make:                 r.Make,
+			Model:                r.Model,
 			FuelType:             deref(r.FuelType),
 			EngineDisplacementCc: widen(r.EngineDisplacementCc),
 			ModelYear:            widen(r.ModelYear),

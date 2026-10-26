@@ -31,8 +31,8 @@ type Vehicle struct {
 type VehicleFields struct {
 	Nickname             *string
 	VariantID            *string
-	Make                 string
-	Model                string
+	Make                 *string // nil when unknown (optional since spec draft.9)
+	Model                *string
 	FuelType             string
 	EngineDisplacementCc *int
 	ModelYear            *int

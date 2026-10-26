@@ -1827,8 +1827,8 @@ components:
       properties:
         nickname: {type: string, maxLength: 40}
         variantId: {type: [string, 'null'], description: 'Catalogue variant, or null for manual entry'}
-        make: {type: string, maxLength: 64}
-        model: {type: string, maxLength: 64}
+        make: {type: [string, 'null'], maxLength: 64, description: 'Optional; null when unknown (e.g. a vehicle with just a nickname).'}
+        model: {type: [string, 'null'], maxLength: 64, description: 'Optional; null when unknown.'}
         fuelType: {$ref: '#/components/schemas/FuelType'}
         engineDisplacementCc: {type: [integer, 'null'], minimum: 0, maximum: 10000}
         modelYear: {type: [integer, 'null'], minimum: 1980, maximum: 2100}
@@ -1842,9 +1842,9 @@ components:
       allOf:
         - $ref: '#/components/schemas/VehicleWritable'
         - type: object
-          required: [make, model, fuelType]
+          required: [fuelType]
           properties:
-            clientVehicleId: {type: string, format: uuid, description: 'Local id from the app, for de-duplication'}
+            clientVehicleId: {type: string, format: uuid, description: 'Local id from the app, for de-duplication. Optional in the schema, but **clients that sync must send it**: without it the server does not de-duplicate (no `200` replay, no `410` after a deletion) and the `deployment_changed` recovery cannot match the vehicle.'}
     VehiclePatch:
       allOf:
         - $ref: '#/components/schemas/VehicleWritable'
@@ -1855,6 +1855,7 @@ components:
         - $ref: '#/components/schemas/VehicleWritable'
         - type: object
           required: [id, make, model, fuelType, archived, createdAt, updatedAt]
+          description: '`make` and `model` are always present and may be `null`.'
           properties:
             id: {type: string, readOnly: true}
             clientVehicleId: {type: [string, 'null'], format: uuid}

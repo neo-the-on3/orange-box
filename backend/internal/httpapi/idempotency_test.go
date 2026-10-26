@@ -128,7 +128,7 @@ func newIdemEnv(t *testing.T, v *scriptedVehicles) (*member, *memIdempotency) {
 
 func okVehicle(int) (store.Vehicle, store.CreateOutcome, error) {
 	now := time.Now().UTC()
-	return store.Vehicle{ID: uuid.New(), VehicleFields: store.VehicleFields{Make: "a", Model: "b", FuelType: "lpg"}, Version: 1, CreatedAt: now, UpdatedAt: now}, store.Created, nil
+	return store.Vehicle{ID: uuid.New(), VehicleFields: store.VehicleFields{Make: ptr("a"), Model: ptr("b"), FuelType: "lpg"}, Version: 1, CreatedAt: now, UpdatedAt: now}, store.Created, nil
 }
 
 const tinyVehicle = `{"make":"a","model":"b","fuelType":"lpg"}`
@@ -242,3 +242,5 @@ func TestFingerprint(t *testing.T) {
 		t.Error("fingerprint not deterministic")
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

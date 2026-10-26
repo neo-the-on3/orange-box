@@ -34,7 +34,7 @@ func insertVehicle(t *testing.T, q *dbgen.Queries, member uuid.UUID, clientID *u
 	t.Helper()
 	v, err := q.InsertVehicle(context.Background(), dbgen.InsertVehicleParams{
 		ID: newID(), MemberID: member, ClientVehicleID: clientID,
-		Make: "Hyundai", Model: "i20", FuelType: "gasoline", ModelYear: ptr[int16](2021),
+		Make: ptr("Hyundai"), Model: ptr("i20"), FuelType: "gasoline", ModelYear: ptr[int16](2021),
 	})
 	if err != nil {
 		t.Fatalf("insert vehicle: %v", err)
@@ -63,7 +63,7 @@ func TestVehicleTombstones(t *testing.T) {
 	id := insertVehicle(t, q, member, &clientID)
 
 	// Same clientVehicleId again: no row (the handler answers 200 with it).
-	if _, err := q.InsertVehicle(ctx, dbgen.InsertVehicleParams{ID: newID(), MemberID: member, ClientVehicleID: &clientID, Make: "x", Model: "y", FuelType: "diesel"}); !isNoRows(err) {
+	if _, err := q.InsertVehicle(ctx, dbgen.InsertVehicleParams{ID: newID(), MemberID: member, ClientVehicleID: &clientID, Make: ptr("x"), Model: ptr("y"), FuelType: "diesel"}); !isNoRows(err) {
 		t.Fatalf("duplicate clientVehicleId: err = %v, want no rows", err)
 	}
 	// Another member's identical client id is unaffected.
@@ -90,7 +90,7 @@ func TestVehicleTombstones(t *testing.T) {
 		t.Fatalf("tombstone keeps data or is missing: %+v, %v", row, err)
 	}
 	// Re-creating it still conflicts (handler answers 410).
-	if _, err := q.InsertVehicle(ctx, dbgen.InsertVehicleParams{ID: newID(), MemberID: member, ClientVehicleID: &clientID, Make: "x", Model: "y", FuelType: "diesel"}); !isNoRows(err) {
+	if _, err := q.InsertVehicle(ctx, dbgen.InsertVehicleParams{ID: newID(), MemberID: member, ClientVehicleID: &clientID, Make: ptr("x"), Model: ptr("y"), FuelType: "diesel"}); !isNoRows(err) {
 		t.Fatalf("re-create tombstoned: err = %v", err)
 	}
 	page, err := q.ListVehicles(ctx, dbgen.ListVehiclesParams{MemberID: member, IncludeArchived: true, MaxRows: 10})
@@ -114,12 +114,12 @@ func TestVehicleUpdateAndArchive(t *testing.T) {
 
 	v, err := q.UpdateVehicle(ctx, dbgen.UpdateVehicleParams{
 		MemberID: member, ID: id, ExpectedVersion: 1,
-		Make: "Hyundai", Model: "i20 N", FuelType: "gasoline", Archived: true, Vin: ptr("KMHB341ABCD123456"),
+		Make: ptr("Hyundai"), Model: ptr("i20 N"), FuelType: "gasoline", Archived: true, Vin: ptr("KMHB341ABCD123456"),
 	})
 	if err != nil || v.Version != 2 || *v.Model != "i20 N" || v.ModelYear != nil || !v.Archived {
 		t.Fatalf("UpdateVehicle: %+v, %v", v, err)
 	}
-	if _, err := q.UpdateVehicle(ctx, dbgen.UpdateVehicleParams{MemberID: member, ID: id, ExpectedVersion: 1, Make: "a", Model: "b", FuelType: "c"}); !isNoRows(err) {
+	if _, err := q.UpdateVehicle(ctx, dbgen.UpdateVehicleParams{MemberID: member, ID: id, ExpectedVersion: 1, Make: ptr("a"), Model: ptr("b"), FuelType: "c"}); !isNoRows(err) {
 		t.Errorf("stale version: err = %v", err)
 	}
 	if page, _ := q.ListVehicles(ctx, dbgen.ListVehiclesParams{MemberID: member, MaxRows: 10}); len(page) != 0 {

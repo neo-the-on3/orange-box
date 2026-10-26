@@ -7,7 +7,7 @@ INSERT INTO vehicles (
     obd_elm_version, obd_protocol, archived
 ) VALUES (
     @id, @member_id, sqlc.narg(client_vehicle_id), sqlc.narg(nickname), sqlc.narg(variant_id),
-    @make::text, @model::text, @fuel_type::text, sqlc.narg(engine_displacement_cc), sqlc.narg(model_year),
+    sqlc.narg(make), sqlc.narg(model), @fuel_type::text, sqlc.narg(engine_displacement_cc), sqlc.narg(model_year),
     sqlc.narg(plate_number), sqlc.narg(vin), sqlc.narg(odometer_km), sqlc.narg(idle_stop_go),
     sqlc.narg(obd_elm_version), sqlc.narg(obd_protocol), @archived
 )
@@ -56,8 +56,8 @@ LIMIT @max_rows;
 UPDATE vehicles SET
     nickname               = sqlc.narg(nickname),
     variant_id             = sqlc.narg(variant_id),
-    make                   = @make::text,
-    model                  = @model::text,
+    make                   = sqlc.narg(make),
+    model                  = sqlc.narg(model),
     fuel_type              = @fuel_type::text,
     engine_displacement_cc = sqlc.narg(engine_displacement_cc),
     model_year             = sqlc.narg(model_year),
