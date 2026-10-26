@@ -38,6 +38,8 @@ data class VehicleWithSync(
     val goneOnServer: Boolean?,
 )
 
+data class TelemetryCandidate(val clientTripId: String, val vehicleServerId: String)
+
 @Dao
 interface SyncDao {
     @Query(
@@ -73,7 +75,35 @@ interface SyncDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertLocalDeletion(row: LocalTripDeletionEntity)
     @Query("UPDATE local_trip_deletions SET pushed = 1 WHERE clientTripId = :clientTripId") suspend fun markDeletionPushed(clientTripId: String)
 
+    /** Finished trips recorded here whose summary the server accepted and whose vehicle it knows (telemetry, #67). */
+    @Query(
+        """SELECT t.clientTripId, vs.serverId AS vehicleServerId FROM trips t
+           JOIN trip_sync s ON s.tripId = t.id
+           JOIN vehicle_sync vs ON vs.vehicleId = t.vehicleId
+           WHERE t.endedAtMillis IS NOT NULL AND s.uploadedBefore = 1 AND s.remoteOrigin = 0
+             AND vs.serverId IS NOT NULL AND vs.goneOnServer = 0 AND t.startedAtMillis >= :notBeforeMillis
+           ORDER BY t.startedAtMillis""",
+    )
+    suspend fun telemetryCandidates(notBeforeMillis: Long): List<TelemetryCandidate>
+
+    @Query(
+        """SELECT sm.* FROM trip_samples sm JOIN trips t ON t.id = sm.tripId
+           WHERE t.clientTripId = :clientTripId AND sm.id > :afterId ORDER BY sm.id LIMIT :limit""",
+    )
+    suspend fun samplesAfter(clientTripId: String, afterId: Long, limit: Int): List<TripSampleEntity>
+
+    @Query(
+        """SELECT e.* FROM trip_events e JOIN trips t ON t.id = e.tripId
+           WHERE t.clientTripId = :clientTripId AND e.id > :afterId ORDER BY e.id LIMIT :limit""",
+    )
+    suspend fun eventsAfter(clientTripId: String, afterId: Long, limit: Int): List<TripEventEntity>
+
+    @Query("SELECT `key` FROM sync_state WHERE `key` LIKE :prefix || '%'") suspend fun stateKeys(prefix: String): List<String>
+
     @Query("SELECT value FROM sync_state WHERE `key` = :key") suspend fun state(key: String): String?
+
+    /** The value of [key] as it changes (the last sync status for Settings). */
+    @Query("SELECT value FROM sync_state WHERE `key` = :key") fun observeState(key: String): kotlinx.coroutines.flow.Flow<String?>
     @Upsert suspend fun putState(row: SyncStateEntity)
     @Query("DELETE FROM sync_state WHERE `key` = :key") suspend fun deleteState(key: String)
 

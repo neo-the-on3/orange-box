@@ -34,8 +34,11 @@ class RoomSyncStoreTest {
 
     @Before fun open() {
         db = Room.databaseBuilder(context, OrangeBoxDatabase::class.java, file.absolutePath).allowMainThreadQueries().build()
-        store = RoomSyncStore(db.syncDao())
+        store = RoomSyncStore(db.syncDao()) { clockMillis }
     }
+
+    /** The store's clock (telemetry backlog bound): a day after the test trips. */
+    private var clockMillis = 1_760_000_000_000 + 86_400_000
 
     @After fun cleanUp() {
         db.close()
@@ -165,5 +168,71 @@ class RoomSyncStoreTest {
         assertEquals("lpg", RoomSyncStore.wireFuel("LPG"))
         assertEquals("other", RoomSyncStore.wireFuel("CNG"))
         assertEquals("gasoline", RoomSyncStore.wireFuel("SOMETHING_OLD"))
+    }
+
+    // --- telemetry (#67) ---
+
+    private suspend fun telemetry(trip: TripEntity, samples: Int, events: List<String> = emptyList()) {
+        db.tripDao().insertSamples(List(samples) {
+            TripSampleEntity(tripId = trip.id, timestampMillis = trip.startedAtMillis + it * 1000L, speedKph = 40.0, rpm = 1800.0, fuelFlowLph = 2.1,
+                coolantC = 85.0, latitude = 12.97, longitude = 77.59)
+        })
+        db.tripDao().insertEvents(events.mapIndexed { i, type -> TripEventEntity(tripId = trip.id, timestampMillis = trip.startedAtMillis + i * 5000L, type = type, value = -4.0) })
+    }
+
+    @Test fun `telemetry of a finished trip is uploaded once, with clientEventIds and without fuel_cut`() = runBlocking {
+        val t = trip(car())
+        telemetry(t, samples = 7_000, events = listOf("harsh_brake", "fuel_cut", "overspeed"))
+        val r = run()
+        assertEquals(2, r.telemetryBatches)
+        val stored = server.telemetry.getValue(t.clientTripId)
+        assertEquals(7_000, stored.samples.size)
+        assertEquals(listOf("harsh_brake", "overspeed"), stored.events.map { it.type })
+        val ids = db.tripDao().events(t.id).filter { it.type != "fuel_cut" }.map { it.clientEventId }
+        assertEquals(ids, stored.events.map { it.clientEventId })
+        val sample = stored.samples.values.first()
+        assertEquals(40.0, sample.speedKmh!!, 0.0)
+        assertEquals(85.0, sample.coolantC!!, 0.0)
+        assertEquals(0, run().telemetryBatches)
+    }
+
+    @Test fun `a trip with only unsendable events is skipped without a request`() = runBlocking {
+        val t = trip(car())
+        telemetry(t, samples = 0, events = listOf("fuel_cut", "fuel_cut"))
+        assertEquals(0, run().telemetryBatches)
+        assertNull(store.telemetryChunk(t.clientTripId, 10, 10))
+    }
+
+    @Test fun `in-progress trips and trips past the backlog bound send no telemetry`() = runBlocking {
+        val v = car()
+        telemetry(trip(v, ended = false), 5)
+        telemetry(trip(v, start = clockMillis - (RoomSyncStore.TELEMETRY_BACKLOG_DAYS + 1) * 86_400_000), 5)
+        run()
+        assertTrue(server.telemetry.isEmpty())
+    }
+
+    @Test fun `the pending telemetry batch and progress survive a reopen`() = runBlocking {
+        val t = trip(car())
+        telemetry(t, 10, listOf("harsh_accel"))
+        server.failNextTelemetry(FakeBackendApi.unavailable(5))
+        runCatching { run() }
+        val pending = store.pendingTelemetryBatch()
+        assertNotNull(pending)
+        db.close()
+        open()
+        assertEquals(pending, store.pendingTelemetryBatch())
+        run()
+        assertNull(store.pendingTelemetryBatch())
+        assertEquals(2, server.telemetryRequests.size)
+        assertEquals(server.telemetryRequests[0], server.telemetryRequests[1])
+        assertNull("all sent", store.telemetryChunk(t.clientTripId, 100, 100))
+    }
+
+    @Test fun `a 422 marks the trip done so it is not offered again`() = runBlocking {
+        val t = trip(car())
+        telemetry(t, 3)
+        server.failNextTelemetry(io.github.neotheon3.orangebox.core.network.ApiError.Http(422, null))
+        assertEquals(1, run().telemetryRejected)
+        assertTrue(store.telemetryTrips().none { it.clientTripId == t.clientTripId })
     }
 }
