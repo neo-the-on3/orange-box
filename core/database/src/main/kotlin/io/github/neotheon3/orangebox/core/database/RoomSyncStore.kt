@@ -298,7 +298,14 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
 
     override suspend fun removeDtcReport(clientReportId: String) = dao.deleteState(KEY_DTC_REPORT + clientReportId)
 
+    override suspend fun pausedUntil(step: String): Long? = dao.state(KEY_PAUSED + step)?.toLongOrNull()
+
+    override suspend fun pauseUntil(step: String, atMillis: Long?) {
+        if (atMillis == null) dao.deleteState(KEY_PAUSED + step) else dao.putState(SyncStateEntity(KEY_PAUSED + step, atMillis.toString()))
+    }
+
     companion object {
+        const val KEY_PAUSED = "paused:"
         const val KEY_DTC_REPORT = "dtc_report:"
 
         /** Offline bound on queued DTC reports (a read per drive start is far below it). */

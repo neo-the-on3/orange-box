@@ -99,4 +99,23 @@ class DtcReportUploadTest {
         assertTrue(server.dtcReportRequests.isEmpty())
         assertTrue(phone.dtcQueue.isEmpty())
     }
+
+    @Test fun `501 keeps every report queued and pauses the step`() = runTest {
+        var clock = 0L
+        val engine = SyncEngine(server, phone, clock = { clock })
+        val car = phone.addVehicle()
+        queue(car)
+        queue(car, at = "2026-10-25T08:05:00Z")
+        server.failNextDtcReport(problem(501, "not_implemented"))
+        val r = engine.run()
+        assertEquals(setOf(SyncEngine.STEP_DTC_REPORTS), r.notImplemented)
+        assertEquals(0, r.dtcReportsDropped)
+        assertEquals(2, phone.dtcQueue.size)
+        assertEquals(1, server.dtcReportRequests.size)
+        engine.run()
+        assertEquals("paused", 1, server.dtcReportRequests.size)
+        clock = SyncEngine.NOT_IMPLEMENTED_RETRY_MILLIS
+        assertEquals(2, engine.run().dtcReports)
+        assertTrue(phone.dtcQueue.isEmpty())
+    }
 }
