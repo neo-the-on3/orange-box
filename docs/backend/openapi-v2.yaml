@@ -2158,6 +2158,17 @@ components:
             items: {type: array, items: {$ref: '#/components/schemas/Event'}}
 
     DtcReportCreate:
+      description: |
+        One DTC read or clear.
+
+        * `kind=read`: the codes the ECU reported. `readAt` is when they were read; `stored`, `pending` and
+          `permanent` are the lists read (send `[]` for a list read as empty, and leave a list out if that mode
+          wasn't read); `mil` is the MIL state read (PID 0x01), or `null` if it couldn't be read.
+        * `kind=cleared`: a successful clear (mode 04). `readAt` is when the ECU acknowledged the clear. `stored`
+          and `pending` are the codes that were cleared, i.e. the lists of the last read before the clear (the app
+          should read again just before clearing if its last read is old). Leave out `permanent`: mode 04 can't
+          clear permanent codes. `mil` is `null` (unknown until the next read). The read after the clear is sent
+          as its own `kind=read` report.
       allOf:
         - $ref: '#/components/schemas/DtcSet'
         - type: object
@@ -2166,7 +2177,7 @@ components:
             clientReportId: {type: string, format: uuid}
             kind: {type: string, enum: [read, cleared]}
             readAt: {type: string, format: date-time}
-            mil: {type: boolean}
+            mil: {type: [boolean, 'null'], description: 'Malfunction indicator lamp on (`true`) or off (`false`), or `null` when unknown (not read, or a `cleared` report). Nullable since 1.0.0-draft.9; never send `false` for unknown.'}
             vin: {type: [string, 'null'], pattern: '^[A-HJ-NPR-Z0-9]{17}$'}
             clientTripId: {type: [string, 'null'], format: uuid}
             odometerKm: {type: [integer, 'null']}

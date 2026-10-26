@@ -18,7 +18,7 @@ type DtcReport struct {
 	ClientReportID     uuid.UUID
 	Kind               string
 	ReadAt             time.Time
-	Mil                bool
+	Mil                *bool
 	Stored             []string
 	Pending            []string
 	Permanent          []string

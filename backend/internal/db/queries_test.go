@@ -597,7 +597,7 @@ func TestDtcReports(t *testing.T) {
 	report := func(at time.Time) dbgen.InsertDtcReportParams {
 		return dbgen.InsertDtcReportParams{
 			ID: newID(), MemberID: member, VehicleID: vehicle, ClientReportID: newID(),
-			Kind: "read", ReadAt: at, Mil: true, Stored: []string{"P0420"}, Pending: []string{},
+			Kind: "read", ReadAt: at, Mil: ptr(true), Stored: []string{"P0420"}, Pending: []string{},
 		}
 	}
 	first := report(t0)
@@ -609,6 +609,13 @@ func TestDtcReports(t *testing.T) {
 	dup.ID = newID()
 	if _, err := q.InsertDtcReport(ctx, dup); !isNoRows(err) {
 		t.Fatalf("duplicate clientReportId: %v", err)
+	}
+	// A cleared report: MIL unknown (NULL, since spec draft.9).
+	cleared := report(t0.Add(-time.Hour))
+	cleared.Kind, cleared.Mil = "cleared", nil
+	cleared.VehicleID = insertVehicle(t, q, member, nil) // keep the paging below to its own vehicle
+	if r, err := q.InsertDtcReport(ctx, cleared); err != nil || r.Mil != nil {
+		t.Fatalf("cleared with unknown MIL: %+v, %v", r, err)
 	}
 	bad := report(t0)
 	bad.Kind = "erased"

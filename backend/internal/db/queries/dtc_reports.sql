@@ -5,7 +5,7 @@ INSERT INTO dtc_reports (
     id, member_id, vehicle_id, client_report_id, kind, read_at, mil, stored, pending, permanent,
     vin, client_trip_id, odometer_km, distance_since_mil_km
 ) VALUES (
-    @id, @member_id, @vehicle_id, @client_report_id, @kind, @read_at, @mil,
+    @id, @member_id, @vehicle_id, @client_report_id, @kind, @read_at, sqlc.narg(mil),
     sqlc.narg(stored), sqlc.narg(pending), sqlc.narg(permanent), sqlc.narg(vin),
     sqlc.narg(client_trip_id), sqlc.narg(odometer_km), sqlc.narg(distance_since_mil_km)
 )

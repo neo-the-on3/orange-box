@@ -230,7 +230,7 @@ func TestVehicleStoreCascadeDelete(t *testing.T) {
 		}
 	}
 	if _, err := q.InsertDtcReport(ctx, dbgen.InsertDtcReportParams{
-		ID: newID(), MemberID: member, VehicleID: gone.ID, ClientReportID: newID(), Kind: "read", ReadAt: t0, Mil: true,
+		ID: newID(), MemberID: member, VehicleID: gone.ID, ClientReportID: newID(), Kind: "read", ReadAt: t0, Mil: ptr(true),
 	}); err != nil {
 		t.Fatal(err)
 	}
