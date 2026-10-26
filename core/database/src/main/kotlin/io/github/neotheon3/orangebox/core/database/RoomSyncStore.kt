@@ -3,6 +3,8 @@ package io.github.neotheon3.orangebox.core.database
 import io.github.neotheon3.orangebox.core.model.VehicleFuel
 import io.github.neotheon3.orangebox.core.network.BackendJson
 import io.github.neotheon3.orangebox.core.network.DtcReportCreateDto
+import io.github.neotheon3.orangebox.core.network.EndReasons
+import io.github.neotheon3.orangebox.core.network.FuelTypes
 import io.github.neotheon3.orangebox.core.network.EventDto
 import io.github.neotheon3.orangebox.core.network.SampleDto
 import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
@@ -48,11 +50,10 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
             serverId = v.serverId,
             create = VehicleCreateDto(
                 clientVehicleId = v.clientVehicleId,
-                // The current spec requires make and model, so a vehicle saved with only a name still sends
-                // make=Unknown and the name as the model; the name always goes in nickname.
-                // TODO(draft.9): send make/model only when known, once VehicleCreate makes them optional.
-                make = v.maker?.takeIf { it.isNotBlank() } ?: UNKNOWN_MAKE,
-                model = v.model?.takeIf { it.isNotBlank() } ?: v.name,
+                // Only fuelType is required (draft.9): make and model go when known, never as ""; the name is
+                // the nickname.
+                make = v.maker?.trim()?.takeIf { it.isNotEmpty() },
+                model = v.model?.trim()?.takeIf { it.isNotEmpty() },
                 fuelType = wireFuel(v.fuel),
                 nickname = v.name.take(40),
                 engineDisplacementCc = v.displacementCc,
@@ -98,8 +99,8 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
         dao.updateVehicle(
             v.copy(
                 name = remote.nickname?.takeIf { it.isNotBlank() } ?: v.name,
-                maker = remote.make ?: v.maker,
-                model = remote.model ?: v.model,
+                maker = remote.knownMake ?: v.maker,
+                model = remote.knownModel ?: v.model,
                 fuel = localFuel(remote.fuelType) ?: v.fuel,
                 displacementCc = remote.engineDisplacementCc ?: v.displacementCc,
                 odometerKm = remote.odometerKm ?: v.odometerKm,
@@ -167,7 +168,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
         startedAtMillis = t.startedAt.toEpochMilli(),
         endedAtMillis = t.endedAt?.toEpochMilli(),
         lastSampleAtMillis = (t.endedAt ?: t.snapshotAt).toEpochMilli(),
-        endReason = if (t.endedAt != null) END_REMOTE else null,
+        endReason = if (t.endedAt != null) EndReasons.read(t.endReason) ?: EndReasons.OTHER else null,
         durationS = t.durationS?.toDouble() ?: 0.0,
         distanceKm = t.distanceKm ?: 0.0,
         fuelLitres = t.fuelUsedL ?: 0.0,
@@ -177,6 +178,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
         overspeedS = t.overSpeedTimeS ?: 0.0,
         harshAccelCount = t.harshAccelCount ?: 0,
         harshBrakeCount = t.harshBrakeCount ?: 0,
+        overspeedCount = t.overSpeedCount ?: 0,
         maxSpeedKph = t.maxSpeedKmh ?: 0.0,
     )
 
@@ -220,6 +222,9 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
             idleTimeS = t.idleS,
             ecoSpeedTimeS = t.ecoS,
             overSpeedTimeS = t.overspeedS,
+            overSpeedCount = t.overspeedCount,
+            fuelCutCount = dao.countEvents(t.id, EVENT_FUEL_CUT),
+            endReason = if (completed) wireEndReason(t.endReason) else null,
         )
     }
 
@@ -462,7 +467,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
         /**
          * Spec `Sample` from a recorded sample. Fuel flow goes only as the car's own PID 5E (`pids["0x5E"]`, L/h),
          * with `mafGps` when PID 10 was read; our computed flow isn't sent.
-         * TODO(draft.9): a `fuelRateLph` field for the computed flow is still to be asked for.
+         * The server derives flow from those (draft.9 has no computed-flow field).
          */
         fun sampleDto(s: TripSampleEntity) = SampleDto(
             t = Instant.ofEpochMilli(s.timestampMillis),
@@ -490,28 +495,35 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
 
         const val KEY_SINCE = "trips_since"
         const val KEY_PENDING_BATCH = "pending_trip_batch"
-        const val END_REMOTE = "remote"
-        const val UNKNOWN_MAKE = "Unknown"
+        /** The recorder's `fuel_cut` events: counted for `fuelCutCount`, never sent as events. */
+        const val EVENT_FUEL_CUT = "fuel_cut"
 
+        /** Local trip end reason → spec `endReason`; anything else (a demo trip, unknown) is `other`. */
+        fun wireEndReason(local: String?): String = local?.takeIf { it in EndReasons.KNOWN } ?: EndReasons.OTHER
         /**
-         * Orange Box fuel → spec `FuelType` (`gasoline`, not `petrol`). CNG and ethanol have no spec value yet and
-         * go as `other`.
-         * TODO(draft.9): when FuelType gets cng / gasoline_cng / ethanol / flex, send those and PATCH the vehicles
-         *  already created as `other` (with their ETag).
+         * Spec `FuelType` → Orange Box fuel, for edits from another device; null when it has no local match (hybrid,
+         * electric, other, or a value newer than this app), which keeps the local fuel.
          */
-        /** Spec `FuelType` → Orange Box fuel, for edits from another device; null when it has no local match. */
         fun localFuel(wire: String): String? = when (wire) {
-            "gasoline" -> VehicleFuel.PETROL.name
-            "diesel" -> VehicleFuel.DIESEL.name
-            "lpg" -> VehicleFuel.LPG.name
+            FuelTypes.GASOLINE -> VehicleFuel.PETROL.name
+            FuelTypes.DIESEL -> VehicleFuel.DIESEL.name
+            FuelTypes.LPG, FuelTypes.GASOLINE_LPG -> VehicleFuel.LPG.name
+            FuelTypes.CNG, FuelTypes.GASOLINE_CNG -> VehicleFuel.CNG.name
+            FuelTypes.ETHANOL, FuelTypes.FLEX -> VehicleFuel.ETHANOL.name
             else -> null
         }
 
+        /**
+         * Orange Box fuel → spec `FuelType` (draft.9; `gasoline` is petrol). CNG is `gasoline_cng`: the CNG presets
+         * (SX4, Celerio, Ertiga factory CNG) are bi-fuel cars with a petrol tank, and the app doesn't record a
+         * CNG-only car separately. Vehicles created as `other` before draft.9 are PATCHed by the sync.
+         */
         fun wireFuel(fuel: String): String = when (VehicleFuel.entries.firstOrNull { it.name == fuel }) {
-            VehicleFuel.PETROL, null -> "gasoline"
-            VehicleFuel.DIESEL -> "diesel"
-            VehicleFuel.LPG -> "lpg"
-            VehicleFuel.CNG, VehicleFuel.ETHANOL -> "other"
+            VehicleFuel.PETROL, null -> FuelTypes.GASOLINE
+            VehicleFuel.DIESEL -> FuelTypes.DIESEL
+            VehicleFuel.LPG -> FuelTypes.LPG
+            VehicleFuel.CNG -> FuelTypes.GASOLINE_CNG
+            VehicleFuel.ETHANOL -> FuelTypes.ETHANOL
         }
     }
 }

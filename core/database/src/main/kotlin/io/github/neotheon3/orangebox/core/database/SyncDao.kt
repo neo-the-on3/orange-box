@@ -63,6 +63,7 @@ interface SyncDao {
     suspend fun vehiclesWithSync(): List<VehicleWithSync>
 
     @Query("SELECT * FROM trips WHERE clientTripId = :clientTripId") suspend fun tripByClientId(clientTripId: String): TripEntity?
+    @Query("SELECT COUNT(*) FROM trip_events WHERE tripId = :tripId AND type = :type") suspend fun countEvents(tripId: Long, type: String): Int
     @Query("SELECT * FROM trip_sync WHERE tripId = :tripId") suspend fun tripSync(tripId: Long): TripSyncEntity?
     @Upsert suspend fun upsertTripSync(row: TripSyncEntity)
     @Insert suspend fun insertTrip(trip: TripEntity): Long

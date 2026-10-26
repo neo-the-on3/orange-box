@@ -2,6 +2,7 @@ package io.github.neotheon3.orangebox.core.database
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import io.github.neotheon3.orangebox.core.network.ApiError
 import io.github.neotheon3.orangebox.core.network.DtcReportCreateDto
 import io.github.neotheon3.orangebox.core.network.FakeBackendApi
 import io.github.neotheon3.orangebox.core.network.SyncWindowReason
@@ -107,7 +108,7 @@ class RoomSyncStoreTest {
         val pulled = db.syncDao().tripByClientId("6c1b0f1e-0000-4000-8000-000000000042")!!
         assertEquals(21.0, pulled.distanceKm, 1e-9)
         assertEquals(v, pulled.vehicleId)
-        assertEquals(RoomSyncStore.END_REMOTE, pulled.endReason)
+        assertEquals("no endReason from the server reads as other", "other", pulled.endReason)
         assertTrue(store.trips().single { it.clientTripId == pulled.clientTripId }.remoteOrigin)
         server.deleteTripElsewhere(pulled.clientTripId)
         run()
@@ -167,8 +168,15 @@ class RoomSyncStoreTest {
         assertEquals("gasoline", RoomSyncStore.wireFuel("PETROL"))
         assertEquals("diesel", RoomSyncStore.wireFuel("DIESEL"))
         assertEquals("lpg", RoomSyncStore.wireFuel("LPG"))
-        assertEquals("other", RoomSyncStore.wireFuel("CNG"))
+        assertEquals("bi-fuel CNG presets", "gasoline_cng", RoomSyncStore.wireFuel("CNG"))
+        assertEquals("ethanol", RoomSyncStore.wireFuel("ETHANOL"))
         assertEquals("gasoline", RoomSyncStore.wireFuel("SOMETHING_OLD"))
+        assertEquals("CNG", RoomSyncStore.localFuel("cng"))
+        assertEquals("CNG", RoomSyncStore.localFuel("gasoline_cng"))
+        assertEquals("ETHANOL", RoomSyncStore.localFuel("flex"))
+        assertEquals("unknown server values are tolerated", null, RoomSyncStore.localFuel("hydrogen"))
+        assertEquals("other", RoomSyncStore.wireEndReason("demo"))
+        assertEquals("disconnected", RoomSyncStore.wireEndReason("disconnected"))
     }
 
     // --- telemetry (#67) ---
@@ -292,9 +300,10 @@ class RoomSyncStoreTest {
     @Test fun `vehicle create sends the real make and model, the name as nickname, and the clientVehicleId`() = runBlocking {
         val v = db.vehicleDao().insert(VehicleEntity(name = "Dad's car", maker = null, model = null, fuel = "CNG", displacementCc = null, odometerKm = null, createdAtMillis = 1))
         val create = store.vehicles().single { it.clientVehicleId == db.vehicleDao().get(v)!!.clientVehicleId }.create
-        assertEquals(RoomSyncStore.UNKNOWN_MAKE, create.make) // TODO(draft.9): null once optional
+        assertNull("unknown make is left out, never \"\"", create.make)
+        assertNull(create.model)
         assertEquals("Dad's car", create.nickname)
-        assertEquals("other", create.fuelType)
+        assertEquals("CNG presets are bi-fuel", "gasoline_cng", create.fuelType)
         assertEquals(db.vehicleDao().get(v)!!.clientVehicleId, create.clientVehicleId)
         car() // with make and model: those are sent as they are
         assertTrue(store.vehicles().any { it.create.make == "Maruti Suzuki" && it.create.nickname == "SX4" })
@@ -310,5 +319,38 @@ class RoomSyncStoreTest {
         assertEquals(4.2, read.mafGps!!, 0.0)
         val mafOnly = RoomSyncStore.sampleDto(computed.copy(mafGps = 4.2))
         assertNull("flow computed from MAF isn't sent", mafOnly.pids)
+    }
+
+    @Test fun `snapshots carry overSpeedCount and fuelCutCount, endReason only once completed (draft 9)`() = runBlocking {
+        val v = car()
+        val open = trip(v, ended = false)
+        db.tripDao().updateTrip(open.copy(overspeedCount = 2))
+        db.tripDao().insertEvents(listOf(
+            TripEventEntity(tripId = open.id, timestampMillis = open.startedAtMillis + 1_000, type = "fuel_cut", value = 0.0),
+            TripEventEntity(tripId = open.id, timestampMillis = open.startedAtMillis + 9_000, type = "fuel_cut", value = 0.0),
+            TripEventEntity(tripId = open.id, timestampMillis = open.startedAtMillis + 5_000, type = "harsh_brake", value = -4.0),
+        ))
+        run() // vehicle server id
+        val inProgress = store.uploadOf(open.clientTripId)!!
+        assertEquals(2, inProgress.overSpeedCount)
+        assertEquals(2, inProgress.fuelCutCount)
+        assertNull("no endReason while in progress", inProgress.endReason)
+        db.tripDao().updateTrip(db.tripDao().trip(open.id)!!.copy(endedAtMillis = open.lastSampleAtMillis, endReason = "engine_off"))
+        assertEquals("engine_off", store.uploadOf(open.clientTripId)!!.endReason)
+        db.tripDao().updateTrip(db.tripDao().trip(open.id)!!.copy(endReason = "demo"))
+        assertEquals("other", store.uploadOf(open.clientTripId)!!.endReason)
+    }
+
+    @Test fun `a vehicle created as other before draft 9 is patched to its fuel type with its ETag`() = runBlocking {
+        val v = db.vehicleDao().insert(VehicleEntity(name = "Celerio", maker = "Maruti Suzuki", model = "Celerio 1.0 CNG", fuel = "CNG", displacementCc = 998, odometerKm = null, createdAtMillis = 1))
+        trip(v)
+        val create = store.vehicles().single().create
+        val created = server.createVehicle(create.copy(fuelType = "other"), "old") // as the app sent it before draft.9
+        store.setVehicleServerId(create.clientVehicleId, created.id)
+        server.patchFailures += ApiError.Http(412, null) // someone else's edit in between: fetch again
+        assertEquals(1, run().vehiclesFuelPatched)
+        assertEquals("gasoline_cng", server.vehicles.single().fuelType)
+        assertEquals("CNG", db.vehicleDao().get(v)!!.fuel)
+        assertEquals(0, run().vehiclesFuelPatched)
     }
 }

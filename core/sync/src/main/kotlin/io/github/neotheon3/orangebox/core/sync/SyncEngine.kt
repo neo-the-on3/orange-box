@@ -2,6 +2,9 @@ package io.github.neotheon3.orangebox.core.sync
 
 import io.github.neotheon3.orangebox.core.network.ApiError
 import io.github.neotheon3.orangebox.core.network.BackendApi
+import io.github.neotheon3.orangebox.core.network.FuelTypes
+import io.github.neotheon3.orangebox.core.network.VehicleDto
+import io.github.neotheon3.orangebox.core.network.VehiclePatchDto
 import io.github.neotheon3.orangebox.core.network.SyncWindowReason
 import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
 import io.github.neotheon3.orangebox.core.network.TripBatchDto
@@ -65,6 +68,8 @@ class SyncEngine(
         val vehiclesCreated: Int = 0,
         val vehiclesDeletedElsewhere: Int = 0,
         val vehiclesEdited: Int = 0,
+        /** Vehicles created as `other` whose fuel was PATCHed to its draft.9 value (cng, gasoline_cng, ethanol). */
+        val vehiclesFuelPatched: Int = 0,
         val telemetryBatches: Int = 0,
         val telemetrySamples: Int = 0,
         val telemetryEvents: Int = 0,
@@ -245,7 +250,7 @@ class SyncEngine(
         }
     }
 
-    private suspend fun allVehicles(): List<io.github.neotheon3.orangebox.core.network.VehicleDto> = buildList {
+    private suspend fun allVehicles(): List<VehicleDto> = buildList {
         var cursor: String? = null
         do {
             val page = api.listVehicles(cursor, includeArchived = true)
@@ -271,8 +276,38 @@ class SyncEngine(
                 continue
             }
             if (copy.id != v.serverId) store.setVehicleServerId(v.clientVehicleId, copy.id)
-            if (store.applyRemoteVehicle(v.clientVehicleId, copy)) report = report.copy(vehiclesEdited = report.vehiclesEdited + 1)
+            // Created as `other` before draft.9 had a value for its fuel (CNG, ethanol): correct it once.
+            val current = if (copy.fuelType == FuelTypes.OTHER && v.create.fuelType != FuelTypes.OTHER) {
+                patchFuel(copy.id, v.create.fuelType)?.also { report = report.copy(vehiclesFuelPatched = report.vehiclesFuelPatched + 1) } ?: copy
+            } else {
+                copy
+            }
+            if (store.applyRemoteVehicle(v.clientVehicleId, current) && current === copy) {
+                report = report.copy(vehiclesEdited = report.vehiclesEdited + 1)
+            }
         }
+    }
+
+    /**
+     * `PATCH /v1/vehicles/{id}` of `fuelType` with the vehicle's current `ETag`; a `412` / `428` fetches it again
+     * and retries. Returns the patched vehicle, or null if it's gone or someone else already changed the fuel.
+     */
+    private suspend fun patchFuel(serverId: String, fuelType: String): VehicleDto? {
+        repeat(MAX_PATCH_ATTEMPTS) {
+            try {
+                val latest = api.getVehicle(serverId)
+                if (latest.value.fuelType != FuelTypes.OTHER) return null
+                val etag = latest.etag ?: return null
+                return api.patchVehicle(serverId, VehiclePatchDto(fuelType = fuelType), etag).value
+            } catch (e: ApiError.Http) {
+                when (e.status) {
+                    412, 428 -> Unit // stale or missing ETag: fetch again
+                    404, 410 -> return null
+                    else -> throw e
+                }
+            }
+        }
+        return null
     }
 
     private suspend fun pushVehicles() {
@@ -550,5 +585,8 @@ class SyncEngine(
 
         /** After a `501`, the step waits this long before trying again (the server may ship it any day). */
         const val NOT_IMPLEMENTED_RETRY_MILLIS = 24L * 60 * 60 * 1000
+
+        /** GET + PATCH rounds when the vehicle's ETag keeps going stale. */
+        const val MAX_PATCH_ATTEMPTS = 3
     }
 }
