@@ -2,6 +2,7 @@ package io.github.neotheon3.orangebox.feature.settings
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -28,12 +29,12 @@ import java.io.File
 class SettingsScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun shot(name: String, dark: Boolean = false, content: @Composable () -> Unit) {
+    private fun shot(name: String, dark: Boolean = false, dir: String = "build/outputs/settings", content: @Composable () -> Unit) {
         compose.setContent {
             OrangeBoxTheme(darkTheme = dark) { Surface { Box(Modifier.padding(16.dp)) { content() } } }
         }
         val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-        File("build/outputs/settings/$name.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        File("$dir/$name.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     @Test fun units() = shot("settings_units") { UnitsSettingsSection(UnitPreferences.forCountry("US")) {} }
@@ -73,4 +74,119 @@ class SettingsScreenshotTest {
             SwitchRow(R.string.settings_diagnostics_prompt, R.string.settings_diagnostics_prompt_summary, true, "d") {}
         }
     }
+
+    // --- M9: account and sync (build/outputs/settings/m9/) ---
+
+    private fun m9(name: String, dark: Boolean = false, content: @Composable () -> Unit) {
+        val zone = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Kolkata")) // times as the user sees them
+        try {
+            shot(name, dark, "build/outputs/settings/m9", content)
+        } finally {
+            java.util.TimeZone.setDefault(zone)
+        }
+    }
+
+    private val remote = io.github.neotheon3.orangebox.core.model.BackendMode.REMOTE
+
+    /** 26 Oct 2026, 09:41 IST. */
+    private val at = 1_761_451_860_000L + 365L * 86_400_000
+
+    @Test fun signInEmail() = m9("m9_sign_in_email") {
+        AccountSettingsSection(AccountUiState(form = SignInForm(email = "kiran@example.com")), remote, true, AccountActions())
+    }
+
+    @Test fun signInEmailError() = m9("m9_sign_in_email_error", dark = true) {
+        AccountSettingsSection(
+            AccountUiState(form = SignInForm(email = "kiran@", error = io.github.neotheon3.orangebox.core.datastore.SignInError.INVALID_EMAIL)),
+            remote, true, AccountActions(),
+        )
+    }
+
+    @Test fun signInCode() = m9("m9_sign_in_code") {
+        AccountSettingsSection(
+            AccountUiState(form = SignInForm(step = SignInStep.CODE, email = "kiran@example.com", code = "4821", resendInSeconds = 42)),
+            remote, true, AccountActions(),
+        )
+    }
+
+    @Test fun signInCodeLocked() = m9("m9_sign_in_code_locked") {
+        AccountSettingsSection(
+            AccountUiState(
+                form = SignInForm(
+                    step = SignInStep.CODE, email = "kiran@example.com",
+                    error = io.github.neotheon3.orangebox.core.datastore.SignInError.LOCKED, retryAfterSeconds = 900,
+                ),
+            ),
+            remote, true, AccountActions(),
+        )
+    }
+
+    @Test fun syncStatusOk() = m9("m9_sync_status_ok") {
+        AccountSettingsSection(
+            AccountUiState(
+                io.github.neotheon3.orangebox.core.datastore.BackendAccountState(
+                    signedIn = true, email = "kiran@example.com",
+                    lastSync = io.github.neotheon3.orangebox.core.datastore.SyncStatus(at, ok = true, uploadedTrips = 3, pulledTrips = 1, telemetryBatches = 4),
+                ),
+            ),
+            remote, true, AccountActions(),
+        )
+    }
+
+    @Test fun syncStatusError() = m9("m9_sync_status_error", dark = true) {
+        AccountSettingsSection(
+            AccountUiState(
+                io.github.neotheon3.orangebox.core.datastore.BackendAccountState(
+                    signedIn = true, email = "kiran@example.com", syncing = true,
+                    lastSync = io.github.neotheon3.orangebox.core.datastore.SyncStatus(
+                        at, ok = false, error = io.github.neotheon3.orangebox.core.datastore.SyncError.SERVER_BUSY, willRetry = true,
+                    ),
+                ),
+            ),
+            remote, true, AccountActions(),
+        )
+    }
+
+    @Test fun syncStatusFake() = m9("m9_sync_status_fake") {
+        AccountSettingsSection(AccountUiState(), io.github.neotheon3.orangebox.core.model.BackendMode.FAKE, true, AccountActions())
+    }
+
+    @Test fun signOutDialog() {
+        compose.setContent {
+            OrangeBoxTheme {
+                Surface(Modifier.fillMaxSize()) {
+                    AccountSettingsSection(
+                        AccountUiState(io.github.neotheon3.orangebox.core.datastore.BackendAccountState(signedIn = true, email = "kiran@example.com"), confirmSignOut = true),
+                        remote, true, AccountActions(),
+                    )
+                }
+            }
+        }
+        // The dialog is its own window: capture it, not the root behind it.
+        val bitmap = compose.onNode(androidx.compose.ui.test.isDialog()).captureToImage().asAndroidBitmap()
+        File("build/outputs/settings/m9/m9_sign_out_dialog.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    @Test fun serverRemoteSignedIn() = m9("m9_server_section_signed_in") {
+        androidx.compose.foundation.layout.Column {
+            ServerSettingsSection(
+                SettingsUiState(
+                    config = io.github.neotheon3.orangebox.core.model.BackendConfig(remote, "https://api.orangebox.example"),
+                    urlDraft = "https://api.orangebox.example",
+                ),
+                {}, {}, {},
+            )
+            AccountSettingsSection(
+                AccountUiState(
+                    io.github.neotheon3.orangebox.core.datastore.BackendAccountState(
+                        signedIn = true, email = "kiran@example.com",
+                        lastSync = io.github.neotheon3.orangebox.core.datastore.SyncStatus(at, ok = true, uploadedTrips = 3, pulledTrips = 1),
+                    ),
+                ),
+                remote, true, AccountActions(),
+            )
+        }
+    }
 }
+

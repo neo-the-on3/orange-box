@@ -50,8 +50,10 @@ fun SettingsRoute(
     onOpenDongle: () -> Unit = {},
     onOpenPermissions: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
+    accountViewModel: BackendAccountViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val account by accountViewModel.uiState.collectAsStateWithLifecycle()
     val apps by viewModel.launchableApps.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     RefreshOnResume(viewModel::refreshFullScreen)
@@ -103,6 +105,19 @@ fun SettingsRoute(
                 onClearContact = viewModel::onClearContact,
             ),
         ),
+        account = account,
+        accountActions = AccountActions(
+            onEmailChanged = accountViewModel::onEmailChanged,
+            onSendCode = accountViewModel::onSendCode,
+            onCodeChanged = accountViewModel::onCodeChanged,
+            onVerify = accountViewModel::onVerify,
+            onResendCode = accountViewModel::onResendCode,
+            onChangeEmail = accountViewModel::onChangeEmail,
+            onSyncNow = accountViewModel::onSyncNow,
+            onSignOutRequested = accountViewModel::onSignOutRequested,
+            onSignOutDismissed = accountViewModel::onSignOutDismissed,
+            onSignOutConfirmed = accountViewModel::onSignOutConfirmed,
+        ),
     )
 }
 
@@ -129,6 +144,8 @@ fun SettingsScreen(
     launchableApps: List<io.github.neotheon3.orangebox.core.driving.LaunchableApp>? = null,
     dashboardActions: DashboardSettingsActions = DashboardSettingsActions(),
     actions: SettingsActions = SettingsActions(),
+    account: AccountUiState = AccountUiState(),
+    accountActions: AccountActions = AccountActions(),
 ) {
     Scaffold(
         topBar = {
@@ -178,6 +195,7 @@ fun SettingsScreen(
             CrashSettingsSection(state.crash, actions.crash)
             HorizontalDivider()
             ServerSettingsSection(state, onModeSelected, onUrlChanged, onSaveUrl)
+            AccountSettingsSection(account, state.config.mode, state.config.isRemoteReady, accountActions)
             HorizontalDivider()
             Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
             Text(
