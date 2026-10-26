@@ -184,21 +184,25 @@ class FakeBackendApi(
 
     private suspend fun storeTelemetry(batch: TelemetryBatchDto) = op("POST /v1/telemetry/batches") {
         telemetryBatches[batch.clientBatchId]?.let { return@op it.copy(status = TelemetryBatchAckDto.STATUS_DUPLICATE) }
-        if (batch.samples.size + batch.events.size > maxTelemetryItems) throw http(413, "payload_too_large")
+        if (batch.samples.size > BackendApi.MAX_SAMPLES_PER_BATCH || batch.events.size > BackendApi.MAX_EVENTS_PER_BATCH) {
+            throw http(422, ApiError.CODE_VALIDATION_FAILED) // over the count: not retried
+        }
+        if (batch.samples.size + batch.events.size > maxTelemetryItems) throw http(413, ApiError.CODE_BATCH_TOO_LARGE)
         if (batch.clientTripId in state.tombstones) {
             return@op TelemetryBatchAckDto(batch.clientBatchId, TelemetryBatchAckDto.STATUS_TRIP_DELETED, 0, 0)
         }
         if (state.vehicles.values.none { it.id == batch.vehicleId }) throw http(404, ApiError.CODE_VEHICLE_NOT_FOUND)
         val stored = telemetryByTrip[batch.clientTripId] ?: StoredTelemetry()
         val samples = batch.samples.distinctBy { it.t.toEpochMilli() }
-        fun EventDto.key() = listOf(t.toEpochMilli(), type, active ?: true, dtc)
-        val events = batch.events.distinctBy { it.key() }.filterNot { e ->
-            stored.events.any { s -> (e.clientEventId != null && s.clientEventId == e.clientEventId) || s.key() == e.key() }
-        }
+        // Spec: an event is identified by its clientEventId, or without one by (clientTripId, t, type, active, dtc).
+        fun EventDto.identity(): Any = clientEventId ?: listOf(batch.clientTripId, t.toEpochMilli(), type, active ?: true, dtc)
+        val seen = stored.events.map { it.identity() }.toSet()
+        val inBatch = batch.events.distinctBy { it.identity() }
+        val events = inBatch.filterNot { it.identity() in seen }
         telemetryByTrip[batch.clientTripId] = StoredTelemetry(stored.samples + samples.associateBy { it.t }, stored.events + events)
         TelemetryBatchAckDto(
             batch.clientBatchId, TelemetryBatchAckDto.STATUS_ACCEPTED, samples.size, events.size,
-            droppedSamples = batch.samples.size - samples.size, droppedEvents = batch.events.size - batch.events.distinctBy { it.key() }.size,
+            droppedSamples = batch.samples.size - samples.size, droppedEvents = batch.events.size - inBatch.size,
         ).also { telemetryBatches[batch.clientBatchId] = it }
     }
 

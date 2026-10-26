@@ -312,7 +312,7 @@ class SyncEngine(
                 Sent.VEHICLE_MISSING -> return false
                 Sent.TOO_LARGE -> {
                     if (chunk.samples.size + chunk.events.size <= 1) {
-                        store.markTelemetryDone(clientTripId, CODE_PAYLOAD_TOO_LARGE)
+                        store.markTelemetryDone(clientTripId, ApiError.CODE_BATCH_TOO_LARGE)
                         report = report.copy(telemetryRejected = report.telemetryRejected + 1)
                         return true
                     }
@@ -395,6 +395,5 @@ class SyncEngine(
     companion object {
         /** Keeps one run short; the rest goes out on the next run. */
         const val MAX_TELEMETRY_BATCHES_PER_RUN = 50
-        const val CODE_PAYLOAD_TOO_LARGE = "payload_too_large"
     }
 }

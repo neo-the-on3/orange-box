@@ -68,7 +68,7 @@ class DtcReportUploadTest {
         queue(car, at = "2026-10-25T08:00:00Z")
         queue(car, at = "2026-10-25T08:01:00Z")
         val kept = queue(car, at = "2026-10-25T08:02:00Z")
-        server.failNextDtcReport(problem(422, "validation_failed"), problem(413, "payload_too_large"))
+        server.failNextDtcReport(problem(422, "validation_failed"), problem(413, "batch_too_large"))
         val r = engine.run()
         assertEquals(2, r.dtcReportsDropped)
         assertEquals(1, r.dtcReports)

@@ -17,7 +17,7 @@ sealed class ApiError(message: String, cause: Throwable? = null) : Exception(mes
     ) : ApiError("HTTP $status${problem?.code?.let { " ($it)" } ?: ""}") {
         val code: String? get() = problem?.code
 
-        /** Only meaningful for [isSyncWindowExpired]; unknown and missing reasons are [SyncWindowReason.UNKNOWN]. */
+        /** Only meaningful for [isSyncWindowExpired]; unknown and missing reasons are [SyncWindowReason.INVALID]. */
         val syncWindowReason: SyncWindowReason get() = SyncWindowReason.parse(problem?.reason)
 
         val isSyncWindowExpired: Boolean get() = status == 400 && code == CODE_SYNC_WINDOW_EXPIRED
@@ -39,6 +39,16 @@ sealed class ApiError(message: String, cause: Throwable? = null) : Exception(mes
         const val CODE_SYNC_WINDOW_EXPIRED = "sync_window_expired"
         const val CODE_VEHICLE_DELETED = "vehicle_deleted"
         const val CODE_VEHICLE_NOT_FOUND = "vehicle_not_found"
+        const val CODE_VALIDATION_FAILED = "validation_failed"
+
+        /** `413`: over 1 MiB gzipped, 8 MiB raw or 500k JSON values. Halve and resend. */
+        const val CODE_BATCH_TOO_LARGE = "batch_too_large"
+
+        /** `429` with `Retry-After: 1`: another upload of this member is running. */
+        const val CODE_UPLOAD_IN_PROGRESS = "upload_in_progress"
+
+        /** `503` with `Retry-After: 5`: the server is at its upload capacity. */
+        const val CODE_UPLOADS_BUSY = "uploads_busy"
         const val CODE_TRIP_DELETED = "trip_deleted"
         const val CODE_IDEMPOTENCY_IN_FLIGHT = "idempotency_in_flight"
         const val CODE_INVALID_GRANT = "invalid_grant"
