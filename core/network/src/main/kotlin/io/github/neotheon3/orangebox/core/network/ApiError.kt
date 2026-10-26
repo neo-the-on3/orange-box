@@ -38,6 +38,9 @@ sealed class ApiError(message: String, cause: Throwable? = null) : Exception(mes
     companion object {
         const val CODE_SYNC_WINDOW_EXPIRED = "sync_window_expired"
         const val CODE_VEHICLE_DELETED = "vehicle_deleted"
+        const val CODE_ETAG_MISMATCH = "etag_mismatch"
+        const val CODE_PRECONDITION_REQUIRED = "precondition_required"
+        const val CODE_REQUEST_TIMEOUT = "request_timeout"
         const val CODE_VEHICLE_NOT_FOUND = "vehicle_not_found"
         const val CODE_VALIDATION_FAILED = "validation_failed"
 

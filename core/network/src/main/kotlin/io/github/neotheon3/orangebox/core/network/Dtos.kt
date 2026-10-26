@@ -1,5 +1,9 @@
 package io.github.neotheon3.orangebox.core.network
 
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonTransformingSerializer
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
@@ -63,11 +67,15 @@ val BackendJson: Json = Json {
 // --- Vehicles ---
 
 /** Spec `VehicleCreate`. [clientVehicleId] is always sent (de-duplication per account). */
+/**
+ * Spec `VehicleCreate` (draft.9: only [fuelType] is required). [make] and [model] are left out when unknown,
+ * never sent as `""`; the name goes in [nickname].
+ */
 @Serializable data class VehicleCreateDto(
     val clientVehicleId: String,
-    val make: String,
-    val model: String,
-    /** Spec `FuelType`: gasoline, diesel, lpg, gasoline_lpg, hybrid, plug_in_hybrid, electric, other. */
+    val make: String? = null,
+    val model: String? = null,
+    /** Spec `FuelType` (strict on input: an unknown value is `422`); see [FuelTypes]. */
     val fuelType: String,
     val nickname: String? = null,
     val engineDisplacementCc: Int? = null,
@@ -75,13 +83,13 @@ val BackendJson: Json = Json {
 )
 
 /**
- * Spec `Vehicle`. [make] and [model] are nullable ahead of draft.9, which makes them optional (a vehicle may be
- * just a nickname); the current spec still lists them as required.
+ * Spec `Vehicle`. [make] and [model] are always present and may be null (draft.9); older rows may hold `""`,
+ * read as null ([knownMake], [knownModel]). [fuelType] may be a value this app doesn't know yet.
  */
 @Serializable data class VehicleDto(
     val id: String,
-    val make: String? = null,
-    val model: String? = null,
+    val make: String?,
+    val model: String?,
     val fuelType: String,
     val archived: Boolean = false,
     val createdAt: UtcInstant,
@@ -90,7 +98,33 @@ val BackendJson: Json = Json {
     val nickname: String? = null,
     val engineDisplacementCc: Int? = null,
     val odometerKm: Int? = null,
-)
+) {
+    val knownMake: String? get() = make?.takeIf { it.isNotBlank() }
+    val knownModel: String? get() = model?.takeIf { it.isNotBlank() }
+}
+
+/** Spec `VehiclePatch` (JSON merge patch): only the fields to change. */
+@Serializable data class VehiclePatchDto(val fuelType: String? = null, val nickname: String? = null)
+
+/** A response with its `ETag`. */
+data class Tagged<T>(val value: T, val etag: String?)
+
+/** Spec `FuelType` values (draft.9). Input is strict; responses may carry values not listed here. */
+object FuelTypes {
+    const val GASOLINE = "gasoline"
+    const val DIESEL = "diesel"
+    const val LPG = "lpg"
+    const val GASOLINE_LPG = "gasoline_lpg"
+    const val CNG = "cng"
+    const val GASOLINE_CNG = "gasoline_cng"
+    const val ETHANOL = "ethanol"
+    const val FLEX = "flex"
+    const val HYBRID = "hybrid"
+    const val PLUG_IN_HYBRID = "plug_in_hybrid"
+    const val ELECTRIC = "electric"
+    const val OTHER = "other"
+    val ALL = setOf(GASOLINE, DIESEL, LPG, GASOLINE_LPG, CNG, GASOLINE_CNG, ETHANOL, FLEX, HYBRID, PLUG_IN_HYBRID, ELECTRIC, OTHER)
+}
 
 @Serializable data class VehiclePage(val items: List<VehicleDto>, val nextCursor: String? = null)
 
@@ -119,6 +153,12 @@ val BackendJson: Json = Json {
     val idleTimeS: Double? = null,
     val ecoSpeedTimeS: Double? = null,
     val overSpeedTimeS: Double? = null,
+    /** Overspeed episodes; sent in every snapshot (draft.9). */
+    val overSpeedCount: Int? = null,
+    /** Fuel-cut episodes (their time is [fuelCutTimeS]); sent in every snapshot (draft.9). */
+    val fuelCutCount: Int? = null,
+    /** Why it ended ([EndReasons]); only on `completed`, left out while `in_progress`. */
+    val endReason: String? = null,
     val simulated: Boolean? = null,
     val app: AppInfo? = null,
 ) {
@@ -171,8 +211,25 @@ val BackendJson: Json = Json {
     val idleTimeS: Double? = null,
     val ecoSpeedTimeS: Double? = null,
     val overSpeedTimeS: Double? = null,
+    val overSpeedCount: Int? = null,
+    val fuelCutCount: Int? = null,
+    /** Open set: read through [EndReasons.read], so an unknown value is `other`. */
+    val endReason: String? = null,
     val simulated: Boolean? = null,
 )
+
+/** `TripUpload.endReason` (draft.9): an open set, like `Problem.reason`. */
+object EndReasons {
+    const val USER = "user"
+    const val ENGINE_OFF = "engine_off"
+    const val DISCONNECTED = "disconnected"
+    const val PROCESS_DEATH = "process_death"
+    const val OTHER = "other"
+    val KNOWN = setOf(USER, ENGINE_OFF, DISCONNECTED, PROCESS_DEATH, OTHER)
+
+    /** A received value: unknown ones are [OTHER]; null stays null (in progress). */
+    fun read(wire: String?): String? = wire?.let { if (it in KNOWN) it else OTHER }
+}
 
 @Serializable data class TripBatchDto(val trips: List<TripUploadDto>)
 
@@ -312,7 +369,8 @@ enum class SyncWindowReason(val wire: String) {
     /** `read` or `cleared`. */
     val kind: String,
     val readAt: UtcInstant,
-    val mil: Boolean,
+    /** MIL on / off, or null when unknown (not read, or a `cleared` report). Always on the wire, as `null` too. */
+    val mil: Boolean? = null,
     val stored: List<String>? = null,
     val pending: List<String>? = null,
     val permanent: List<String>? = null,
@@ -321,6 +379,15 @@ enum class SyncWindowReason(val wire: String) {
     val odometerKm: Int? = null,
     val distanceSinceMilKm: Int? = null,
 ) {
+    /**
+     * The request body: `mil` is required and nullable, so an unknown MIL goes as `"mil": null` ([BackendJson]
+     * leaves nulls out everywhere else).
+     */
+    object Wire : JsonTransformingSerializer<DtcReportCreateDto>(serializer()) {
+        override fun transformSerialize(element: JsonElement): JsonElement =
+            JsonObject(element.jsonObject.toMutableMap().apply { putIfAbsent("mil", JsonNull) })
+    }
+
     companion object {
         const val KIND_READ = "read"
         const val KIND_CLEARED = "cleared"
@@ -337,7 +404,8 @@ enum class SyncWindowReason(val wire: String) {
     val clientReportId: String,
     val kind: String,
     val readAt: UtcInstant,
-    val mil: Boolean,
+    /** Always present, null when unknown. */
+    val mil: Boolean?,
     val stored: List<String>? = null,
     val pending: List<String>? = null,
     val permanent: List<String>? = null,

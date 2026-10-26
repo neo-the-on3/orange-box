@@ -18,6 +18,15 @@ interface BackendApi {
     /** `POST /v1/vehicles`: `201` created or `200` replay by `clientVehicleId`. `410 vehicle_deleted` is thrown. */
     suspend fun createVehicle(vehicle: VehicleCreateDto, idempotencyKey: String): VehicleDto
 
+    /** `GET /v1/vehicles/{id}` with its `ETag` (for [patchVehicle]). */
+    suspend fun getVehicle(serverId: String): Tagged<VehicleDto>
+
+    /**
+     * `PATCH /v1/vehicles/{id}` (`application/merge-patch+json`, `If-Match: etag`). `412` (stale) and `428` are
+     * thrown: fetch again and retry.
+     */
+    suspend fun patchVehicle(serverId: String, patch: VehiclePatchDto, etag: String): Tagged<VehicleDto>
+
     /** `GET /v1/trips`. Pass [since] only on the first page of an incremental walk; later pages need only [cursor]. */
     suspend fun listTrips(since: String? = null, cursor: String? = null): TripPage
 

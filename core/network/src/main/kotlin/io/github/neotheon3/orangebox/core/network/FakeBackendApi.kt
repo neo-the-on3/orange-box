@@ -110,6 +110,8 @@ class FakeBackendApi(
     }
 
     override suspend fun createVehicle(vehicle: VehicleCreateDto, idempotencyKey: String) = op("POST /v1/vehicles") {
+        // Input is strict (draft.9): an unknown fuel type, or "" for make / model, is a 422.
+        if (vehicle.fuelType !in FuelTypes.ALL || vehicle.make == "" || vehicle.model == "") throw http(422, ApiError.CODE_VALIDATION_FAILED)
         if (vehicle.clientVehicleId in state.vehicleTombstones) throw http(410, ApiError.CODE_VEHICLE_DELETED)
         state.vehicles[vehicle.clientVehicleId] ?: run {
             val now = clock()
@@ -119,6 +121,29 @@ class FakeBackendApi(
                 engineDisplacementCc = vehicle.engineDisplacementCc, odometerKm = vehicle.odometerKm,
             ).also { state = state.copy(vehicles = state.vehicles + (vehicle.clientVehicleId to it), seq = state.seq + 1) }
         }
+    }
+
+    /** `PATCH` requests that answer with these first (e.g. `412` for a stale ETag), for tests. */
+    val patchFailures = ArrayDeque<ApiError>()
+    val patches = mutableListOf<Pair<String, VehiclePatchDto>>()
+
+    private fun etagOf(v: VehicleDto) = "\"" + v.updatedAt.toEpochMilli() + "\""
+
+    override suspend fun getVehicle(serverId: String) = op("GET /v1/vehicles/$serverId") {
+        val v = state.vehicles.values.firstOrNull { it.id == serverId } ?: throw http(404, "not_found")
+        Tagged(v, etagOf(v))
+    }
+
+    override suspend fun patchVehicle(serverId: String, patch: VehiclePatchDto, etag: String) = op("PATCH /v1/vehicles/$serverId") {
+        patchFailures.removeFirstOrNull()?.let { throw it }
+        val v = state.vehicles.values.firstOrNull { it.id == serverId } ?: throw http(404, "not_found")
+        if (etag.isBlank()) throw http(428, ApiError.CODE_PRECONDITION_REQUIRED)
+        if (etag != etagOf(v)) throw http(412, ApiError.CODE_ETAG_MISMATCH)
+        if (patch.fuelType != null && patch.fuelType !in FuelTypes.ALL) throw http(422, ApiError.CODE_VALIDATION_FAILED)
+        patches += serverId to patch
+        val updated = v.copy(fuelType = patch.fuelType ?: v.fuelType, nickname = patch.nickname ?: v.nickname, updatedAt = clock())
+        state = state.copy(vehicles = state.vehicles + (v.clientVehicleId!! to updated))
+        Tagged(updated, etagOf(updated))
     }
 
     override suspend fun listTrips(since: String?, cursor: String?) = op("GET /v1/trips?since=$since&cursor=$cursor") {

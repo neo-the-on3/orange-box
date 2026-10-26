@@ -2,6 +2,7 @@ package io.github.neotheon3.orangebox.core.network
 
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.descriptors.SerialDescriptor
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -48,7 +49,7 @@ class SpecContractTest {
             "/v1/health" to "get", "/v1/auth/otp" to "post", "/v1/auth/token" to "post", "/v1/auth/logout" to "post",
             "/v1/vehicles" to "get", "/v1/vehicles" to "post", "/v1/trips" to "get", "/v1/trips/deletions" to "get",
             "/v1/trips/batch" to "post", "/v1/trips/{tripId}" to "delete", "/v1/telemetry/batches" to "post",
-            "/v1/vehicles/{vehicleId}/dtc-reports" to "post",
+            "/v1/vehicles/{vehicleId}/dtc-reports" to "post", "/v1/vehicles/{vehicleId}" to "get", "/v1/vehicles/{vehicleId}" to "patch",
         ).forEach { (path, method) -> assertTrue("$method $path", hasOperation(path, method)) }
     }
 
@@ -66,7 +67,7 @@ class SpecContractTest {
             val req = required(schema)
             assertTrue("$schema has no required fields?", req.isNotEmpty())
             // `archived` defaults to false on purpose (older servers); everything else we model must not default.
-            val modelled = req.intersect(d.names()) - "archived" - DRAFT_9_OPTIONAL[schema].orEmpty()
+            val modelled = req.intersect(d.names()) - "archived"
             assertTrue("$schema: $modelled must be non-optional in ${d.nonOptional()}", d.nonOptional().containsAll(modelled))
         }
         assertTrue(TripPage.serializer().descriptor.names().containsAll(required("TripPage")))
@@ -119,6 +120,7 @@ class SpecContractTest {
         mapOf(
             "TripUpload" to TripUploadDto.serializer().descriptor,
             "VehicleCreate" to VehicleCreateDto.serializer().descriptor,
+            "VehiclePatch" to VehiclePatchDto.serializer().descriptor,
             "Vehicle" to VehicleDto.serializer().descriptor,
             "Trip" to TripDto.serializer().descriptor,
             "TripDeletion" to TripDeletionDto.serializer().descriptor,
@@ -140,11 +142,16 @@ class SpecContractTest {
         }
     }
 
-    companion object {
-        /**
-         * Required in the current spec, optional in the client ahead of draft.9.
-         * TODO(draft.9): drop each entry once the spec makes the field optional.
-         */
-        val DRAFT_9_OPTIONAL: Map<String, Set<String>> = mapOf("Vehicle" to setOf("make", "model"))
+    @Test fun `the spec is draft 9 or later`() {
+        val version = spec.first { it.trim().startsWith("version:") }.substringAfter("version:").trim()
+        assertTrue(version, Regex("""1\.0\.0-draft\.(\d+)""").find(version)!!.groupValues[1].toInt() >= 9)
+    }
+
+    @Test fun `draft 9 - make and model are optional on create, fuel types and endReason are known`() {
+        assertEquals(setOf("fuelType"), required("VehicleCreate"))
+        val fuel = spec.first { it.trim().startsWith("enum: [gasoline") }.substringAfter("[").substringBefore("]").split(',').map(String::trim).toSet()
+        assertEquals(FuelTypes.ALL, fuel)
+        val reasons = spec.first { it.contains("x-extensible-enum: [user") }.substringAfter("[").substringBefore("]").split(',').map(String::trim).toSet()
+        assertEquals(EndReasons.KNOWN, reasons)
     }
 }
