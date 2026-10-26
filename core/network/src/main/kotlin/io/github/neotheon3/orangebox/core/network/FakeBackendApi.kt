@@ -99,8 +99,14 @@ class FakeBackendApi(
 
     override suspend fun logout() = op("POST /v1/auth/logout") { signedIn = false }
 
-    override suspend fun listVehicles(cursor: String?) = op("GET /v1/vehicles") {
-        VehiclePage(state.vehicles.values.sortedBy { it.id }, nextCursor = null)
+    override suspend fun listVehicles(cursor: String?, includeArchived: Boolean) = op("GET /v1/vehicles?includeArchived=$includeArchived") {
+        VehiclePage(state.vehicles.values.filter { includeArchived || !it.archived }.sortedBy { it.id }, nextCursor = null)
+    }
+
+    /** Another device edits (or archives) the vehicle: a newer `updatedAt`. */
+    suspend fun editVehicleElsewhere(clientVehicleId: String, edit: (VehicleDto) -> VehicleDto) = lock.withLock {
+        val v = state.vehicles.getValue(clientVehicleId)
+        state = state.copy(vehicles = state.vehicles + (clientVehicleId to edit(v).copy(updatedAt = clock())))
     }
 
     override suspend fun createVehicle(vehicle: VehicleCreateDto, idempotencyKey: String) = op("POST /v1/vehicles") {

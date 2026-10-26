@@ -66,7 +66,7 @@ class SpecContractTest {
             val req = required(schema)
             assertTrue("$schema has no required fields?", req.isNotEmpty())
             // `archived` defaults to false on purpose (older servers); everything else we model must not default.
-            val modelled = req.intersect(d.names()) - "archived"
+            val modelled = req.intersect(d.names()) - "archived" - DRAFT_9_OPTIONAL[schema].orEmpty()
             assertTrue("$schema: $modelled must be non-optional in ${d.nonOptional()}", d.nonOptional().containsAll(modelled))
         }
         assertTrue(TripPage.serializer().descriptor.names().containsAll(required("TripPage")))
@@ -138,5 +138,13 @@ class SpecContractTest {
             val extra = d.names() - props
             assertTrue("$schema: DTO fields $extra are not in the spec (${props.sorted()})", extra.isEmpty())
         }
+    }
+
+    companion object {
+        /**
+         * Required in the current spec, optional in the client ahead of draft.9.
+         * TODO(draft.9): drop each entry once the spec makes the field optional.
+         */
+        val DRAFT_9_OPTIONAL: Map<String, Set<String>> = mapOf("Vehicle" to setOf("make", "model"))
     }
 }

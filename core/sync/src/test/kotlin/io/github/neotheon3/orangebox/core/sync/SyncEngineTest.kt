@@ -307,4 +307,31 @@ class SyncEngineTest {
         assertEquals(TripUploadDto.MAX_APP_OS, cut.os!!.length)
         assertEquals(TripUploadDto.MAX_APP_OS_VERSION, cut.osVersion!!.length)
     }
+
+    @Test fun `a vehicle deleted elsewhere is marked gone and its device-only trips stay local`() = runTest {
+        val car = phone.addVehicle()
+        val uploaded = phone.record(car)
+        engine.run()
+        val local = phone.record(car, at = Instant.parse("2026-10-21T10:00:00Z"))
+        server.deleteVehicleElsewhere(car)
+        val r = engine.run()
+        assertEquals(1, r.vehiclesDeletedElsewhere)
+        assertTrue(phone.vehicles.getValue(car).goneOnServer)
+        assertFalse("its uploaded trip comes back as a tombstone", uploaded in phone.trips)
+        assertTrue("device-only trip kept", local in phone.trips)
+        assertFalse(local in server.trips.map { it.clientTripId })
+        assertTrue(server.calls.contains("GET /v1/vehicles?includeArchived=true"))
+    }
+
+    @Test fun `an archived vehicle isn't deleted, and an edit elsewhere is applied once`() = runTest {
+        val car = phone.addVehicle()
+        phone.record(car)
+        engine.run()
+        server.editVehicleElsewhere(car) { it.copy(nickname = "Family car", archived = true) }
+        val r = engine.run()
+        assertEquals(0, r.vehiclesDeletedElsewhere)
+        assertEquals(1, r.vehiclesEdited)
+        assertEquals("Family car", phone.vehicleEdits.getValue(car).nickname)
+        assertEquals(0, engine.run().vehiclesEdited)
+    }
 }

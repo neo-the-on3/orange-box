@@ -64,8 +64,13 @@ class OkHttpBackendApi(
         }
     }
 
-    override suspend fun listVehicles(cursor: String?): VehiclePage =
-        call(get("vehicles") { cursor?.let { addQueryParameter("cursor", it) } }, authenticated = true)
+    override suspend fun listVehicles(cursor: String?, includeArchived: Boolean): VehiclePage = call(
+        get("vehicles") {
+            cursor?.let { addQueryParameter("cursor", it) }
+            if (includeArchived) addQueryParameter("includeArchived", "true")
+        },
+        authenticated = true,
+    )
 
     override suspend fun createVehicle(vehicle: VehicleCreateDto, idempotencyKey: String): VehicleDto =
         call(post("vehicles", json(vehicle)).idempotent(idempotencyKey), authenticated = true)

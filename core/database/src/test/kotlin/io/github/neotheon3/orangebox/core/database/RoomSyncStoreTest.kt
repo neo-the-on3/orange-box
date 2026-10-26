@@ -274,4 +274,29 @@ class RoomSyncStoreTest {
         db.syncDao().forgetServer()
         assertTrue(store.dtcReports().isEmpty())
     }
+
+    @Test fun `an edit from another device updates the local vehicle, the first copy only records updatedAt`() = runBlocking {
+        val v = car()
+        val clientId = db.vehicleDao().get(v)!!.clientVehicleId
+        trip(v)
+        run()
+        server.editVehicleElsewhere(clientId) { it.copy(nickname = "Family SX4", odometerKm = 42_000, fuelType = "diesel") }
+        assertEquals(1, run().vehiclesEdited)
+        val edited = db.vehicleDao().get(v)!!
+        assertEquals("Family SX4", edited.name)
+        assertEquals(42_000, edited.odometerKm)
+        assertEquals("DIESEL", edited.fuel)
+        assertEquals(0, run().vehiclesEdited)
+    }
+
+    @Test fun `vehicle create sends the real make and model, the name as nickname, and the clientVehicleId`() = runBlocking {
+        val v = db.vehicleDao().insert(VehicleEntity(name = "Dad's car", maker = null, model = null, fuel = "CNG", displacementCc = null, odometerKm = null, createdAtMillis = 1))
+        val create = store.vehicles().single { it.clientVehicleId == db.vehicleDao().get(v)!!.clientVehicleId }.create
+        assertEquals(RoomSyncStore.UNKNOWN_MAKE, create.make) // TODO(draft.9): null once optional
+        assertEquals("Dad's car", create.nickname)
+        assertEquals("other", create.fuelType)
+        assertEquals(db.vehicleDao().get(v)!!.clientVehicleId, create.clientVehicleId)
+        car() // with make and model: those are sent as they are
+        assertTrue(store.vehicles().any { it.create.make == "Maruti Suzuki" && it.create.nickname == "SX4" })
+    }
 }

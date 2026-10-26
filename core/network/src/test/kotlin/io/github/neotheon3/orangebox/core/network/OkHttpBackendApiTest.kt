@@ -172,6 +172,16 @@ class OkHttpBackendApiTest {
         assertTrue(first.body!!.utf8().contains("\"clientVehicleId\":\"3f0e1c7a-0000-4000-8000-000000000001\""))
     }
 
+    @Test fun `vehicle list with archived ones, and a vehicle with only a nickname decodes`() = runTest {
+        signedIn()
+        server.enqueue(json(200, """{"items":[$VEHICLE_JSON,{"id":"veh_2","nickname":"Blue","fuelType":"other","archived":true,"createdAt":"2026-10-23T14:05:00Z","updatedAt":"2026-10-24T14:05:00Z"}]}"""))
+        val page = api.listVehicles(includeArchived = true)
+        assertEquals(listOf("veh_1", "veh_2"), page.items.map { it.id })
+        assertEquals(null, page.items[1].make)
+        assertEquals("Blue", page.items[1].nickname)
+        assertEquals("true", server.takeRequest().url.queryParameter("includeArchived"))
+    }
+
     @Test fun `trip walk - since only on the first page, cursor afterwards, opaque tokens untouched`() = runTest {
         signedIn()
         server.enqueue(json(200, """{"items":[$TRIP_JSON],"nextCursor":"c/2+=","nextSince":null}"""))
