@@ -15,12 +15,19 @@ close_share_sheet() {
     if ! focus | grep -q "$PKG/"; then shown=1; break; fi
     sleep 1
   done
+  [ "$shown" = 1 ] || { shot "$1"; echo "share sheet did not open: $(focus)" >&2; return 1; }
+  # Focus moves to the chooser before it is drawn and takes keys: let it settle, or Back can land on the app
+  # and leave it for the launcher.
+  sleep 2
   shot "$1"
-  [ "$shown" = 1 ] || { echo "share sheet did not open: $(focus)" >&2; return 1; }
   for _ in 1 2 3; do
-    adb shell input keyevent KEYCODE_BACK
-    sleep 2
     focus | grep -q "$PKG/" && return 0
+    adb shell input keyevent KEYCODE_BACK
+    # Wait for the app to come back before sending another Back (a second one would leave the app).
+    for _ in $(seq 1 8); do
+      sleep 1
+      focus | grep -q "$PKG/" && return 0
+    done
   done
   echo "app not back in front after closing the share sheet: $(focus)" >&2
   return 1
