@@ -39,8 +39,8 @@ class AppDtcReportSink(
                 DtcReading.Kind.CLEARED -> DtcReportCreateDto.KIND_CLEARED
             },
             readAt = Instant.ofEpochMilli(r.atMillis),
-            // TODO(M9 question 14 for Go Developer): `mil` is required, but the car may not answer PID 01 01;
-            //  sent as false until the spec makes it nullable or says otherwise.
+            // `mil` is null when unknown (a cleared report, or no PID 01 01 answer), as agreed with the Go Developer.
+            // TODO(draft.9): the spec still requires a boolean, so false is sent meanwhile; send null once it's nullable.
             mil = r.milOn ?: MIL_WHEN_UNKNOWN,
             stored = r.stored?.let(::codes),
             pending = r.pending?.let(::codes),

@@ -166,6 +166,10 @@ class ObdDiagnosticsRepository(
         busy {
             val speed = telemetry.latest.value?.instant?.speedKph
             if (speed != null && speed > 0.0) return@busy ClearResult.WhileMoving
+            // The cleared report lists what was on the ECU: re-read first when there's no recent read.
+            val last = _latest.value
+            val before = last?.takeIf { clock() - it.readAtMillis <= FRESH_READ_MILLIS }
+                ?: (scanLocked() as? ScanResult.Success)?.report ?: last
             val ack = try {
                 connection.withSession { it.clearDtcs() }
             } catch (e: ObdError) {
@@ -174,16 +178,15 @@ class ObdDiagnosticsRepository(
             } ?: return@busy ClearResult.NotConnected
             OrangeLog.i(AREA, "clear", "acknowledged" to ack)
             if (!ack) return@busy ClearResult.Rejected
-            val at = clock()
+            val at = clock() // readAt of a cleared report = when the ECU acknowledged the clear
             runCatching { dtcHistory.recordCleared(at) }
                 .onFailure { OrangeLog.w(AREA, "history_write_failed", "error" to it.message) }
-            // What was cleared: the stored and pending codes of the last read (permanent ones stay on the ECU).
-            // TODO(M9 question 15 for Go Developer): confirm a `cleared` report lists the codes that were cleared.
-            val before = _latest.value
+            // Confirmed: a `cleared` report lists the stored and pending codes of the last read; permanent ones
+            // stay on the ECU and are left out; MIL is unknown (null). The read after the clear is its own report.
             val vehicleId = runCatching { vehicles.activeVehicle.first()?.id }.getOrNull()
             hand(
                 DtcReading(
-                    DtcReading.Kind.CLEARED, at, vehicleId, milOn = false, vin = before?.vin,
+                    DtcReading.Kind.CLEARED, at, vehicleId, milOn = null, vin = before?.vin,
                     stored = before?.codes?.filter { it.status == DtcStatus.STORED }?.map { it.code },
                     pending = before?.codes?.filter { it.status == DtcStatus.PENDING }?.map { it.code },
                     permanent = null,
@@ -214,8 +217,11 @@ class ObdDiagnosticsRepository(
             DtcStatus.PERMANENT -> DtcKind.PERMANENT
         }
 
-    private companion object {
+    internal companion object {
         const val AREA = OrangeLog.Areas.OBD
+
+        /** A read older than this is redone before a clear, so the cleared report lists current codes. */
+        const val FRESH_READ_MILLIS = 5 * 60_000L
     }
 }
 
