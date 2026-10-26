@@ -46,7 +46,7 @@ class OkHttpBackendApiTest {
         .body(body)
         .build()
 
-    private suspend fun signedIn(access: String = "a1") = sessions.write(Session(access, "r1", "m1", 2_000_000L, 9_000_000L))
+    private suspend fun signedIn(access: String = "a1") = sessions.write(Session(access, "r1", "m1", 2_000_000L, 9_000_000L, email = "k@example.com"))
 
     @Test fun `base url must be https`() {
         assertThrows(IllegalArgumentException::class.java) { OkHttpBackendApi("http://api.example.com", OkHttpClient(), sessions) }
@@ -74,6 +74,7 @@ class OkHttpBackendApiTest {
         assertEquals("acc", s.accessToken)
         assertEquals("ref", s.refreshToken)
         assertEquals(1_000_000L + 900_000L, s.accessExpiresAtMillis)
+        assertEquals("the normalised address is kept for Settings", "kiran@example.com", s.email)
     }
 
     @Test fun `bearer token is attached and the member id is never sent`() = runTest {
@@ -103,6 +104,7 @@ class OkHttpBackendApiTest {
         assertEquals(5, pages.size)
         assertEquals(1, refreshes.get())
         assertEquals("acc", sessions.read()!!.accessToken)
+        assertEquals("a refresh keeps the address", "k@example.com", sessions.read()!!.email)
     }
 
     @Test fun `rejected refresh clears the session`() = runTest {

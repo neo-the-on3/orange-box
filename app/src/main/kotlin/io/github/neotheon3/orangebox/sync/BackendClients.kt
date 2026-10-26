@@ -6,7 +6,7 @@ import io.github.neotheon3.orangebox.core.model.BackendMode
 import io.github.neotheon3.orangebox.core.network.BackendApi
 import io.github.neotheon3.orangebox.core.network.FakeBackendApi
 import io.github.neotheon3.orangebox.core.network.OkHttpBackendApi
-import io.github.neotheon3.orangebox.core.network.SessionStore
+import io.github.neotheon3.orangebox.core.network.ObservableSessionStore
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -18,8 +18,8 @@ import javax.inject.Singleton
  * built on first use and rebuilt when the URL changes.
  */
 @Singleton
-class BackendClients(private val sessions: SessionStore) {
-    @Inject constructor(sessions: EncryptedSessionStore) : this(sessions as SessionStore)
+class BackendClients(private val sessions: ObservableSessionStore) {
+    @Inject constructor(sessions: EncryptedSessionStore) : this(sessions as ObservableSessionStore)
 
     private var remote: Pair<String, OkHttpBackendApi>? = null
     private val fake by lazy { FakeBackendApi() }
@@ -28,13 +28,16 @@ class BackendClients(private val sessions: SessionStore) {
     var httpClientsBuilt = 0
         private set
 
-    val sessionStore: SessionStore get() = sessions
+    val sessionStore: ObservableSessionStore get() = sessions
+
+    /** Tests: answer Remote with this instead of building an OkHttp client. */
+    internal var remoteForTests: BackendApi? = null
 
     @Synchronized
     fun forConfig(config: BackendConfig): BackendApi? = when (config.mode) {
         BackendMode.OFF -> null
         BackendMode.FAKE -> fake
-        BackendMode.REMOTE -> if (!config.isRemoteReady) null else remote?.takeIf { it.first == config.baseUrl }?.second
+        BackendMode.REMOTE -> if (!config.isRemoteReady) null else remoteForTests ?: remote?.takeIf { it.first == config.baseUrl }?.second
             ?: OkHttpBackendApi(config.baseUrl, httpClient(), sessions).also { remote = config.baseUrl to it }
     }
 
