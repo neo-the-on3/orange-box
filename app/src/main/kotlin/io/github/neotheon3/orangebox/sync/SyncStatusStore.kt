@@ -24,6 +24,7 @@ class SyncStatusStore @Inject constructor(private val dao: SyncDao) {
         val pulledTrips: Int = 0,
         val telemetryBatches: Int = 0,
         val willRetry: Boolean = false,
+        val consecutiveFailures: Int = 0,
     )
 
     val status: Flow<SyncStatus?> = dao.observeState(KEY).map { it?.let(::decode) }.distinctUntilChanged()
@@ -31,6 +32,7 @@ class SyncStatusStore @Inject constructor(private val dao: SyncDao) {
     suspend fun write(status: SyncStatus) {
         val stored = Stored(
             status.atMillis, status.ok, status.error?.name, status.uploadedTrips, status.pulledTrips, status.telemetryBatches, status.willRetry,
+            status.consecutiveFailures,
         )
         dao.putState(SyncStateEntity(KEY, BackendJson.encodeToString(Stored.serializer(), stored)))
     }
@@ -42,6 +44,7 @@ class SyncStatusStore @Inject constructor(private val dao: SyncDao) {
             atMillis = it.atMillis, ok = it.ok,
             error = it.error?.let { e -> SyncError.entries.firstOrNull { x -> x.name == e } ?: SyncError.UNKNOWN },
             uploadedTrips = it.uploadedTrips, pulledTrips = it.pulledTrips, telemetryBatches = it.telemetryBatches, willRetry = it.willRetry,
+            consecutiveFailures = it.consecutiveFailures,
         )
     }
 

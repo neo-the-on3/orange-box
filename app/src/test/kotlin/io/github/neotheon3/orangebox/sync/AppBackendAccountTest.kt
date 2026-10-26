@@ -146,7 +146,7 @@ class AppBackendAccountTest {
             ),
         )
         val runner = SyncRunner(config, clients, RoomSyncStore(db.syncDao()), SyncStatusStore(db.syncDao())) { 5_000 }
-        assertEquals(SyncOutcome.Done, runner.run(0))
+        assertEquals(SyncOutcome.Done, runner.run())
         assertEquals(2, db.tripDao().observeTrips().first().size)
         assertTrue(account.state.first().lastSync!!.ok)
 
@@ -176,12 +176,12 @@ class AppBackendAccountTest {
         val (account, clients) = account(config)
         val status = SyncStatusStore(db.syncDao())
         val runner = SyncRunner(config, clients, RoomSyncStore(db.syncDao()), status) { 42_000 }
-        runner.run(0)
+        runner.run()
         assertEquals(42_000, account.state.first().lastSync!!.atMillis)
         assertTrue(account.state.first().lastSync!!.ok)
 
         (clients.forConfig(BackendConfig(BackendMode.FAKE)) as FakeBackendApi).failNext(FakeBackendApi.unavailable(10))
-        assertEquals(SyncOutcome.RetryAfter(10), runner.run(0))
+        assertEquals(SyncOutcome.RetryAfter(10), runner.run())
         val last = account.state.first().lastSync!!
         assertFalse(last.ok)
         assertEquals(SyncError.SERVER_BUSY, last.error)
