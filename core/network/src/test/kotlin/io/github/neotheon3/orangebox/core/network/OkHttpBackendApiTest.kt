@@ -220,6 +220,52 @@ class OkHttpBackendApiTest {
         assertFalse("absent fields are omitted, not null", body.contains("null"))
     }
 
+    private fun telemetryBatch(samples: Int = 2, events: Int = 1) = TelemetryBatchDto(
+        clientBatchId = "b-1", clientTripId = "c1", vehicleId = "veh_1",
+        samples = List(samples) { SampleDto(t = Instant.parse("2026-10-23T14:05:00.123Z").plusSeconds(it.toLong()), speedKmh = 42.0, rpm = 1800.0) },
+        events = List(events) { EventDto(t = Instant.parse("2026-10-23T14:05:01Z"), type = "harsh_brake", clientEventId = "e-$it", value = -4.2) },
+    )
+
+    @Test fun `telemetry batch is gzip json with an idempotency key and the 202 ack`() = runTest {
+        signedIn()
+        server.enqueue(json(202, """{"clientBatchId":"b-1","status":"accepted","acceptedSamples":2,"acceptedEvents":1,"droppedSamples":0,"droppedEvents":0}"""))
+        val ack = api.uploadTelemetry(telemetryBatch(), "tel-key")
+        assertEquals(TelemetryBatchAckDto.STATUS_ACCEPTED, ack.status)
+        assertEquals(2, ack.acceptedSamples)
+        assertFalse(ack.tripDeleted)
+
+        val r = server.takeRequest()
+        assertEquals("/v1/telemetry/batches", r.url.encodedPath)
+        assertEquals("gzip", r.headers["Content-Encoding"])
+        assertEquals("tel-key", r.headers["Idempotency-Key"])
+        val body = GzipSource(Buffer().write(r.body!!)).buffer().readUtf8()
+        assertTrue(body, body.contains("\"t\":\"2026-10-23T14:05:00.123Z\""))
+        assertTrue(body, body.contains("\"clientEventId\":\"e-0\""))
+        assertTrue(body, body.contains("\"type\":\"harsh_brake\""))
+        assertFalse("absent fields are omitted, not null", body.contains("null"))
+    }
+
+    @Test fun `telemetry ack for a deleted trip, and 413 or 404 are errors`() = runTest {
+        signedIn()
+        server.enqueue(json(202, """{"clientBatchId":"b-1","status":"trip_deleted","acceptedSamples":0,"acceptedEvents":0}"""))
+        assertTrue(api.uploadTelemetry(telemetryBatch(), "k").tripDeleted)
+        server.enqueue(json(413, problem(413, "payload_too_large")))
+        val tooLarge = runCatching { api.uploadTelemetry(telemetryBatch(), "k") }.exceptionOrNull() as ApiError.Http
+        assertEquals(413, tooLarge.status)
+        assertFalse(tooLarge.isRetryable)
+        server.enqueue(json(404, problem(404, ApiError.CODE_VEHICLE_NOT_FOUND)))
+        val missing = runCatching { api.uploadTelemetry(telemetryBatch(), "k") }.exceptionOrNull() as ApiError.Http
+        assertEquals(ApiError.CODE_VEHICLE_NOT_FOUND, missing.code)
+    }
+
+    @Test fun `telemetry batch limits are checked before sending`() = runTest {
+        signedIn()
+        assertThrows(IllegalArgumentException::class.java) { kotlinx.coroutines.runBlocking { api.uploadTelemetry(telemetryBatch(samples = 5_001), "k") } }
+        assertThrows(IllegalArgumentException::class.java) { kotlinx.coroutines.runBlocking { api.uploadTelemetry(telemetryBatch(events = 501), "k") } }
+        assertThrows(IllegalArgumentException::class.java) { kotlinx.coroutines.runBlocking { api.uploadTelemetry(telemetryBatch(0, 0), "k") } }
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun `deleting an already deleted trip counts as done`() = runTest {
         signedIn()
         server.enqueue(json(404, problem(404, "not_found")))

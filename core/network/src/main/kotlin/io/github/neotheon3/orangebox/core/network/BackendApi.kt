@@ -30,7 +30,20 @@ interface BackendApi {
     /** `DELETE /v1/trips/{id}`. A `404` (already deleted) counts as success. */
     suspend fun deleteTrip(serverId: String)
 
+    /**
+     * `POST /v1/telemetry/batches` (`202`). Gzip body; retries must reuse [idempotencyKey] and the same
+     * `clientBatchId`. An unknown `clientTripId` is normal; a deleted trip answers `status=trip_deleted`;
+     * `404 vehicle_not_found`, `413` (too large) and `422` are thrown as [ApiError.Http].
+     */
+    suspend fun uploadTelemetry(batch: TelemetryBatchDto, idempotencyKey: String): TelemetryBatchAckDto
+
     companion object {
         const val MAX_TRIPS_PER_BATCH = 100
+
+        /** `TelemetryBatch.samples.maxItems`. */
+        const val MAX_SAMPLES_PER_BATCH = 5_000
+
+        /** `TelemetryBatch.events.maxItems`. */
+        const val MAX_EVENTS_PER_BATCH = 500
     }
 }

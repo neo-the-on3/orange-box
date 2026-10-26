@@ -91,6 +91,14 @@ class OkHttpBackendApi(
         return call(post("trips/batch", gzip(json(batch))).header("Content-Encoding", "gzip").idempotent(idempotencyKey), authenticated = true)
     }
 
+    override suspend fun uploadTelemetry(batch: TelemetryBatchDto, idempotencyKey: String): TelemetryBatchAckDto {
+        require(batch.samples.size <= BackendApi.MAX_SAMPLES_PER_BATCH && batch.events.size <= BackendApi.MAX_EVENTS_PER_BATCH) {
+            "at most 5,000 samples and 500 events per batch"
+        }
+        require(batch.samples.isNotEmpty() || batch.events.isNotEmpty()) { "empty telemetry batch" }
+        return call(post("telemetry/batches", gzip(json(batch))).header("Content-Encoding", "gzip").idempotent(idempotencyKey), authenticated = true)
+    }
+
     override suspend fun deleteTrip(serverId: String) {
         try {
             callUnit(Request.Builder().url(url("trips/$serverId")).delete(), authenticated = true)
