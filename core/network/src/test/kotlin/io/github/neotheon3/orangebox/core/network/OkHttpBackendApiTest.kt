@@ -134,10 +134,11 @@ class OkHttpBackendApiTest {
     @Test fun `sync window reason is decoded leniently`() {
         assertEquals(SyncWindowReason.PURGED, SyncWindowReason.parse("purged"))
         assertEquals(SyncWindowReason.INVALID, SyncWindowReason.parse("invalid"))
-        assertEquals(SyncWindowReason.UNKNOWN, SyncWindowReason.parse("cosmic_rays"))
-        assertEquals(SyncWindowReason.UNKNOWN, SyncWindowReason.parse(null))
+        assertEquals(SyncWindowReason.DEPLOYMENT_CHANGED, SyncWindowReason.parse("deployment_changed"))
+        assertEquals("unknown is invalid", SyncWindowReason.INVALID, SyncWindowReason.parse("cosmic_rays"))
+        assertEquals("missing is invalid", SyncWindowReason.INVALID, SyncWindowReason.parse(null))
         val p = BackendJson.decodeFromString(ProblemDto.serializer(), """{"type":"about:blank","title":"x","status":400,"requestId":"r","code":"sync_window_expired","reason":42,"extra":{"a":1}}""")
-        assertEquals(SyncWindowReason.UNKNOWN, SyncWindowReason.parse(p.reason))
+        assertEquals(SyncWindowReason.INVALID, SyncWindowReason.parse(p.reason))
     }
 
     @Test fun `503 and 429 carry Retry-After and are retryable`() = runTest {
@@ -251,7 +252,7 @@ class OkHttpBackendApiTest {
         signedIn()
         server.enqueue(json(202, """{"clientBatchId":"b-1","status":"trip_deleted","acceptedSamples":0,"acceptedEvents":0}"""))
         assertTrue(api.uploadTelemetry(telemetryBatch(), "k").tripDeleted)
-        server.enqueue(json(413, problem(413, "payload_too_large")))
+        server.enqueue(json(413, problem(413, "batch_too_large")))
         val tooLarge = runCatching { api.uploadTelemetry(telemetryBatch(), "k") }.exceptionOrNull() as ApiError.Http
         assertEquals(413, tooLarge.status)
         assertFalse(tooLarge.isRetryable)

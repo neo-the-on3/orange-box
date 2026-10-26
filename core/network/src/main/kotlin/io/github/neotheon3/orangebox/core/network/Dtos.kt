@@ -197,19 +197,17 @@ val BackendJson: Json = Json {
 }
 
 /**
- * `Problem.reason` on `sync_window_expired`. An open set (`x-extensible-enum`): unknown or missing values
- * decode to [UNKNOWN], which the app treats like [INVALID].
+ * `Problem.reason` on `sync_window_expired`: an open string set (`x-extensible-enum`). The spec says to treat an
+ * unknown or missing value like `invalid`, so both decode to [INVALID].
  */
-enum class SyncWindowReason(val wire: String?) {
+enum class SyncWindowReason(val wire: String) {
     DEPLOYMENT_CHANGED("deployment_changed"),
     PURGED("purged"),
     INVALID("invalid"),
-    UNKNOWN(null),
     ;
 
     companion object {
-        fun parse(value: String?): SyncWindowReason =
-            entries.firstOrNull { it.wire != null && it.wire == value?.trim()?.lowercase() } ?: UNKNOWN
+        fun parse(value: String?): SyncWindowReason = entries.firstOrNull { it.wire == value?.trim()?.lowercase() } ?: INVALID
     }
 }
 

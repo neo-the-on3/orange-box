@@ -135,17 +135,8 @@ class SpecContractTest {
         ).forEach { (schema, d) ->
             val props = properties(schema)
             assertTrue("$schema has no properties?", props.isNotEmpty())
-            val extra = d.names() - props - PENDING_SPEC_FIELDS[schema].orEmpty()
+            val extra = d.names() - props
             assertTrue("$schema: DTO fields $extra are not in the spec (${props.sorted()})", extra.isEmpty())
         }
-    }
-
-    companion object {
-        /**
-         * Fields the client already models from spec text that isn't on `main` yet.
-         * TODO(M9 question 1 for Go Developer): `Problem.reason` is only on PR #183's branch; drop this entry once
-         *  #183 merges (the test then checks it like every other field).
-         */
-        val PENDING_SPEC_FIELDS: Map<String, Set<String>> = mapOf("Problem" to setOf("reason"))
     }
 }

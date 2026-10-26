@@ -162,7 +162,7 @@ class SyncEngineTest {
         assertEquals(1, r.dropped)
     }
 
-    @Test fun `invalid, unknown and missing reasons are handled like purged`() = runTest {
+    @Test fun `invalid, unknown and missing reasons are all invalid and handled like purged`() = runTest {
         for (reason in listOf("invalid", "something_new", null)) {
             val store = InMemorySyncStore()
             val api = FakeBackendApi(pageSize = 2)
@@ -172,8 +172,7 @@ class SyncEngineTest {
             api.deleteTripElsewhere(t)
             api.failNext(FakeBackendApi.syncWindowExpired(reason))
             val r = SyncEngine(api, store).run()
-            val expected = if (reason == "invalid") SyncWindowReason.INVALID else SyncWindowReason.UNKNOWN
-            assertEquals("$reason", expected, r.recovery)
+            assertEquals("$reason is treated as invalid", SyncWindowReason.INVALID, r.recovery)
             assertFalse(t in store.trips)
             assertEquals("nothing re-uploaded", 0, r.uploaded)
         }

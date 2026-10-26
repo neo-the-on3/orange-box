@@ -88,7 +88,7 @@ class TelemetryUploadTest {
         server.maxTelemetryItems = 0
         val r = engine.run()
         assertEquals(1, r.telemetryRejected)
-        assertEquals(SyncEngine.CODE_PAYLOAD_TOO_LARGE, phone.telemetryDone[trip])
+        assertEquals(ApiError.CODE_BATCH_TOO_LARGE, phone.telemetryDone[trip])
         assertEquals(0, engine.run().telemetryBatches)
     }
 
@@ -141,5 +141,39 @@ class TelemetryUploadTest {
         engine.run()
         assertNull(phone.vehicles.getValue(car).serverId)
         assertNull(phone.pendingTelemetry)
+    }
+
+    @Test fun `the server de-duplicates events by clientEventId, or by the fallback key without one`() = runTest {
+        val car = phone.addVehicle()
+        engineRunOnce(car)
+        val vehicle = server.vehicles.single().id
+        val t = Instant.parse("2026-10-20T09:55:00Z")
+        fun ev(id: String?) = io.github.neotheon3.orangebox.core.network.EventDto(t = t, type = "harsh_brake", clientEventId = id)
+        fun batch(id: String, vararg events: io.github.neotheon3.orangebox.core.network.EventDto) =
+            io.github.neotheon3.orangebox.core.network.TelemetryBatchDto(id, "trip-x", vehicle, events = events.toList())
+        server.uploadTelemetry(batch("b1", ev("e-1"), ev("e-2"), ev(null)), "k1")
+        val ack = server.uploadTelemetry(batch("b2", ev("e-1"), ev(null), ev("e-3")), "k2")
+        assertEquals("same key, other ids: kept; e-1 and the id-less repeat: dropped", 1, ack.acceptedEvents)
+        assertEquals(listOf("e-1", "e-2", null, "e-3"), server.telemetry.getValue("trip-x").events.map { it.clientEventId })
+    }
+
+    @Test fun `over the count is 422 validation_failed and not retried`() = runTest {
+        val car = phone.addVehicle()
+        engineRunOnce(car)
+        val vehicle = server.vehicles.single().id
+        val tooMany = List(io.github.neotheon3.orangebox.core.network.BackendApi.MAX_EVENTS_PER_BATCH + 1) {
+            io.github.neotheon3.orangebox.core.network.EventDto(t = Instant.EPOCH.plusSeconds(it.toLong()), type = "overspeed")
+        }
+        val e = runCatching { server.uploadTelemetry(io.github.neotheon3.orangebox.core.network.TelemetryBatchDto("b", "t", vehicle, events = tooMany), "k") }
+            .exceptionOrNull() as ApiError.Http
+        assertEquals(422, e.status)
+        assertEquals(ApiError.CODE_VALIDATION_FAILED, e.code)
+        assertTrue(!e.isRetryable)
+    }
+
+    /** Creates [car] on the server through a normal run (a trip makes the engine create its vehicle). */
+    private suspend fun engineRunOnce(car: String) {
+        phone.record(car)
+        engine.run()
     }
 }
