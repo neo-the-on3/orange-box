@@ -97,7 +97,7 @@ class InMemorySyncStore : SyncStore {
             clientTripId = it.clientTripId, serverId = it.serverId, clientVehicleId = it.clientVehicleId,
             serverUpdatedAt = it.serverUpdatedAt, uploadedBefore = it.uploadedBefore,
             needsUpload = !it.remoteOrigin && it.rejected == null && (it.forceUpload || it.acceptedSnapshotAt == null || it.snapshotAt.isAfter(it.acceptedSnapshotAt)),
-            remoteOrigin = it.remoteOrigin,
+            remoteOrigin = it.remoteOrigin, acceptedSnapshotAt = it.acceptedSnapshotAt, completedLocally = it.completed,
         )
     }
 

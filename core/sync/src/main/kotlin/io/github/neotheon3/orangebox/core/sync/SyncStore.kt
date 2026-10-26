@@ -32,6 +32,10 @@ data class SyncTrip(
     val needsUpload: Boolean,
     /** Pulled from the server (another device), not recorded here. */
     val remoteOrigin: Boolean = false,
+    /** `snapshotAt` of our last accepted upload, if any. */
+    val acceptedSnapshotAt: Instant? = null,
+    /** The trip has ended on this device. */
+    val completedLocally: Boolean = false,
 )
 
 /** A trip upload request kept until it succeeds, so retries resend the same body with the same key. */
