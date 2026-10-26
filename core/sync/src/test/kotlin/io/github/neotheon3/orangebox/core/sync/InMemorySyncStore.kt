@@ -1,5 +1,7 @@
 package io.github.neotheon3.orangebox.core.sync
 
+import io.github.neotheon3.orangebox.core.network.EventDto
+import io.github.neotheon3.orangebox.core.network.SampleDto
 import io.github.neotheon3.orangebox.core.network.TripDto
 import io.github.neotheon3.orangebox.core.network.TripUploadDto
 import io.github.neotheon3.orangebox.core.network.VehicleCreateDto
@@ -28,6 +30,21 @@ class InMemorySyncStore : SyncStore {
     val trips = linkedMapOf<String, Trip>()
     val deletions = linkedMapOf<String, LocalDeletion>()
     var pending: PendingTripBatch? = null
+
+    /** Telemetry rows per trip, keyed by a row id like Room's. */
+    val samples = linkedMapOf<String, MutableList<Pair<Long, SampleDto>>>()
+    val events = linkedMapOf<String, MutableList<Pair<Long, EventDto>>>()
+    val telemetrySent = mutableMapOf<String, Pair<Long, Long>>()
+    val telemetryDone = mutableMapOf<String, String?>()
+    var pendingTelemetry: PendingTelemetryBatch? = null
+    private var rowId = 0L
+
+    fun addTelemetry(clientTripId: String, sampleCount: Int, eventCount: Int = 0, from: Instant = trips.getValue(clientTripId).snapshotAt.minusSeconds(600)) {
+        repeat(sampleCount) { samples.getOrPut(clientTripId) { mutableListOf() } += ++rowId to SampleDto(t = from.plusSeconds(it.toLong()), speedKmh = 40.0) }
+        repeat(eventCount) {
+            events.getOrPut(clientTripId) { mutableListOf() } += ++rowId to EventDto(t = from.plusSeconds(it * 10L), type = "harsh_brake", clientEventId = UUID.randomUUID().toString())
+        }
+    }
 
     fun addVehicle(name: String = "SX4"): String {
         val id = UUID.randomUUID().toString()
@@ -113,4 +130,24 @@ class InMemorySyncStore : SyncStore {
 
     override suspend fun pendingTripBatch() = pending
     override suspend fun setPendingTripBatch(batch: PendingTripBatch?) { pending = batch }
+
+    override suspend fun telemetryTrips() = trips.values
+        .filter { it.completed && !it.remoteOrigin && it.uploadedBefore && it.clientTripId !in telemetryDone }
+        .mapNotNull { t -> t.clientVehicleId?.let { vehicles[it]?.serverId }?.let { TelemetryTrip(t.clientTripId, it) } }
+
+    override suspend fun telemetryChunk(clientTripId: String, maxSamples: Int, maxEvents: Int): TelemetryChunk? {
+        val (s, e) = telemetrySent[clientTripId] ?: (0L to 0L)
+        val nextSamples = samples[clientTripId].orEmpty().filter { it.first > s }.take(maxSamples)
+        val nextEvents = events[clientTripId].orEmpty().filter { it.first > e }.take(maxEvents)
+        if (nextSamples.isEmpty() && nextEvents.isEmpty()) return null
+        return TelemetryChunk(nextSamples.map { it.second }, nextEvents.map { it.second }, nextSamples.lastOrNull()?.first ?: s, nextEvents.lastOrNull()?.first ?: e)
+    }
+
+    override suspend fun markTelemetrySent(clientTripId: String, samplesUpTo: Long, eventsUpTo: Long) {
+        telemetrySent[clientTripId] = samplesUpTo to eventsUpTo
+    }
+
+    override suspend fun markTelemetryDone(clientTripId: String, code: String?) { telemetryDone[clientTripId] = code }
+    override suspend fun pendingTelemetryBatch() = pendingTelemetry
+    override suspend fun setPendingTelemetryBatch(batch: PendingTelemetryBatch?) { pendingTelemetry = batch }
 }

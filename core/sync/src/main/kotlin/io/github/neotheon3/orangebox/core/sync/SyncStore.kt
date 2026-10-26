@@ -1,6 +1,8 @@
 package io.github.neotheon3.orangebox.core.sync
 
-import io.github.neotheon3.orangebox.core.network.TripDeletionDto
+import io.github.neotheon3.orangebox.core.network.EventDto
+import io.github.neotheon3.orangebox.core.network.SampleDto
+import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
 import io.github.neotheon3.orangebox.core.network.TripDto
 import io.github.neotheon3.orangebox.core.network.TripUploadDto
 import io.github.neotheon3.orangebox.core.network.VehicleCreateDto
@@ -32,6 +34,18 @@ data class SyncTrip(
 
 /** A trip upload request kept until it succeeds, so retries resend the same body with the same key. */
 data class PendingTripBatch(val idempotencyKey: String, val trips: List<TripUploadDto>)
+
+/** A trip with telemetry still to upload: finished, recorded here, its vehicle known to the server. */
+data class TelemetryTrip(val clientTripId: String, val vehicleServerId: String)
+
+/**
+ * The next samples and events of a trip after the last acknowledged ones. [samplesUpTo] / [eventsUpTo] are
+ * opaque local cursors (row ids in Room) stored with [SyncStore.markTelemetrySent] once the server acknowledged.
+ */
+data class TelemetryChunk(val samples: List<SampleDto>, val events: List<EventDto>, val samplesUpTo: Long, val eventsUpTo: Long)
+
+/** A telemetry upload kept until it's acknowledged, so retries resend the same body, `clientBatchId` and key. */
+data class PendingTelemetryBatch(val idempotencyKey: String, val batch: TelemetryBatchDto, val samplesUpTo: Long, val eventsUpTo: Long)
 
 /**
  * The local side of the sync (Room in the app, [InMemorySyncStore] in tests). Implementations make each call
@@ -81,6 +95,26 @@ interface SyncStore {
     suspend fun pendingTripBatch(): PendingTripBatch?
 
     suspend fun setPendingTripBatch(batch: PendingTripBatch?)
+
+    // --- telemetry (#67) ---
+
+    /**
+     * Trips whose telemetry isn't fully uploaded, oldest first: finished, recorded on this device, summary
+     * uploaded before, vehicle with a server id, not marked done, and not older than the backlog bound.
+     */
+    suspend fun telemetryTrips(): List<TelemetryTrip>
+
+    /** Up to [maxSamples] samples and [maxEvents] events after the acknowledged cursors, or null when nothing is left. */
+    suspend fun telemetryChunk(clientTripId: String, maxSamples: Int, maxEvents: Int): TelemetryChunk?
+
+    suspend fun markTelemetrySent(clientTripId: String, samplesUpTo: Long, eventsUpTo: Long)
+
+    /** Stops uploading this trip's telemetry: `trip_deleted`, or a rejection retrying won't fix (`422`, unsplittable `413`). */
+    suspend fun markTelemetryDone(clientTripId: String, code: String?)
+
+    suspend fun pendingTelemetryBatch(): PendingTelemetryBatch?
+
+    suspend fun setPendingTelemetryBatch(batch: PendingTelemetryBatch?)
 }
 
 data class LocalDeletion(val clientTripId: String, val serverId: String?, val pushed: Boolean)
