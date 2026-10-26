@@ -74,7 +74,7 @@ class AppDtcReportSinkTest {
         assertEquals("read and empty", emptyList<String>(), dto.pending)
         assertNull("unread list left out", dto.permanent)
         assertEquals("JT2BF22K1W0123456", dto.vin)
-        assertTrue(dto.mil)
+        assertEquals(true, dto.mil)
     }
 
     @Test fun `a read without a vehicle, or with an unknown MIL or a bad VIN`() = runBlocking {
@@ -82,7 +82,7 @@ class AppDtcReportSinkTest {
         fake.onReading(read(vehicleId = null))
         assertTrue(store.dtcReports().isEmpty())
         val dto = AppDtcReportSink.toDto(read(1, mil = null).copy(vin = "NOTAVIN", kind = DtcReading.Kind.CLEARED), "id")
-        assertEquals(AppDtcReportSink.MIL_WHEN_UNKNOWN, dto.mil)
+        assertEquals("unknown MIL is null, never false", null, dto.mil)
         assertNull(dto.vin)
         assertEquals(DtcReportCreateDto.KIND_CLEARED, dto.kind)
     }

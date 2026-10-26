@@ -39,16 +39,13 @@ class AppDtcReportSink(
                 DtcReading.Kind.CLEARED -> DtcReportCreateDto.KIND_CLEARED
             },
             readAt = Instant.ofEpochMilli(r.atMillis),
-            // `mil` is null when unknown (a cleared report, or no PID 01 01 answer), as agreed with the Go Developer.
-            // TODO(draft.9): the spec still requires a boolean, so false is sent meanwhile; send null once it's nullable.
-            mil = r.milOn ?: MIL_WHEN_UNKNOWN,
+            // Null when unknown (a cleared report, or no PID 01 01 answer); never false for unknown (draft.9).
+            mil = r.milOn,
             stored = r.stored?.let(::codes),
             pending = r.pending?.let(::codes),
             permanent = r.permanent?.let(::codes),
             vin = r.vin?.trim()?.uppercase()?.takeIf { DtcReportCreateDto.VIN.matches(it) },
         )
-
-        const val MIL_WHEN_UNKNOWN = false
 
         private fun codes(list: List<String>) = list.map { it.trim().uppercase() }.filter { DtcReportCreateDto.CODE.matches(it) }.distinct()
     }
