@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import io.github.neotheon3.orangebox.core.designsystem.OrangeBoxTheme
 import io.github.neotheon3.orangebox.core.model.BackendMode
+import io.github.neotheon3.orangebox.core.network.FakeBackendApi
 import io.github.neotheon3.orangebox.core.obd.DongleLinkEvent
 import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import io.github.neotheon3.orangebox.core.obd.ObdError
@@ -59,6 +60,8 @@ class SimulatorScreenTest {
         override fun stopScript() { calls += "stop"; controller.update { it.copy(runningScript = null) }; ui = ui.copy(sim = controller.state.value) }
         override fun injectImpact() { calls += "impact" }
         override fun reset() { controller.reset(); ui = ui.copy(sim = controller.state.value); calls += "reset" }
+        override fun armFakeFailure(scenario: FakeBackendApi.Scenario) { calls += "arm=$scenario"; ui = ui.copy(fakeArmed = scenario) }
+        override fun setFakeMemberFeatures(on: Boolean) { calls += "member=$on"; ui = ui.copy(fakeMemberFeatures = on) }
     }
 
     private val sim get() = controller.state.value
@@ -70,6 +73,14 @@ class SimulatorScreenTest {
     private fun click(tag: String) = compose.onNodeWithTag(tag).performScrollTo().performClick()
     private fun slide(tag: String, v: Float) =
         compose.onNodeWithTag(tag).performScrollTo().performSemanticsAction(SemanticsActions.SetProgress) { it(v) }
+
+    @Test fun `fake server failure scenarios`() {
+        click("sim_fake_412"); click("sim_fake_500"); click("sim_fake_503")
+        assertEquals(listOf("arm=CONFLICT_412", "arm=PROBLEM_500", "arm=UNAVAILABLE_503"), calls)
+        compose.onNodeWithTag("sim_fake_armed").performScrollTo().assertTextContains("UNAVAILABLE_503", substring = true)
+    }
+
+    @Test fun `fake member features switch`() { click("sim_fake_member_features"); assertEquals(listOf("member=false"), calls) }
 
     @Test fun `inject impact`() { click("sim_impact"); assertEquals(listOf("impact"), calls) }
     @Test fun `use simulated dongle`() { click("sim_use_simulated"); assertEquals(listOf("use=true"), calls) }

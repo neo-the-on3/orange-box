@@ -80,7 +80,7 @@ internal object FakeMemberData {
             maxSpeedKmh = trips.mapNotNull { it.maxSpeedKmh }.maxOrNull(),
             drivingScore = drivingScore(trips), level = level(all),
             scoreStars = if (trips.isEmpty()) null else ScoreStarsDto(
-                harshDriving = (5 - harsh * 100.0 / max(km, 1.0)).roundToInt().coerceIn(0, 5),
+                harshDriving = (5 - harsh * 50.0 / max(km, 1.0)).roundToInt().coerceIn(0, 5),
                 idling = stars(share { it.idleTimeS }, goodIsHigh = false),
                 normalSpeed = stars(1 - share { it.overSpeedTimeS } - share { it.idleTimeS }, goodIsHigh = true),
                 ecoSpeed = stars(share { it.ecoSpeedTimeS }, goodIsHigh = true),

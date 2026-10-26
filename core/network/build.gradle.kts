@@ -12,4 +12,6 @@ dependencies {
 
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    // Parses docs/backend/openapi-v2.yaml so Fake payloads are checked against its schemas (#66). Tests only.
+    testImplementation(libs.snakeyaml)
 }

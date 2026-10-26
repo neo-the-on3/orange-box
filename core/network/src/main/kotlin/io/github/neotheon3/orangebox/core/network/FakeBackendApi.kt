@@ -309,7 +309,7 @@ class FakeBackendApi(
 
     private fun profileLocked(): ProfileDto = profile ?: clock().let { now ->
         ProfileDto(
-            id = "fake-member", displayName = "You (Fake)", email = "driver@example.com", createdAt = now, updatedAt = now,
+            id = "fake-member", displayName = "Fake driver", email = "driver@example.com", createdAt = now, updatedAt = now,
             countryCode = "IN", rankingOptIn = false, authProvider = "email_otp",
         ).also { profile = it }
     }
@@ -393,7 +393,12 @@ class FakeBackendApi(
             )
         }
 
-    private fun ledgerLocked() = FakeMemberData.ledger(profileLocked().createdAt, FakeMemberData.completed(state.trips.values.map { it.dto }))
+    private fun ledgerLocked(): List<PointsLedgerEntryDto> {
+        val trips = FakeMemberData.completed(state.trips.values.map { it.dto })
+        // Joined before the first trip (trips may have been seeded or uploaded before the profile was first read).
+        val joined = listOfNotNull(profileLocked().createdAt, trips.minOfOrNull { it.startedAt }).min().minusSeconds(3600)
+        return FakeMemberData.ledger(joined, trips)
+    }
 
     private fun pointsLocked() = FakeMemberData.balance(ledgerLocked())
 
