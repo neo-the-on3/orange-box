@@ -25,6 +25,7 @@ class OrangeBoxApplication : Application() {
     @Inject lateinit var appVisibility: io.github.neotheon3.orangebox.crash.AppVisibility
     @Inject lateinit var alertMonitor: io.github.neotheon3.orangebox.core.driving.alerts.AlertMonitor
     @Inject lateinit var syncScheduler: io.github.neotheon3.orangebox.sync.SyncScheduler
+    @Inject lateinit var backendAccount: io.github.neotheon3.orangebox.sync.AppBackendAccount
 
     override fun onCreate() {
         AndroidLogSink.install(debug = BuildConfig.DEBUG)
@@ -44,6 +45,7 @@ class OrangeBoxApplication : Application() {
         alertMonitor.install()
         // Optional backend sync (M9): only scheduled in Fake / Remote; Off cancels it and makes no requests.
         syncScheduler.install(appScope)
+        backendAccount.install()
         appScope.launch {
             backendConfig.config.map { it.mode }.distinctUntilChanged().collect {
                 OrangeLog.i(OrangeLog.Areas.BACKEND, "mode", "mode" to it.wireName)

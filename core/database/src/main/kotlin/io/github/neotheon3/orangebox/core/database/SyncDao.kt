@@ -107,6 +107,26 @@ interface SyncDao {
     @Upsert suspend fun putState(row: SyncStateEntity)
     @Query("DELETE FROM sync_state WHERE `key` = :key") suspend fun deleteState(key: String)
 
+    @Query("DELETE FROM trips WHERE id IN (SELECT tripId FROM trip_sync WHERE remoteOrigin = 1)") suspend fun deleteRemoteTrips()
+    @Query("DELETE FROM trip_sync") suspend fun clearTripSync()
+    @Query("DELETE FROM vehicle_sync") suspend fun clearVehicleSync()
+    @Query("DELETE FROM local_trip_deletions") suspend fun clearLocalDeletions()
+    @Query("DELETE FROM sync_state") suspend fun clearSyncState()
+
+    /**
+     * Sign-out: forget everything this device knew about the server account (tokens, ids, queued uploads) and
+     * the trips pulled from it, so another account starts clean. Trips recorded here are kept and upload again
+     * to whoever signs in next.
+     */
+    @Transaction
+    suspend fun forgetServer() {
+        deleteRemoteTrips()
+        clearTripSync()
+        clearVehicleSync()
+        clearLocalDeletions()
+        clearSyncState()
+    }
+
     /** Deletes a trip on this device and remembers it for the sync (`DELETE /v1/trips/{id}`, never re-uploaded). */
     @Transaction
     suspend fun deleteTripHere(clientTripId: String, nowMillis: Long) {
