@@ -127,6 +127,8 @@ class DiagnosticsRepositoryTest {
         reporting.clear() as ClearResult.Cleared
         val (cleared, after) = readings.drop(1)
         assertEquals(DtcReading.Kind.CLEARED, cleared.kind)
+        assertNull("MIL is unknown on a cleared report", cleared.milOn)
+        assertNull("permanent codes are left out", cleared.permanent)
         assertEquals(listOf("P0300"), cleared.stored)
         assertEquals(listOf("P0171"), cleared.pending)
         assertEquals(DtcReading.Kind.READ, after.kind)
@@ -156,5 +158,35 @@ class DiagnosticsRepositoryTest {
         sim.update { it.copy(connectionFailure = true) }
         assertTrue(repo.scan() is ScanResult.Failed)
         assertFalse(repo.busy.value)
+    }
+
+    @Test fun `clearing without a recent read reads first, so the cleared report lists current codes`() = runTest {
+        val readings = mutableListOf<DtcReading>()
+        var now = 42_000L
+        val reporting = ObdDiagnosticsRepository(connection, history, FakeVehicleRepository(), telemetry, DtcReportSink { readings += it })
+            .apply { clock = { now } }
+        sim.injectDtc("P0300")
+        connect()
+        reporting.scan() // an old read, before P0171 showed up
+        sim.addDtc("P0171", DtcList.PENDING)
+        now += ObdDiagnosticsRepository.FRESH_READ_MILLIS + 1
+        reporting.clear() as ClearResult.Cleared
+        val kinds = readings.map { it.kind }
+        assertEquals(listOf(DtcReading.Kind.READ, DtcReading.Kind.READ, DtcReading.Kind.CLEARED, DtcReading.Kind.READ), kinds)
+        val cleared = readings[2]
+        assertEquals(listOf("P0300"), cleared.stored)
+        assertEquals(listOf("P0171"), cleared.pending)
+        assertEquals("readAt = when the clear was acknowledged", now, cleared.atMillis)
+    }
+
+    @Test fun `a recent read isn't repeated before a clear`() = runTest {
+        val readings = mutableListOf<DtcReading>()
+        val reporting = ObdDiagnosticsRepository(connection, history, FakeVehicleRepository(), telemetry, DtcReportSink { readings += it })
+            .apply { clock = { 42_000L } }
+        sim.injectDtc("P0300")
+        connect()
+        reporting.scan()
+        reporting.clear()
+        assertEquals(listOf(DtcReading.Kind.READ, DtcReading.Kind.CLEARED, DtcReading.Kind.READ), readings.map { it.kind })
     }
 }
