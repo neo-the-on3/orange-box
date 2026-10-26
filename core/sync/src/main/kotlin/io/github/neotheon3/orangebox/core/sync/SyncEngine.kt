@@ -220,9 +220,19 @@ class SyncEngine(
 
     // --- push ---
 
+    /**
+     * `DELETE /v1/trips/{id}` for trips deleted here (`404` counts as done). A trip deleted while its upload's
+     * response was lost has no server id yet: the pending batch is replayed with the same `Idempotency-Key`
+     * first, so the stored response gives the id to delete.
+     */
     private suspend fun pushDeletions() {
-        for (d in store.localDeletions().filter { !it.pushed }) {
-            d.serverId?.let { api.deleteTrip(it) }
+        val unpushed = store.localDeletions().filter { !it.pushed }
+        if (unpushed.isEmpty()) return
+        val pending = store.pendingTripBatch()
+        val noId = unpushed.filter { it.serverId == null }.map { it.clientTripId }.toSet()
+        val replayed = if (pending != null && pending.trips.any { it.clientTripId in noId }) sendBatch(pending).serverIds else emptyMap()
+        for (d in unpushed) {
+            (d.serverId ?: replayed[d.clientTripId])?.let { api.deleteTrip(it) }
             store.markLocalDeletionPushed(d.clientTripId)
         }
     }
@@ -279,36 +289,46 @@ class SyncEngine(
         while (true) {
             val batch = store.pendingTripBatch() ?: nextBatch(attempted) ?: return
             attempted += batch.trips.map { it.clientTripId }
-            val result = try {
-                api.uploadTrips(TripBatchDto(batch.trips), batch.idempotencyKey)
-            } catch (e: ApiError.Http) {
-                if (e.status != 422) throw e
-                rejectInvalid(batch, e)
-                attempted -= batch.trips.map { it.clientTripId }.toSet() - rejectedIn(batch, e)
-                store.setPendingTripBatch(null) // the rest goes in a fresh batch with a fresh key
-                continue
-            }
-            val sent = batch.trips.associateBy { it.clientTripId }
-            for (item in result.results) {
-                val trip = sent[item.clientId] ?: continue
-                when {
-                    item.accepted && item.id != null -> {
-                        store.markUploaded(item.clientId, item.id!!, trip.snapshotAt)
-                        report = report.copy(uploaded = report.uploaded + 1)
-                    }
-                    item.problem?.code == ApiError.CODE_TRIP_DELETED -> store.deleteTripLocally(item.clientId)
-                    item.problem?.code == ApiError.CODE_VEHICLE_NOT_FOUND -> {
-                        // The server lost or never had the vehicle: re-create it next run.
-                        store.vehicles().firstOrNull { it.serverId == trip.vehicleId }?.let { store.setVehicleServerId(it.clientVehicleId, null) }
-                    }
-                    else -> {
-                        store.markRejected(item.clientId, item.problem?.code)
-                        report = report.copy(rejected = report.rejected + 1)
-                    }
+            val retry = sendBatch(batch).retry
+            attempted -= retry
+        }
+    }
+
+    private class BatchOutcome(val serverIds: Map<String, String>, val retry: Set<String> = emptySet())
+
+    /** Sends (or replays, with its stored key) [batch] and applies the per-trip results. */
+    private suspend fun sendBatch(batch: PendingTripBatch): BatchOutcome {
+        val result = try {
+            api.uploadTrips(TripBatchDto(batch.trips), batch.idempotencyKey)
+        } catch (e: ApiError.Http) {
+            if (e.status != 422) throw e
+            rejectInvalid(batch, e)
+            store.setPendingTripBatch(null) // the rest goes in a fresh batch with a fresh key
+            return BatchOutcome(emptyMap(), retry = batch.trips.map { it.clientTripId }.toSet() - rejectedIn(batch, e))
+        }
+        val sent = batch.trips.associateBy { it.clientTripId }
+        val ids = mutableMapOf<String, String>()
+        for (item in result.results) {
+            val trip = sent[item.clientId] ?: continue
+            when {
+                item.accepted && item.id != null -> {
+                    ids[item.clientId] = item.id!!
+                    store.markUploaded(item.clientId, item.id!!, trip.snapshotAt)
+                    report = report.copy(uploaded = report.uploaded + 1)
+                }
+                item.problem?.code == ApiError.CODE_TRIP_DELETED -> store.deleteTripLocally(item.clientId)
+                item.problem?.code == ApiError.CODE_VEHICLE_NOT_FOUND -> {
+                    // The server lost or never had the vehicle: re-create it next run.
+                    store.vehicles().firstOrNull { it.serverId == trip.vehicleId }?.let { store.setVehicleServerId(it.clientVehicleId, null) }
+                }
+                else -> {
+                    store.markRejected(item.clientId, item.problem?.code)
+                    report = report.copy(rejected = report.rejected + 1)
                 }
             }
-            store.setPendingTripBatch(null)
         }
+        store.setPendingTripBatch(null)
+        return BatchOutcome(ids)
     }
 
     /** The trips a batch-level `422` points at (`/trips/<i>`); every trip of the batch when it points nowhere. */

@@ -355,4 +355,33 @@ class SyncEngineTest {
         assertEquals(TripUploadDto.STATE_COMPLETED, copy.state)
         assertEquals(Instant.parse("2026-10-20T11:00:00Z"), copy.snapshotAt)
     }
+
+    @Test fun `a trip deleted while its batch response was lost - the batch is replayed with its key, then DELETE`() = runTest {
+        val car = phone.addVehicle()
+        val t = phone.record(car)
+        engine.run() // vehicle and trip
+        val again = phone.record(car)
+        // The batch reaches the server but its response is lost: it stays pending, the trip has no server id.
+        val pending = PendingTripBatch("lost-key", listOf(phone.uploadOf(again)!!))
+        server.uploadTrips(io.github.neotheon3.orangebox.core.network.TripBatchDto(pending.trips), pending.idempotencyKey)
+        phone.pending = pending
+        phone.deleteHere(again)
+        assertNull(phone.deletions.getValue(again).serverId)
+
+        engine.run()
+        assertFalse("deleted on the server too", again in server.trips.map { it.clientTripId })
+        assertTrue(t in server.trips.map { it.clientTripId })
+        assertTrue(phone.deletions.getValue(again).pushed)
+        assertNull(phone.pending)
+    }
+
+    @Test fun `deleting a trip already gone on the server counts as done`() = runTest {
+        val car = phone.addVehicle()
+        val t = phone.record(car)
+        engine.run()
+        server.deleteTripElsewhere(t)
+        phone.deleteHere(t)
+        engine.run()
+        assertTrue(phone.deletions.getValue(t).pushed)
+    }
 }
