@@ -397,6 +397,9 @@ func toTrip(r dbgen.Trip) store.Trip {
 			AccelTimeS:        r.AccelTimeS,
 			EcoSpeedTimeS:     r.EcoSpeedTimeS,
 			OverSpeedTimeS:    r.OverSpeedTimeS,
+			OverSpeedCount:    r.OverSpeedCount,
+			FuelCutCount:      r.FuelCutCount,
+			EndReason:         r.EndReason,
 			SpeedBands:        r.SpeedBands,
 			EcoScore:          r.EcoScore,
 			SafetyScore:       r.SafetyScore,
@@ -545,6 +548,7 @@ func upsertParams(member uuid.UUID, it store.TripUpload) dbgen.UpsertTripParams 
 		EcoScore: f.EcoScore, SafetyScore: f.SafetyScore, BatteryMaxV: f.BatteryMaxV,
 		BatteryAvgV: f.BatteryAvgV, CoolantMaxC: f.CoolantMaxC, CoolantAvgC: f.CoolantAvgC,
 		Dtc: f.Dtc, Simulated: f.Simulated, App: f.App,
+		OverSpeedCount: f.OverSpeedCount, FuelCutCount: f.FuelCutCount, EndReason: f.EndReason,
 	}
 }
 

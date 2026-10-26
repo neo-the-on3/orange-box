@@ -841,3 +841,40 @@ func TestTripReplayAfterDelete(t *testing.T) {
 		t.Errorf("the other items changed: %v, was %v", got[1:], orig[1:])
 	}
 }
+
+// TestTripSummaryDraft9: overSpeedCount, fuelCutCount and endReason (spec
+// draft.9) are stored and returned; endReason is an open set but must be a
+// lower-case identifier of at most 32 characters.
+func TestTripSummaryDraft9(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("summary9")
+	vehicle := m.vehicle()
+	id := uuid.New()
+	trip := strings.Replace(tripJSON(id, vehicle, "completed", "2026-10-23T10:00:00Z", "2026-10-23T10:30:00Z"),
+		`"distanceKm"`, `"overSpeedCount":3,"fuelCutCount":17,"endReason":"some_future_reason","distanceKm"`, 1)
+	rs := m.upload(trip)
+	if len(rs) != 1 || rs[0]["status"] != "created" {
+		t.Fatalf("upload: %v", rs)
+	}
+	r := m.call(http.MethodGet, "/v1/trips/"+rs[0]["id"].(string), "")
+	if v := r.json(t); r.status != http.StatusOK || v["overSpeedCount"] != float64(3) || v["fuelCutCount"] != float64(17) ||
+		v["endReason"] != "some_future_reason" {
+		t.Fatalf("get: %d %s", r.status, r.body)
+	}
+	// Absent when not sent.
+	rs = m.upload(tripJSON(uuid.New(), vehicle, "in_progress", "2026-10-23T11:00:00Z", "2026-10-23T11:05:00Z"))
+	r = m.call(http.MethodGet, "/v1/trips/"+rs[0]["id"].(string), "")
+	for _, k := range []string{"overSpeedCount", "fuelCutCount", "endReason"} {
+		if _, present := r.json(t)[k]; present {
+			t.Errorf("%s present when not sent: %s", k, r.body)
+		}
+	}
+	for _, bad := range []string{`"endReason":"Engine Off"`, `"endReason":"` + strings.Repeat("x", 33) + `"`, `"fuelCutCount":-1`} {
+		body := batch(strings.Replace(tripJSON(uuid.New(), vehicle, "completed", "2026-10-23T12:00:00Z", "2026-10-23T12:30:00Z"),
+			`"distanceKm"`, bad+`,"distanceKm"`, 1))
+		if r := m.call(http.MethodPost, "/v1/trips/batch", body, "Idempotency-Key", uuid.NewString()); r.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d %s", bad, r.status, r.body)
+		}
+	}
+}

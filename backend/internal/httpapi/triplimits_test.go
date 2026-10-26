@@ -40,6 +40,7 @@ func maxTrip(clientID uuid.UUID, vehicle, started string) map[string]any {
 		},
 		"durationS": 2_000_000_000, "maxRpm": 2_000_000_000, "harshAccelCount": 2_000_000_000,
 		"harshBrakeCount": 2_000_000_000, "harshStartCount": 2_000_000_000, "harshStopCount": 2_000_000_000,
+		"overSpeedCount": 2_000_000_000, "fuelCutCount": 2_000_000_000, "endReason": "e" + strings.Repeat("x", 31),
 	}
 	for _, f := range []string{"distanceKm", "engineDistanceKm", "maxSpeedKmh", "avgSpeedKmh", "fuelUsedL", "fuelEconomyKmPerL",
 		"fuelCutTimeS", "idleTimeS", "warmUpTimeS", "accelTimeS", "ecoSpeedTimeS", "overSpeedTimeS", "ecoScore", "safetyScore",

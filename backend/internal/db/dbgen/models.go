@@ -120,6 +120,9 @@ type Trip struct {
 	UpdatedAt         time.Time
 	DeletedAt         *time.Time
 	WriterXid         uint64
+	OverSpeedCount    *int64
+	FuelCutCount      *int64
+	EndReason         *string
 }
 
 type TripEvent struct {

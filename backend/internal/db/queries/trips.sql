@@ -20,7 +20,8 @@ INSERT INTO trips (
     harsh_accel_count, harsh_brake_count, harsh_start_count, harsh_stop_count,
     fuel_used_l, fuel_economy_km_per_l, fuel_cut_time_s, idle_time_s, warm_up_time_s,
     accel_time_s, eco_speed_time_s, over_speed_time_s, speed_bands, eco_score, safety_score,
-    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app, updated_at
+    battery_max_v, battery_avg_v, coolant_max_c, coolant_avg_c, dtc, simulated, app,
+    over_speed_count, fuel_cut_count, end_reason, updated_at
 ) VALUES (
     @id, @member_id, @client_trip_id, @vehicle_id::uuid, @state::text, @started_at::timestamptz,
     sqlc.narg(ended_at), @snapshot_at::timestamptz,
@@ -33,6 +34,7 @@ INSERT INTO trips (
     sqlc.narg(speed_bands), sqlc.narg(eco_score), sqlc.narg(safety_score),
     sqlc.narg(battery_max_v), sqlc.narg(battery_avg_v), sqlc.narg(coolant_max_c),
     sqlc.narg(coolant_avg_c), sqlc.narg(dtc), @simulated::boolean, sqlc.narg(app),
+    sqlc.narg(over_speed_count), sqlc.narg(fuel_cut_count), sqlc.narg(end_reason),
     date_trunc('milliseconds', clock_timestamp())
 )
 ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
@@ -68,6 +70,9 @@ ON CONFLICT (member_id, client_trip_id) DO UPDATE SET
     coolant_avg_c         = EXCLUDED.coolant_avg_c,
     dtc                   = EXCLUDED.dtc,
     simulated             = EXCLUDED.simulated,
+    over_speed_count      = EXCLUDED.over_speed_count,
+    fuel_cut_count        = EXCLUDED.fuel_cut_count,
+    end_reason            = EXCLUDED.end_reason,
     app                   = EXCLUDED.app,
     updated_at            = GREATEST(date_trunc('milliseconds', clock_timestamp()),
         trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END)
@@ -181,6 +186,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
+    over_speed_count = NULL, fuel_cut_count = NULL, end_reason = NULL,
     updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()),
         trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END),
     deleted_at = now()
@@ -200,6 +206,7 @@ UPDATE trips SET
     over_speed_time_s = NULL, speed_bands = NULL, eco_score = NULL, safety_score = NULL,
     battery_max_v = NULL, battery_avg_v = NULL, coolant_max_c = NULL, coolant_avg_c = NULL,
     dtc = NULL, simulated = NULL, app = NULL, points_awarded = NULL,
+    over_speed_count = NULL, fuel_cut_count = NULL, end_reason = NULL,
     updated_at = GREATEST(date_trunc('milliseconds', clock_timestamp()),
         trips.updated_at + CASE WHEN trips.writer_xid = pg_current_xact_id() THEN interval '0' ELSE interval '1 millisecond' END),
     deleted_at = now()
