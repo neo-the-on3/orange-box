@@ -2,6 +2,7 @@ package io.github.neotheon3.orangebox.core.database
 
 import io.github.neotheon3.orangebox.core.model.VehicleFuel
 import io.github.neotheon3.orangebox.core.network.BackendJson
+import io.github.neotheon3.orangebox.core.network.DtcReportCreateDto
 import io.github.neotheon3.orangebox.core.network.EventDto
 import io.github.neotheon3.orangebox.core.network.SampleDto
 import io.github.neotheon3.orangebox.core.network.TelemetryBatchDto
@@ -12,6 +13,7 @@ import io.github.neotheon3.orangebox.core.network.VehicleCreateDto
 import io.github.neotheon3.orangebox.core.sync.LocalDeletion
 import io.github.neotheon3.orangebox.core.sync.PendingTelemetryBatch
 import io.github.neotheon3.orangebox.core.sync.PendingTripBatch
+import io.github.neotheon3.orangebox.core.sync.QueuedDtcReport
 import io.github.neotheon3.orangebox.core.sync.TelemetryChunk
 import io.github.neotheon3.orangebox.core.sync.TelemetryTrip
 import io.github.neotheon3.orangebox.core.sync.SyncStore
@@ -263,7 +265,44 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long) : S
         )
     }
 
+    // --- DTC reports (#67), queued in sync_state so sign-out (forgetServer) drops them with the rest ---
+
+    @Serializable private data class StoredDtcReport(val clientVehicleId: String, val report: DtcReportCreateDto)
+
+    /**
+     * Queues a DTC read or clear of the local vehicle [vehicleId] for the next sync. Returns false when the vehicle
+     * doesn't exist. Keeps at most [MAX_QUEUED_DTC_REPORTS], dropping the oldest.
+     */
+    suspend fun enqueueDtcReport(vehicleId: Long, report: DtcReportCreateDto): Boolean {
+        val clientVehicleId = dao.clientVehicleIdOf(vehicleId) ?: return false
+        dao.putState(
+            SyncStateEntity(KEY_DTC_REPORT + report.clientReportId, BackendJson.encodeToString(StoredDtcReport.serializer(), StoredDtcReport(clientVehicleId, report))),
+        )
+        dtcReports().dropLast(MAX_QUEUED_DTC_REPORTS).forEach { removeDtcReport(it.report.clientReportId) }
+        return true
+    }
+
+    /** Oldest first; drops unreadable rows, reports older than the backlog bound and those of deleted vehicles. */
+    override suspend fun dtcReports(): List<QueuedDtcReport> {
+        val cutoff = clock() - TELEMETRY_BACKLOG_DAYS * DAY_MILLIS
+        return dao.stateKeys(KEY_DTC_REPORT).mapNotNull { key ->
+            val stored = dao.state(key)?.let { runCatching { BackendJson.decodeFromString(StoredDtcReport.serializer(), it) }.getOrNull() }
+            if (stored == null || stored.report.readAt.toEpochMilli() < cutoff || dao.vehicleByClientId(stored.clientVehicleId) == null) {
+                dao.deleteState(key)
+                null
+            } else {
+                QueuedDtcReport(stored.clientVehicleId, stored.report)
+            }
+        }.sortedWith(compareBy({ it.report.readAt }, { it.report.clientReportId }))
+    }
+
+    override suspend fun removeDtcReport(clientReportId: String) = dao.deleteState(KEY_DTC_REPORT + clientReportId)
+
     companion object {
+        const val KEY_DTC_REPORT = "dtc_report:"
+
+        /** Offline bound on queued DTC reports (a read per drive start is far below it). */
+        const val MAX_QUEUED_DTC_REPORTS = 100
         const val KEY_TELEMETRY = "telemetry:"
         const val KEY_PENDING_TELEMETRY = "pending_telemetry_batch"
         private const val DONE = "done|"

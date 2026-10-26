@@ -64,6 +64,7 @@ interface SyncDao {
     @androidx.room.Update suspend fun updateTrip(trip: TripEntity)
     @Query("DELETE FROM trips WHERE clientTripId = :clientTripId") suspend fun deleteTrip(clientTripId: String): Int
 
+    @Query("SELECT clientVehicleId FROM vehicles WHERE id = :id") suspend fun clientVehicleIdOf(id: Long): String?
     @Query("SELECT * FROM vehicles WHERE clientVehicleId = :clientVehicleId") suspend fun vehicleByClientId(clientVehicleId: String): VehicleEntity?
     @Query("SELECT * FROM vehicle_sync WHERE vehicleId = :vehicleId") suspend fun vehicleSync(vehicleId: Long): VehicleSyncEntity?
     @Query("SELECT vehicleId FROM vehicle_sync WHERE serverId = :serverId") suspend fun vehicleIdByServerId(serverId: String): Long?
