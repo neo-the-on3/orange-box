@@ -212,3 +212,70 @@ enum class SyncWindowReason(val wire: String?) {
             entries.firstOrNull { it.wire != null && it.wire == value?.trim()?.lowercase() } ?: UNKNOWN
     }
 }
+
+// --- Telemetry (POST /v1/telemetry/batches) ---
+
+@Serializable data class AccelDto(val x: Double, val y: Double, val z: Double)
+
+/** `Sample`: one OBD/location reading. Only `t` is required; absent values are left out of the JSON. */
+@Serializable data class SampleDto(
+    val t: UtcInstant,
+    val lat: Double? = null,
+    val lon: Double? = null,
+    val speedKmh: Double? = null,
+    val rpm: Double? = null,
+    val mafGps: Double? = null,
+    val mapKpa: Double? = null,
+    val intakeAirC: Double? = null,
+    val coolantC: Double? = null,
+    val engineLoadPct: Double? = null,
+    val throttlePct: Double? = null,
+    val fuelLevelPct: Double? = null,
+    val batteryV: Double? = null,
+    val mil: Boolean? = null,
+    val accel: AccelDto? = null,
+    /** Extra mode 01 values keyed by hex PID (`"0x0B"`), already scaled. */
+    val pids: Map<String, Double>? = null,
+)
+
+/** `Event`. [clientEventId] is assigned when the event is recorded and resent unchanged on every upload. */
+@Serializable data class EventDto(
+    val t: UtcInstant,
+    /** Spec `EventType` (kept as a string). */
+    val type: String,
+    val clientEventId: String? = null,
+    val active: Boolean? = null,
+    val lat: Double? = null,
+    val lon: Double? = null,
+    val dtc: String? = null,
+    val value: Double? = null,
+)
+
+/** `TelemetryBatch`: samples and events of one trip, de-duplicated by [clientBatchId]. */
+@Serializable data class TelemetryBatchDto(
+    val clientBatchId: String,
+    val clientTripId: String,
+    /** The vehicle's server id. */
+    val vehicleId: String,
+    val samples: List<SampleDto> = emptyList(),
+    val events: List<EventDto> = emptyList(),
+)
+
+/** `TelemetryBatchAck` (`202`). */
+@Serializable data class TelemetryBatchAckDto(
+    val clientBatchId: String,
+    /** accepted, duplicate or trip_deleted (kept as a string). */
+    val status: String,
+    val acceptedSamples: Int,
+    val acceptedEvents: Int,
+    val droppedSamples: Int? = null,
+    val droppedEvents: Int? = null,
+) {
+    val tripDeleted: Boolean get() = status == STATUS_TRIP_DELETED
+
+    companion object {
+        const val STATUS_ACCEPTED = "accepted"
+        const val STATUS_DUPLICATE = "duplicate"
+        const val STATUS_TRIP_DELETED = "trip_deleted"
+    }
+}

@@ -155,6 +155,37 @@ class FakeBackendApi(
         )
     }
 
+    /** Telemetry stored per `clientTripId`, de-duplicated like the spec says (samples by `t`, events by id or key). */
+    data class StoredTelemetry(val samples: Map<Instant, SampleDto> = emptyMap(), val events: List<EventDto> = emptyList())
+
+    private val telemetryByTrip = mutableMapOf<String, StoredTelemetry>()
+    private val telemetryBatches = mutableMapOf<String, TelemetryBatchAckDto>()
+
+    val telemetry: Map<String, StoredTelemetry> get() = telemetryByTrip.toMap()
+
+    /** Batches larger than this many samples + events answer `413` (to test splitting). */
+    var maxTelemetryItems: Int = BackendApi.MAX_SAMPLES_PER_BATCH + BackendApi.MAX_EVENTS_PER_BATCH
+
+    override suspend fun uploadTelemetry(batch: TelemetryBatchDto, idempotencyKey: String) = op("POST /v1/telemetry/batches") {
+        telemetryBatches[batch.clientBatchId]?.let { return@op it.copy(status = TelemetryBatchAckDto.STATUS_DUPLICATE) }
+        if (batch.samples.size + batch.events.size > maxTelemetryItems) throw http(413, "payload_too_large")
+        if (batch.clientTripId in state.tombstones) {
+            return@op TelemetryBatchAckDto(batch.clientBatchId, TelemetryBatchAckDto.STATUS_TRIP_DELETED, 0, 0)
+        }
+        if (state.vehicles.values.none { it.id == batch.vehicleId }) throw http(404, ApiError.CODE_VEHICLE_NOT_FOUND)
+        val stored = telemetryByTrip[batch.clientTripId] ?: StoredTelemetry()
+        val samples = batch.samples.distinctBy { it.t.toEpochMilli() }
+        fun EventDto.key() = listOf(t.toEpochMilli(), type, active ?: true, dtc)
+        val events = batch.events.distinctBy { it.key() }.filterNot { e ->
+            stored.events.any { s -> (e.clientEventId != null && s.clientEventId == e.clientEventId) || s.key() == e.key() }
+        }
+        telemetryByTrip[batch.clientTripId] = StoredTelemetry(stored.samples + samples.associateBy { it.t }, stored.events + events)
+        TelemetryBatchAckDto(
+            batch.clientBatchId, TelemetryBatchAckDto.STATUS_ACCEPTED, samples.size, events.size,
+            droppedSamples = batch.samples.size - samples.size, droppedEvents = batch.events.size - batch.events.distinctBy { it.key() }.size,
+        ).also { telemetryBatches[batch.clientBatchId] = it }
+    }
+
     override suspend fun deleteTrip(serverId: String) = op("DELETE /v1/trips/$serverId") {
         val trip = state.trips.values.firstOrNull { it.dto.id == serverId } ?: return@op // 404 counts as done
         deleteLocked(trip.dto.clientTripId)
