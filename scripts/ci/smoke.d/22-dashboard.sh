@@ -15,12 +15,12 @@ rotate() { adb shell settings put system accelerometer_rotation 0; adb shell set
 
 tap_attr text "Open dashboard" dash-open
 wait_for_regex 'content-desc="End driving"' dash-portrait
-wait_for_regex 'content-desc="Speed [1-9][0-9]* km/h"' dash-portrait
+wait_for_regex 'content-desc="Speed [1-9][0-9]* kilometres per hour"' dash-portrait
 grep -Eq 'content-desc="Engine speed [1-9][0-9]* rpm"' "$OUT/dash-portrait.xml"
 shot 22-dashboard-portrait
 
 rotate 1
-wait_for_regex 'content-desc="Speed [1-9][0-9]* km/h"' dash-landscape
+wait_for_regex 'content-desc="Speed [1-9][0-9]* kilometres per hour"' dash-landscape
 grep -q 'content-desc="End driving"' "$OUT/dash-landscape.xml"
 shot 23-dashboard-landscape
 
@@ -29,7 +29,7 @@ wait_for_regex 'content-desc="Accel Pedal Position, [0-9]+ %"' dash-detail
 sleep 1 # 500 ms transition
 shot 23-dashboard-landscape-detail
 tap_attr text "Detailed Info." dash-toggle-back
-wait_for_regex 'content-desc="Speed [0-9]+ km/h"' dash-landscape-back
+wait_for_regex 'content-desc="Speed [0-9]+ kilometres per hour"' dash-landscape-back
 
 rotate 0
 wait_for_regex 'content-desc="End driving"' dash-portrait-back
@@ -63,6 +63,6 @@ wait_for_regex 'content-desc="End driving"' dash-resumed 10
 sleep 6 # past the 5 s undo window: the link must still be up
 adb shell input keyevent KEYCODE_BACK
 wait_for_text "Live data" dash-home
-wait_for_regex 'content-desc="Speed [0-9]+ km/h"' dash-home-live
+wait_for_regex 'content-desc="Speed [0-9]+ kilometres per hour"' dash-home-live
 grep -q 'text="Connected"' "$OUT/dash-home-live.xml" || { echo "drive ended despite Undo" >&2; exit 1; }
 echo "dashboard smoke OK"
