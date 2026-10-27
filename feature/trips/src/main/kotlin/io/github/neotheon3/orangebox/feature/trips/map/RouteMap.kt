@@ -1,5 +1,7 @@
 package io.github.neotheon3.orangebox.feature.trips.map
 
+import androidx.compose.ui.res.stringResource
+import io.github.neotheon3.orangebox.feature.trips.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -98,7 +100,7 @@ fun RouteMap(
 private fun Attribution(modifier: Modifier) {
     val uri = LocalUriHandler.current
     Text(
-        MapTiles.ATTRIBUTION,
+        stringResource(R.string.map_attribution),
         fontSize = 11.sp,
         color = Color(0xFF202124),
         modifier = modifier

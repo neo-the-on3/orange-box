@@ -72,7 +72,7 @@ internal fun GroupSheet(
             codes.forEach { CodeRow(it) }
             HorizontalDivider(color = DashboardColors.CardRim)
             Text(DtcCatalog.groupDescription(group), color = Secondary, fontSize = 14.sp)
-            Text(DtcCatalog.RECOMMENDATION, color = Secondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.dtc_recommendation), color = Secondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             val earlier = history.filter { !it.isOpen && (DtcGroup.of(it.code) ?: DtcGroup.POWERTRAIN) == group }.take(10)
             if (earlier.isNotEmpty()) {
                 Text(stringResource(R.string.dtc_earlier), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))

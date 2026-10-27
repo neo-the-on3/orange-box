@@ -82,4 +82,5 @@
     <string name="prompt_warning_mil">The check-engine lamp is on.</string>
     <string name="prompt_open_diagnostics">Open Diagnostics</string>
     <string name="prompt_car_scanning">Scanning the car</string>
+    <string name="dtc_recommendation">Car maintenance and inspection recommended.</string>
 </resources>

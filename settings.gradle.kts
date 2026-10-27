@@ -24,6 +24,7 @@ dependencyResolutionManagement {
 rootProject.name = "orange-box"
 
 include(":app")
+include(":lint-rules")
 include(":core:model")
 include(":core:common")
 include(":core:obd")

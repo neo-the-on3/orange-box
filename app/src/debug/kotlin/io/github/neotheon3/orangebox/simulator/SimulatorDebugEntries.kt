@@ -1,3 +1,6 @@
+// Debug-only developer tool (never in release builds): English only, not localised (#73).
+@file:Suppress("HardcodedComposeText")
+
 package io.github.neotheon3.orangebox.simulator
 
 import android.widget.Toast
