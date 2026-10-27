@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.orangebox.android.library)
+    alias(libs.plugins.orangebox.android.compose)
 }
 
 android {
@@ -14,6 +15,10 @@ dependencies {
     api(libs.turbine)
     api(libs.robolectric)
     api(libs.androidx.test.core)
+    // Screen gallery + accessibility checks for Robolectric Compose tests (M10, #71/#72).
+    api(project(":core:designsystem"))
+    api(platform(libs.compose.bom))
+    api(libs.compose.ui.test.junit4)
 }
 
 dependencies {
