@@ -17,8 +17,14 @@ internal fun Project.configureKotlinAndroid(extension: CommonExtension) {
         testOptions.unitTests.isIncludeAndroidResources = true
         // java.time (trip calendar, stats periods) below API 26.
         compileOptions.isCoreLibraryDesugaringEnabled = true
+        // #73: user-visible text only from resources. HardcodedText covers XML; HardcodedComposeText (:lint-rules)
+        // covers Compose code.
+        lint.error += setOf("HardcodedText", "HardcodedComposeText")
     }
-    dependencies { add("coreLibraryDesugaring", libs.lib("android-desugarJdkLibs")) }
+    dependencies {
+        add("coreLibraryDesugaring", libs.lib("android-desugarJdkLibs"))
+        add("lintChecks", project(":lint-rules"))
+    }
     extensions.configure<KotlinBaseExtension> { jvmToolchain(jvm) }
 }
 

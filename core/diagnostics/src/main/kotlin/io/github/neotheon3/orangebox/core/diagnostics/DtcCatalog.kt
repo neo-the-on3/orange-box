@@ -10,7 +10,6 @@ package io.github.neotheon3.orangebox.core.diagnostics
  */
 object DtcCatalog {
     /** Shown under every group in the detail sheet (legacy wording kept: it's a generic recommendation). */
-    const val RECOMMENDATION = "Car maintenance and inspection recommended."
 
     fun describe(code: String): String {
         val c = code.trim().uppercase()

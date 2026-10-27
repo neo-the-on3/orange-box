@@ -97,4 +97,6 @@
     <string name="trips_move_confirm">Move</string>
     <string name="trips_move_cancel">Cancel</string>
     <string name="trips_move_ok">OK</string>
+    <!-- Required by the OpenStreetMap tile usage policy; keep it as is in every language. -->
+    <string name="map_attribution" translatable="false">© OpenStreetMap contributors</string>
 </resources>

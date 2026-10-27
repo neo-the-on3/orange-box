@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 object MapTiles {
     /** The one place the tile source is configured. `{z}/{x}/{y}` slippy-map order. */
     const val URL_TEMPLATE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    const val ATTRIBUTION = "© OpenStreetMap contributors"
     const val COPYRIGHT_URL = "https://www.openstreetmap.org/copyright"
     const val FIX_THE_MAP_URL = "https://www.openstreetmap.org/fixthemap"
     const val MAX_ZOOM = 18
