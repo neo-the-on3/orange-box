@@ -11,7 +11,7 @@ tap_attr text "Highway" live-script
 wait_for_regex 'Playing: Highway' live-playing
 shot 20-simulator-highway-playing
 adb shell input keyevent KEYCODE_BACK
-wait_for_regex 'content-desc="Speed [1-9][0-9]* km/h"' live-home
+wait_for_regex 'content-desc="Speed [1-9][0-9]* kilometres per hour"' live-home
 wait_for_regex 'content-desc="Engine speed [1-9][0-9]* rpm"' live-home-rpm
 # The Drive button (#192) moved the card down: the readings row can wrap below the fold, and uiautomator
 # only dumps what is on screen. Scroll a little until it shows.
