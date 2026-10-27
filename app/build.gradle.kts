@@ -49,6 +49,9 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            // #73: en-XA (accented, longer) and ar-XB (right-to-left) pseudo-locales, to spot hard-coded or clipped
+            // text. Pick them in Android 13+ Settings → Apps → Orange Box → Language, or as the device language.
+            isPseudoLocalesEnabled = true
         }
         release {
             isMinifyEnabled = true
@@ -60,6 +63,11 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+    // #73: android:localeConfig generated from the res/values-* folders (Android 13+ per-app language). The
+    // unqualified (default) locale is in res/resources.properties.
+    androidResources {
+        generateLocaleConfig = true
     }
     lint {
         // Keep lint strict for errors; warnings are reported but do not fail the build.
