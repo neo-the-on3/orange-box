@@ -19,7 +19,9 @@ object OrangeBoxColors {
 }
 
 private val LightColors: ColorScheme = lightColorScheme(
-    primary = OrangeBoxColors.Orange,
+    // Burnt orange, not the brand #F57C00: white on #F57C00 and #F57C00 text on white are only 2.7:1 (WCAG AA needs
+    // 4.5:1, #71). #B34700 is 5.5:1 both ways and still reads as Orange Box.
+    primary = OrangeBoxColors.OrangeDark,
     onPrimary = Color.White,
     primaryContainer = Color(0xFFFFDCC2),
     onPrimaryContainer = Color(0xFF2E1500),
@@ -31,7 +33,8 @@ private val LightColors: ColorScheme = lightColorScheme(
 private val DarkColors: ColorScheme = darkColorScheme(
     primary = OrangeBoxColors.OrangeLight,
     onPrimary = Color(0xFF4C2700),
-    primaryContainer = OrangeBoxColors.OrangeDark,
+    // Darker than OrangeDark so its text (#FFDCC2) reaches 4.5:1 (#71).
+    primaryContainer = Color(0xFF8B3A00),
     onPrimaryContainer = Color(0xFFFFDCC2),
     secondary = Color(0xFFE5BFA9),
     tertiary = Color(0xFFC9C893),

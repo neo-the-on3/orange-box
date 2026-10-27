@@ -18,7 +18,7 @@ import org.robolectric.annotation.Config
 class ThemeTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun `light and dark schemes use brand orange`() {
+    @Test fun `light and dark schemes use brand orange (light darkened for contrast, #71)`() {
         var light = Color.Unspecified
         var dark = Color.Unspecified
         compose.setContent {
@@ -26,7 +26,7 @@ class ThemeTest {
             OrangeBoxTheme(darkTheme = true) { dark = MaterialTheme.colorScheme.primary; StatusPill("Backend: Off") }
         }
         compose.onNodeWithText("Backend: Off").assertIsDisplayed()
-        assertEquals(OrangeBoxColors.Orange, light)
+        assertEquals(OrangeBoxColors.OrangeDark, light)
         assertNotEquals(light, dark)
     }
 }

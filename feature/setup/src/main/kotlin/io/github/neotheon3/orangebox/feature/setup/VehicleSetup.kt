@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.feature.setup
 
+import io.github.neotheon3.orangebox.core.designsystem.SegmentLabel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -220,7 +221,7 @@ fun VehicleSetupContent(state: VehicleSetupUiState, onFormChange: (VehicleForm) 
                     shape = SegmentedButtonDefaults.itemShape(i, VehicleSource.entries.size),
                     modifier = Modifier.testTag("vehicle_source_${src.name.lowercase()}"),
                 ) {
-                    Text(stringResource(if (src == VehicleSource.CATALOGUE) R.string.vehicle_from_list else R.string.vehicle_manual))
+                    SegmentLabel(stringResource(if (src == VehicleSource.CATALOGUE) R.string.vehicle_from_list else R.string.vehicle_manual))
                 }
             }
         }

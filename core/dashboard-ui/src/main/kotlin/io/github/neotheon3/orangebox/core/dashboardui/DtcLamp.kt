@@ -18,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -92,10 +94,13 @@ fun DtcLamp(
             Modifier.then(if (faulted) Modifier.clickable(interaction, indication = null, onClick = onClick) else Modifier),
             size = size,
         )
+        // Kept within the lamp's slot and shrunk to fit, so "Transmission" can't run into its neighbours at 200 % (#71).
         BasicText(
             label,
+            modifier = Modifier.widthIn(max = size + 28.dp),
             style = TextStyle(color = DiagnosticsColors.LampCaption, fontSize = 12.sp, textAlign = TextAlign.Center),
             maxLines = 1,
+            autoSize = TextAutoSize.StepBased(minFontSize = with(LocalDensity.current) { 8.dp.toSp() }, maxFontSize = 12.sp, stepSize = 0.5.sp),
         )
     }
 }

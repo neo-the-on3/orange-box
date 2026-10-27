@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.core.dashboardui
 
+import io.github.neotheon3.orangebox.core.model.DistanceUnit
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +52,25 @@ private fun eco(level: Int): LampState = when (level) {
 private fun event(on: Boolean) =
     LampState(on, DashboardColors.Event, stringResource(if (on) R.string.dashboard_state_active else R.string.dashboard_state_off))
 
+/**
+ * What TalkBack reads for the meters (#71): the value with its unit spelled out ("Speed 59 kilometres per hour"),
+ * and "no data" rather than the "---" placeholder.
+ */
+@Composable
+fun spokenRpm(rpm: String): String =
+    if (rpm == DashboardUiState.NO_INT) stringResource(R.string.dashboard_spoken_rpm_none) else stringResource(R.string.dashboard_spoken_rpm, rpm)
+
+@Composable
+fun spokenSpeed(speed: String, unitLabel: String): String {
+    if (speed == DashboardUiState.NO_INT) return stringResource(R.string.dashboard_spoken_speed_none)
+    val unit = when (unitLabel) {
+        DistanceUnit.MI.speedLabel -> stringResource(R.string.dashboard_spoken_unit_mph)
+        DistanceUnit.KM.speedLabel -> stringResource(R.string.dashboard_spoken_unit_kmh)
+        else -> unitLabel
+    }
+    return stringResource(R.string.dashboard_spoken_speed, speed, unit)
+}
+
 /** Left cluster: FUEL-CUT header lamp, RPM meter, COOLANT / BATTERY / ECO lamps. */
 @Composable
 fun RpmCluster(state: DashboardUiState, modifier: Modifier = Modifier, meterMax: TextUnit = DashboardType.MeterMax, compact: Boolean = false) {
@@ -58,7 +78,7 @@ fun RpmCluster(state: DashboardUiState, modifier: Modifier = Modifier, meterMax:
         glow = state.leftGlow, tag = "rpm", modifier = modifier, compact = compact, meterMax = meterMax,
         header = { HeaderLamp(DashboardIcons.FuelDrop, stringResource(R.string.dashboard_fuel_cut), LampState(state.fuelCut, DashboardColors.FuelCut)) },
         value = state.rpm, unit = stringResource(R.string.dashboard_unit_rpm),
-        spoken = stringResource(R.string.dashboard_spoken_rpm, state.rpm),
+        spoken = spokenRpm(state.rpm),
     ) {
         Lamp(DashboardIcons.Coolant, stringResource(R.string.dashboard_coolant), indicator(state.coolant), Modifier.weight(1f))
         Lamp(DashboardIcons.Battery, stringResource(R.string.dashboard_battery), indicator(state.battery), Modifier.weight(1f))
@@ -73,7 +93,7 @@ fun SpeedCluster(state: DashboardUiState, modifier: Modifier = Modifier, meterMa
         glow = state.rightGlow, tag = "speed", modifier = modifier, compact = compact, meterMax = meterMax,
         header = { HeaderLamp(DashboardIcons.OverspeedGauge, stringResource(R.string.dashboard_overspeed), LampState(state.overspeed, DashboardColors.Overspeed)) },
         value = state.speed, unit = state.speedUnit,
-        spoken = stringResource(R.string.dashboard_spoken_speed, state.speed, state.speedUnit),
+        spoken = spokenSpeed(state.speed, state.speedUnit),
     ) {
         Lamp(DashboardIcons.AccelCar, stringResource(R.string.dashboard_accel), event(state.harshAccel), Modifier.weight(1f))
         Lamp(DashboardIcons.BrakeCar, stringResource(R.string.dashboard_brake), event(state.harshBrake), Modifier.weight(1f))
@@ -163,7 +183,7 @@ private fun Chip(icon: androidx.compose.ui.graphics.vector.ImageVector, label: S
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
         Text(
-            label, color = tint, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 1, softWrap = false,
+            label, color = if (state.on) tint else DashboardColors.LampOffText, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 1, softWrap = false,
             fontWeight = if (state.on) FontWeight.Black else FontWeight.Bold,
         )
     }

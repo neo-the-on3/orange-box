@@ -50,7 +50,7 @@ class MiniDashboardCardTest {
     }
 
     private fun assertValues() {
-        compose.onNodeWithContentDescription("Speed 50 km/h").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Speed 50 kilometres per hour").assertIsDisplayed()
         compose.onNodeWithContentDescription("Engine speed 2000 rpm").assertIsDisplayed()
         compose.onNodeWithContentDescription("Coolant, warning").assertIsDisplayed() // 115 °C ≥ 100
         compose.onNodeWithContentDescription("Eco, green").assertIsDisplayed()
@@ -87,6 +87,6 @@ class MiniDashboardCardTest {
     @Test fun `waiting for the first sample`() {
         compose.setContent { OrangeBoxTheme { MiniDashboardCard(DashboardStateMapper.map(connected, null), null, {}) } }
         compose.onNodeWithTag("home_live_waiting").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Speed --- km/h").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Speed, no data").assertIsDisplayed()
     }
 }

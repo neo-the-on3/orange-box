@@ -62,7 +62,7 @@ class DashboardKitTest {
         compose.onNodeWithContentDescription("Fuel-cut, active").assertIsDisplayed()
         compose.onNodeWithContentDescription("Overspeed, off").assertIsDisplayed()
         compose.onNodeWithContentDescription("Engine speed 1698 rpm").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Speed 59 km/h").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Speed 59 kilometres per hour").assertIsDisplayed()
         compose.onNodeWithContentDescription("Coolant, warning").assertIsDisplayed()
         compose.onNodeWithContentDescription("Battery, on").assertIsDisplayed()
         compose.onNodeWithContentDescription("Eco, green").assertIsDisplayed()
@@ -98,7 +98,7 @@ class DashboardKitTest {
 
     @Test fun `placeholders when there is no data`() {
         content(1f) { Column { RpmCluster(DashboardUiState(), Modifier.size(234.dp, 232.dp)); TripCard(DashboardUiState()) } }
-        compose.onNodeWithContentDescription("Engine speed --- rpm").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Engine speed, no data").assertIsDisplayed()
         compose.onNodeWithContentDescription("Coolant, no data").assertIsDisplayed()
         compose.onNodeWithContentDescription("Trip --.- km, -:--:--").assertIsDisplayed()
     }

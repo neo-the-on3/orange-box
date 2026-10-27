@@ -25,6 +25,10 @@
 
     <string name="dashboard_spoken_rpm">Engine speed %1$s rpm</string>
     <string name="dashboard_spoken_speed">Speed %1$s %2$s</string>
+    <string name="dashboard_spoken_rpm_none">Engine speed, no data</string>
+    <string name="dashboard_spoken_speed_none">Speed, no data</string>
+    <string name="dashboard_spoken_unit_kmh">kilometres per hour</string>
+    <string name="dashboard_spoken_unit_mph">miles per hour</string>
     <string name="dashboard_spoken_economy">Trip economy %1$s %3$s, instant %2$s %3$s</string>
     <string name="dashboard_spoken_fuel_used">Fuel used %1$s L</string>
     <string name="dashboard_spoken_trip">Trip %1$s %3$s, %2$s</string>

@@ -1,5 +1,7 @@
 package io.github.neotheon3.orangebox.feature.rankings
 
+import io.github.neotheon3.orangebox.core.designsystem.FitLabel
+import io.github.neotheon3.orangebox.core.designsystem.SegmentLabel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -116,7 +118,7 @@ fun RankingsScreen(state: RankingsUiState, actions: RankingsActions, locale: Loc
                             selected = state.tab == tab,
                             onClick = { actions.onTab(tab) },
                             text = {
-                                Text(
+                                FitLabel(
                                     stringResource(
                                         when (tab) {
                                             MemberTab.SUMMARY -> R.string.member_tab_summary
@@ -176,7 +178,7 @@ private fun PeriodPicker(periods: List<String>, selected: String, tagPrefix: Str
                 onClick = { onPick(p) },
                 shape = SegmentedButtonDefaults.itemShape(i, periods.size),
                 modifier = Modifier.testTag("${tagPrefix}_$p"),
-            ) { Text(stringResource(MemberFormat.period(p)), maxLines = 1) }
+            ) { SegmentLabel(stringResource(MemberFormat.period(p))) }
         }
     }
 }
