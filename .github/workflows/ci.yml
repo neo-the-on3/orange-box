@@ -64,9 +64,13 @@ jobs:
           if-no-files-found: ignore
 
   release-check:
-    name: Release build has no Simulator
+    name: Release build (R8) has no Simulator
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Release signing (#74). Optional: without these secrets the release APK is signed with the shared debug key,
+      # so the emulator can install it. See docs/release-signing.md for how to create them.
+      HAS_RELEASE_KEY: ${{ secrets.ORANGEBOX_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -85,15 +89,46 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" --install "platforms;android-37.0" "build-tools;37.0.0" "platform-tools" > /dev/null
 
-      - name: Assemble release (unsigned, R8)
+      - name: Release keystore from secrets
+        if: env.HAS_RELEASE_KEY == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ORANGEBOX_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "ORANGEBOX_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: No release key, sign with the debug key
+        if: env.HAS_RELEASE_KEY != 'true'
+        run: |
+          echo "::notice::ORANGEBOX_KEYSTORE_BASE64 is not set: the release APK is signed with the shared debug key (testing only)"
+          echo "ORANGEBOX_RELEASE_DEBUG_SIGNED=true" >> "$GITHUB_ENV"
+
+      - name: Assemble release (R8)
+        env:
+          ORANGEBOX_KEYSTORE_PASSWORD: ${{ secrets.ORANGEBOX_KEYSTORE_PASSWORD }}
+          ORANGEBOX_KEY_ALIAS: ${{ secrets.ORANGEBOX_KEY_ALIAS }}
+          ORANGEBOX_KEY_PASSWORD: ${{ secrets.ORANGEBOX_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Check release contents
         run: bash scripts/ci/check-release.sh
 
+      - name: Remove release keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-release-apk
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/mapping/release/mapping.txt
+          retention-days: 7
+
   emulator-smoke:
     name: Emulator smoke (API 34 x86_64)
-    needs: build
+    needs: [build, release-check]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -106,6 +141,12 @@ jobs:
         with:
           name: app-debug-apk
           path: apk
+
+      - name: Download release APK
+        uses: actions/download-artifact@v8
+        with:
+          name: app-release-apk
+          path: apk-release
 
       - name: Enable KVM
         run: |
@@ -122,7 +163,9 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
-          script: bash scripts/ci/emulator-smoke.sh apk smoke-artifacts
+          script: |
+            bash scripts/ci/emulator-smoke.sh apk smoke-artifacts
+            bash scripts/ci/release-smoke.sh apk-release/apk/release smoke-artifacts
 
       - name: Upload smoke artifacts
         if: always()
