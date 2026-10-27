@@ -184,4 +184,7 @@
     </plurals>
     <string name="account_other_trips_choose">Choose…</string>
     <string name="account_cancel">Cancel</string>
+    <!-- #73: per-app language (Android 13+) -->
+    <string name="settings_language">App language</string>
+    <string name="settings_language_system">System default</string>
 </resources>

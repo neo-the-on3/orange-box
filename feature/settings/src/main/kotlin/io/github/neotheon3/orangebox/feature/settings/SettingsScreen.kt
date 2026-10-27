@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +58,8 @@ fun SettingsRoute(
     val apps by viewModel.launchableApps.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     RefreshOnResume(viewModel::refreshFullScreen)
+    // Per-app language (#73): Android 13+ lists the locales of the generated localeConfig in system settings.
+    val language = remember { AppLanguage.of(context) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val pickContact = androidx.activity.compose.rememberLauncherForActivityResult(PickPhoneNumber()) { uri ->
         if (uri != null) {
@@ -77,6 +80,7 @@ fun SettingsRoute(
         onOpenPermissions = onOpenPermissions,
         onAutoStartChanged = viewModel::onAutoStartChanged,
         launchableApps = apps,
+        language = language,
         dashboardActions = DashboardSettingsActions(
             onButtonChanged = viewModel::onDashboardButtonChanged,
             onEmergencyNumberChanged = viewModel::onEmergencyNumberChanged,
@@ -152,6 +156,8 @@ fun SettingsScreen(
     actions: SettingsActions = SettingsActions(),
     account: AccountUiState = AccountUiState(),
     accountActions: AccountActions = AccountActions(),
+    /** Android 13+ only: opens the system's per-app language screen. */
+    language: AppLanguage? = null,
 ) {
     Scaffold(
         topBar = {
@@ -204,6 +210,9 @@ fun SettingsScreen(
             AccountSettingsSection(account, state.config.mode, state.config.isRemoteReady, accountActions)
             HorizontalDivider()
             Text(stringResource(R.string.settings_about_section), style = MaterialTheme.typography.titleMedium)
+            language?.let {
+                SetupRow(stringResource(R.string.settings_language), it.current ?: stringResource(R.string.settings_language_system), it.open, "settings_language")
+            }
             Text(
                 stringResource(R.string.settings_about_version, state.version.versionName, state.version.versionCode),
                 modifier = Modifier.testTag("settings_about_version"),
