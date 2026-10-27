@@ -53,7 +53,7 @@ class DashboardScreenTest {
 
     private fun assertClusters() {
         compose.onNodeWithContentDescription("Engine speed 1698 rpm").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Speed 59 km/h").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Speed 59 kilometres per hour").assertIsDisplayed()
         compose.onNodeWithContentDescription("Fuel-cut, active").assertIsDisplayed()
         compose.onNodeWithContentDescription("Overspeed, off").assertIsDisplayed()
         compose.onNodeWithContentDescription("OBD, on").assertIsDisplayed()
@@ -91,8 +91,8 @@ class DashboardScreenTest {
 
     @Config(qualifiers = "w640dp-h360dp-land") @Test fun `no data shows placeholders`() {
         show(DashboardUiState())
-        compose.onNodeWithContentDescription("Engine speed --- rpm").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Speed --- km/h").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Engine speed, no data").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Speed, no data").assertIsDisplayed()
         compose.onNodeWithContentDescription("Trip --.- km, -:--:--").assertIsDisplayed()
         compose.onNodeWithContentDescription("OBD, off").assertIsDisplayed()
     }

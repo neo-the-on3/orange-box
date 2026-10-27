@@ -33,6 +33,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -113,11 +115,13 @@ fun VehicleListScreen(
             )
         },
         floatingActionButton = {
+            val addLabel = stringResource(R.string.vehicles_add)
             ExtendedFloatingActionButton(
                 onClick = onAdd,
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text(stringResource(R.string.vehicles_add)) },
-                modifier = Modifier.testTag("vehicles_add"),
+                text = { Text(addLabel) },
+                // Material 3 clears the text's semantics (it can collapse), so TalkBack would read an unlabelled button (#71).
+                modifier = Modifier.testTag("vehicles_add").semantics { contentDescription = addLabel },
             )
         },
     ) { padding ->

@@ -55,7 +55,7 @@ fun Lamp(
         BasicText(
             label.uppercase(),
             style = TextStyle(
-                color = if (state.on) DashboardColors.Text else DashboardColors.LampOff,
+                color = if (state.on) DashboardColors.Text else DashboardColors.LampOffText,
                 fontWeight = if (state.on) FontWeight.Black else FontWeight.Bold,
             ),
             maxLines = 1,
@@ -80,7 +80,7 @@ fun HeaderLamp(icon: ImageVector, label: String, state: LampState, modifier: Mod
             modifier = Modifier.weight(1f, fill = false),
             // Lit: white text (readable on the matching glow), icon in the lamp colour.
             style = TextStyle(
-                color = if (state.on) DashboardColors.Text else DashboardColors.LampOff,
+                color = if (state.on) DashboardColors.Text else DashboardColors.LampOffText,
                 fontWeight = if (state.on) FontWeight.Black else FontWeight.Bold,
             ),
             maxLines = 1,

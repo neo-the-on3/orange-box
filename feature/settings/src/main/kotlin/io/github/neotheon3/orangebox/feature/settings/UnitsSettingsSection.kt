@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.feature.settings
 
+import io.github.neotheon3.orangebox.core.designsystem.SegmentLabel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -49,7 +50,7 @@ private fun <T : Enum<T>> Choice(title: String, options: List<T>, selected: T, l
                     onClick = { onSelect(option) },
                     shape = SegmentedButtonDefaults.itemShape(i, options.size),
                     modifier = Modifier.testTag("${tag}_${option.name.lowercase()}"),
-                ) { Text(label(option), style = MaterialTheme.typography.labelMedium) }
+                ) { SegmentLabel(label(option), style = MaterialTheme.typography.labelMedium) }
             }
         }
     }

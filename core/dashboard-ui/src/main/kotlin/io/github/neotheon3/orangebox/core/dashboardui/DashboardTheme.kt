@@ -40,6 +40,8 @@ object DashboardColors {
     val Caption = Color(0xFFE6E6E6)
 
     val LampOff = Color(0xFF686868)
+    /** An unlit lamp's caption: dimmer than lit white, but 4.5:1 on the black bar and cards (#71; #686868 was 3.8:1). */
+    val LampOffText = Color(0xFFA6A6A6)
     val Mil = Color(0xFFF80028)
     val Obd = Color(0xFF80D8F0)
     val FuelCut = Color(0xFF18F800)

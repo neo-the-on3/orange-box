@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.feature.trips.stats
 
+import io.github.neotheon3.orangebox.core.designsystem.SegmentLabel
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -98,7 +99,7 @@ fun StatsScreen(
                                 onClick = { onPeriod(p) },
                                 shape = SegmentedButtonDefaults.itemShape(i, StatsPeriod.entries.size),
                                 modifier = Modifier.testTag("stats_period_${p.name.lowercase()}"),
-                            ) { Text(stringResource(if (p == StatsPeriod.WEEK) R.string.stats_weekly else R.string.stats_monthly)) }
+                            ) { SegmentLabel(stringResource(if (p == StatsPeriod.WEEK) R.string.stats_weekly else R.string.stats_monthly)) }
                         }
                     }
                 }
