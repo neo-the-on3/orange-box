@@ -50,7 +50,7 @@ adb shell am start -S -n io.github.neotheon3.orangebox.debug/io.github.neotheon3
 adb shell pm clear io.github.neotheon3.orangebox.debug
 ```
 
-See [docs/REAL_DEVICE_CHECKLIST.md](docs/REAL_DEVICE_CHECKLIST.md) for the checks that need real hardware.
+See [docs/real-device-checklist.md](docs/real-device-checklist.md) for the checks that need real hardware.
 
 ## Versions, signing and logs
 
