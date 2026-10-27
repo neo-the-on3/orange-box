@@ -1,0 +1,31 @@
+# Secret scanning (#75). Run by the CI "secret-scan" job over the full git history:
+#   gitleaks git . --config .gitleaks.toml --redact
+# Uses gitleaks' default rules. The allowlist only names known, deliberately public test fixtures.
+# Add to it only with a comment saying why the value is not a secret.
+title = "orange-box gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Committed on purpose, not secrets"
+paths = [
+  # Shared Android debug keystore (store/key password "android"); signs debug builds only.
+  '''^app/debug\.keystore$''',
+  # oapi-codegen output: the embedded OpenAPI spec is gzip+base64 text, not a key.
+  '''^backend/internal/api/api\.gen\.go$''',
+]
+
+[[allowlists]]
+description = "Test and documentation fixtures"
+regexTarget = "secret"
+regexes = [
+  # SYNC_TOKEN_KEY fixture in backend config tests: base64("0123456789abcdef0123456789abcdef") and its raw form.
+  '''^MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=$''',
+  '''^0123456789abcdef0123456789abcdef$''',
+  # Idempotency-Key header values are UUIDs (request ids), never credentials.
+  '''^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''',
+  # OpenAPI example tokens: an unsigned JWT for {"alg":"ES256","kid":"2026-10"}/{"sub":"0192"} and a dummy refresh token.
+  '''^eyJhbGciOiJFUzI1NiIsImtpZCI6IjIwMjYtMTAifQ\.eyJzdWIiOiIwMTkyIn0\.c2ln$''',
+  '''^rt_01HFXK3Q8J6Z$''',
+]

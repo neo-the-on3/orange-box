@@ -54,6 +54,16 @@ History from before this rule (up to PR #94) is left as it is.
 ./gradlew assembleDebug lintDebug testDebugUnitTest --max-workers=2
 ```
 
+## Secrets and release signing
+- CI's `secret-scan` job runs [gitleaks](https://github.com/gitleaks/gitleaks) over the full history with
+  `.gitleaks.toml`, and fails on any finding. Run it locally before pushing:
+  `gitleaks git . --config .gitleaks.toml --redact`.
+- Never commit keys, tokens or passwords. If a finding is a fixture (test value, documentation example),
+  add a narrow allowlist entry to `.gitleaks.toml` with a comment saying why it is not a secret. If it
+  is a real secret, rotate it first: removing it from history does not make it safe again.
+- Release signing comes from Gradle properties or environment variables, and from repository secrets in CI.
+  See `docs/release-signing.md`.
+
 ## Backend CI (`backend/`)
 The Backend workflow (`.github/workflows/backend.yml`) runs only when started by hand, to save
 GitHub Actions minutes. Run `make ci` in `backend/` locally while you work; then, once per PR and just
