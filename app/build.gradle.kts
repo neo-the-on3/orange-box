@@ -20,6 +20,22 @@ val commitCount = git("rev-list", "--count", "HEAD")?.toIntOrNull() ?: 1
 val gitSha = git("rev-parse", "--short=7", "HEAD") ?: "nogit"
 val ciRun: String? = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull
 
+// Release signing (#74). Read from Gradle properties (~/.gradle/gradle.properties, -P) or the same names as
+// environment variables (CI). Nothing secret is committed. See docs/release-signing.md.
+fun signingValue(name: String): String? =
+    (providers.gradleProperty(name).orNull ?: providers.environmentVariable(name).orNull)?.takeIf { it.isNotBlank() }
+
+val releaseKeystore = signingValue("ORANGEBOX_KEYSTORE_FILE")
+val releaseSigning = releaseKeystore?.let { path ->
+    listOf("ORANGEBOX_KEYSTORE_PASSWORD", "ORANGEBOX_KEY_ALIAS", "ORANGEBOX_KEY_PASSWORD")
+        .map { signingValue(it) ?: error("ORANGEBOX_KEYSTORE_FILE is set but $it is missing") }
+        .let { (storePassword, alias, keyPassword) -> listOf(path, storePassword, alias, keyPassword) }
+}
+// Without a release key, a release build is unsigned, or signed with the shared debug key when
+// ORANGEBOX_RELEASE_DEBUG_SIGNED=true. CI uses that so the emulator can install the minified APK. Such an
+// APK is for testing only: it cannot update, or be updated by, a properly signed install.
+val releaseDebugSigned = signingValue("ORANGEBOX_RELEASE_DEBUG_SIGNED") == "true"
+
 android {
     namespace = "io.github.neotheon3.orangebox"
 
@@ -42,6 +58,15 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        if (releaseSigning != null) {
+            create("release") {
+                val (path, storePass, alias, keyPass) = releaseSigning
+                storeFile = file(path)
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
+            }
+        }
     }
 
     buildTypes {
@@ -57,7 +82,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Unsigned in CI. Signing is configured later from CI secrets, never committed.
+            signingConfig = when {
+                releaseSigning != null -> signingConfigs.getByName("release")
+                releaseDebugSigned -> signingConfigs.getByName("debug")
+                else -> null
+            }
         }
     }
 
