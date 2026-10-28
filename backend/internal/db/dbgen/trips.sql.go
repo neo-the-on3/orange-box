@@ -624,7 +624,7 @@ func (q *Queries) LockLiveVehiclesForShare(ctx context.Context, arg LockLiveVehi
 }
 
 const lockTripForTelemetry = `-- name: LockTripForTelemetry :one
-SELECT id, deleted_at FROM trips
+SELECT id, vehicle_id, deleted_at FROM trips
 WHERE member_id = $1 AND client_trip_id = $2
 FOR SHARE
 `
@@ -636,17 +636,19 @@ type LockTripForTelemetryParams struct {
 
 type LockTripForTelemetryRow struct {
 	ID        uuid.UUID
+	VehicleID *uuid.UUID
 	DeletedAt *time.Time
 }
 
 // Taken by a telemetry upload before it stores anything: a tombstone means
 // trip_deleted, and the share lock makes a concurrent trip delete wait until
 // the upload commits (so the delete then removes its events too). No row
-// means the summary has not arrived yet, which is normal.
+// means the summary has not arrived yet, which is normal. A live trip's
+// vehicle_id must be the batch's.
 func (q *Queries) LockTripForTelemetry(ctx context.Context, arg LockTripForTelemetryParams) (LockTripForTelemetryRow, error) {
 	row := q.db.QueryRow(ctx, lockTripForTelemetry, arg.MemberID, arg.ClientTripID)
 	var i LockTripForTelemetryRow
-	err := row.Scan(&i.ID, &i.DeletedAt)
+	err := row.Scan(&i.ID, &i.VehicleID, &i.DeletedAt)
 	return i, err
 }
 
