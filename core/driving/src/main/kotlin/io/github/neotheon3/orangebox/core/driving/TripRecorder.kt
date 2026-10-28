@@ -109,6 +109,15 @@ class TripRecorder(
 
     private class OpenEvent(val row: TripEventEntity, var peak: Double?, var lastAt: Long)
 
+    /**
+     * The last fuel cut that ended, held back for [FUEL_CUT_MERGE_MILLIS] (#207): one that starts again within
+     * that gap continues it (the pedal blips, or the ECU flickers in and out of cut on a long overrun), and one
+     * shorter than [FUEL_CUT_MIN_MILLIS] in total is dropped. Only the event rows change; the trip's fuel-cut
+     * time (fuelCutS) is the engine's exact total.
+     */
+    private class PendingCut(val open: OpenEvent, val endAt: Long)
+    private var pendingCut: PendingCut? = null
+
     private data class Flags(val harshAccel: Boolean = false, val harshBrake: Boolean = false, val overspeed: Boolean = false, val fuelCut: Boolean = false)
 
     /** Idempotent. */
@@ -166,6 +175,7 @@ class TripRecorder(
             )
             lastSampleAt = s.timestampMillis
         }
+        pendingCut?.let { if (s.timestampMillis - it.endAt >= FUEL_CUT_MERGE_MILLIS) flushPendingCut() }
         val now = Flags(s.instant.harshAccel, s.instant.harshBrake, s.instant.overspeed, s.instant.fuelCut)
         // value: the peak while the event runs: max acceleration, the strongest (most negative) braking,
         // max speed for overspeed; fuel cut keeps the speed it started at.
@@ -173,7 +183,12 @@ class TripRecorder(
         // previous one and opened another), so the row splits there too.
         fun edge(was: Boolean, isOn: Boolean, type: String, value: Double?, restarted: Boolean = false, peakOf: (Double, Double) -> Double) {
             if (isOn && was && restarted) open[type]?.let { close(type, it.lastAt) }
+            val resumed = pendingCut?.takeIf { type == EVENT_FUEL_CUT && isOn && (!was || open[type] == null) }
             when {
+                resumed != null -> {
+                    pendingCut = null
+                    open[type] = resumed.open.also { it.lastAt = s.timestampMillis }
+                }
                 isOn && (!was || open[type] == null) -> open[type] = OpenEvent(
                     TripEventEntity(tripId = current.id, timestampMillis = s.timestampMillis, type = type, value = value, latitude = f?.latitude, longitude = f?.longitude),
                     value, s.timestampMillis,
@@ -200,12 +215,27 @@ class TripRecorder(
     /** Moves an open event to the pending rows, ending at [endAt] (sample time). */
     private fun close(type: String, endAt: Long) {
         val o = open.remove(type) ?: return
+        if (type == EVENT_FUEL_CUT) {
+            flushPendingCut()
+            pendingCut = PendingCut(o, endAt)
+            return
+        }
         events += o.row.copy(value = o.peak, durationS = (endAt - o.row.timestampMillis).coerceAtLeast(0) / 1000.0)
+    }
+
+    /** Writes the held-back fuel cut, unless it was too short to count (#207). */
+    private fun flushPendingCut() {
+        val p = pendingCut ?: return
+        pendingCut = null
+        val millis = (p.endAt - p.open.row.timestampMillis).coerceAtLeast(0)
+        if (millis < FUEL_CUT_MIN_MILLIS) return
+        events += p.open.row.copy(value = p.open.peak, durationS = millis / 1000.0)
     }
 
     /** Closes every open event at its last sample (a trip end, or a gap the engine ends them at). */
     private fun closeAllOpen() {
         open.keys.toList().forEach { type -> close(type, open.getValue(type).lastAt) }
+        flushPendingCut()
     }
 
     private suspend fun begin(s: TelemetrySnapshot) {
@@ -225,7 +255,7 @@ class TripRecorder(
         lastSampleAt = Long.MIN_VALUE
         lastSnapshotAt = Long.MIN_VALUE
         lastCheckpointWall = clock.now()
-        samples.clear(); events.clear(); open.clear()
+        samples.clear(); events.clear(); open.clear(); pendingCut = null
         fix = null
         locationJob = scope.launch { location.fixes().collect { fix = it } }
         _active.value = ActiveTrip(started.id, started.startedAtMillis, TripTotals())
@@ -283,6 +313,10 @@ class TripRecorder(
         const val EVENT_HARSH_BRAKE = "harsh_brake"
         const val EVENT_OVERSPEED = "overspeed"
         const val EVENT_FUEL_CUT = "fuel_cut"
+        /** Fuel cuts less than this apart are one event (#207). */
+        const val FUEL_CUT_MERGE_MILLIS = 1_500L
+        /** Fuel-cut events shorter than this aren't listed (#207). */
+        const val FUEL_CUT_MIN_MILLIS = 1_000L
         const val END_ENGINE_OFF = "engine_off"
         const val END_DISCONNECTED = "disconnected"
         const val END_USER = "user"
