@@ -41,7 +41,10 @@ data class TelemetryConfig(
     val stationaryKph: Double = 1.0,
     /** Instant economy is only computed above this speed, km/h. */
     val economyMinKph: Double = 5.0,
-    /** Fuel cut: speed ≥ this, km/h … */
+    /**
+     * Fuel cut: speed ≥ this, km/h … When the ECU itself reports decel fuel cut (PID 03 = 4) with the pedal or
+     * throttle at rest, only [stationaryKph] and [fuelCutMinRpm] apply (#209).
+     */
     val fuelCutMinKph: Double = 20.0,
     /** … RPM ≥ this … */
     val fuelCutMinRpm: Double = 1_000.0,

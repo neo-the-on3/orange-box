@@ -286,8 +286,11 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         if (pedal != null && idling && pedal <= config.pedalRestMaxPercent) {
             restPedal = restPedal?.let { minOf(it, pedal) } ?: pedal
         }
-        if (speed == null || rpm == null || speed < config.fuelCutMinKph || rpm < config.fuelCutMinRpm) return false
+        if (speed == null || rpm == null || rpm < config.fuelCutMinRpm) return false
         val status = sample[ObdPid.FUEL_SYSTEM_STATUS]?.toInt()
+        // The ECU says so (#209): below the 20 km/h gate too, as long as the car moves and the foot is off.
+        if (status == FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT && speed >= config.stationaryKph && footOff(sample) == true) return true
+        if (speed < config.fuelCutMinKph) return false
         // Drive-by-wire: the throttle plate isn't the driver's foot. The SX4's ECU holds it at 15–24 % on overrun
         // (a dashpot), so the pedal is the better "foot off" signal when the car reports it (RDF1 drive 2).
         val rest = restPedal
@@ -301,6 +304,21 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         }
         val load = sample[ObdPid.ENGINE_LOAD]
         return load?.let { it <= config.fuelCutMaxLoadPercent } ?: (status == FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT)
+    }
+
+    /**
+     * Whether the driver's foot is off: the pedal within [TelemetryConfig.fuelCutPedalAboveRestPercent] of its
+     * learned rest, else the throttle within [TelemetryConfig.fuelCutThrottleAboveClosedPercent] of the learned
+     * closed position. Null while neither is known.
+     */
+    private fun footOff(sample: VehicleSample): Boolean? {
+        val pedal = sample[ObdPid.ACCELERATOR_PEDAL_D] ?: sample[ObdPid.ACCELERATOR_PEDAL_E]
+        val rest = restPedal
+        if (pedal != null && rest != null) return pedal - rest <= config.fuelCutPedalAboveRestPercent
+        val throttle = sample[ObdPid.THROTTLE]
+        val closed = closedThrottle
+        if (throttle != null && closed != null) return throttle - closed <= config.fuelCutThrottleAboveClosedPercent
+        return null
     }
 
     private var reportedFuelType: FuelType? = null
