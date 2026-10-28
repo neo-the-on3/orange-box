@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ErrNotFound means no object has the key.
@@ -123,8 +124,45 @@ func (m *Memory) Keys() []string {
 
 // Dir is a Store in a local directory, one file per object, for local
 // development without R2. Writes are atomic (temp file, fsync, rename).
+//
+// A file system call can't be interrupted, so each operation runs in its
+// own goroutine and Dir stops waiting for it when the context ends, or
+// after dirOpTimeout without a deadline: a hung disk or network mount
+// then answers like a slow R2 (the caller's 503), instead of holding the
+// request and its upload slot. The abandoned call finishes on its own; a
+// Put that completes late leaves an object without a row, which
+// reconciliation removes (#179).
 type Dir struct {
-	root string
+	root    string
+	timeout time.Duration
+	hook    func() // tests: runs before each file system operation
+}
+
+// dirOpTimeout bounds a Dir operation whose context has no deadline (or a
+// later one).
+const dirOpTimeout = 30 * time.Second
+
+// run runs op in a goroutine and returns its error, or the context's once
+// it ends first.
+func (d *Dir) run(ctx context.Context, op func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		if d.hook != nil {
+			d.hook()
+		}
+		done <- op()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // NewDir returns a Store rooted at dir, creating it if needed.
@@ -139,7 +177,7 @@ func NewDir(dir string) (*Dir, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("objstore: create %s: %w", abs, err)
 	}
-	return &Dir{root: abs}, nil
+	return &Dir{root: abs, timeout: dirOpTimeout}, nil
 }
 
 func (d *Dir) path(key string) (string, error) {
@@ -155,9 +193,10 @@ func (d *Dir) Put(ctx context.Context, key string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+	return d.run(ctx, func() error { return put(p, body) })
+}
+
+func put(p string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
@@ -187,14 +226,19 @@ func (d *Dir) Get(ctx context.Context, key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	b, err := os.ReadFile(p) //nolint:gosec // G304: p is d.path(key), and ValidateKey rejects empty, . and .. segments
+	var b []byte
+	err = d.run(ctx, func() error {
+		var err error
+		b, err = os.ReadFile(p) //nolint:gosec // G304: p is d.path(key), and ValidateKey rejects empty, . and .. segments
+		return err
+	})
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
-	return b, err
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // Delete implements Store.
@@ -203,11 +247,10 @@ func (d *Dir) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return d.run(ctx, func() error {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	})
 }
