@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/mail"
@@ -27,6 +28,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/auth"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
+	"github.com/neo-the-on3/orange-box/backend/internal/store"
 	"github.com/neo-the-on3/orange-box/backend/internal/timeutil"
 )
 
@@ -106,9 +108,20 @@ func validateEmailFormat(s string) error {
 	return nil
 }
 
-// TokenVerifier checks an access token and returns its member id.
+// TokenVerifier checks an access token and returns its member id and issue
+// time.
 type TokenVerifier interface {
-	Verify(raw string) (memberID string, err error)
+	VerifyIssued(raw string) (memberID string, issuedAt time.Time, err error)
+}
+
+// revocationCheck is the per-request check that the member behind a valid
+// token still exists, isn't deleted and hasn't revoked the token
+// (DELETE /v1/me). Nil without a database: in-memory members can't be
+// deleted.
+type revocationCheck struct {
+	profiles store.Profiles
+	logger   *slog.Logger
+	classify func(error) store.Failure
 }
 
 // openAPIMiddleware is the front door for every /v1 request. In order, it:
@@ -133,7 +146,8 @@ type openAPIMiddleware struct {
 	uploads           *uploadLimiter
 	uploadReadTimeout time.Duration
 	bodies            bodyPools
-	idempotency       *idempotency // nil without a store
+	idempotency       *idempotency     // nil without a store
+	revocation        *revocationCheck // nil without a database
 }
 
 func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadReadTimeout time.Duration, bodies bodyPools) (*openAPIMiddleware, error) {
@@ -422,7 +436,7 @@ func (m *openAPIMiddleware) authenticate(r *http.Request) (string, *problem.Prob
 		return "", problem.New(http.StatusUnauthorized, problem.CodeUnauthorized, "A bearer access token is required.").
 			WithHeader("WWW-Authenticate", realm)
 	}
-	memberID, err := m.tokens.Verify(strings.TrimSpace(raw))
+	memberID, issuedAt, err := m.tokens.VerifyIssued(strings.TrimSpace(raw))
 	switch {
 	case errors.Is(err, auth.ErrTokenExpired):
 		return "", problem.New(http.StatusUnauthorized, problem.CodeTokenExpired, "The access token has expired.").
@@ -431,7 +445,38 @@ func (m *openAPIMiddleware) authenticate(r *http.Request) (string, *problem.Prob
 		return "", problem.New(http.StatusUnauthorized, problem.CodeInvalidToken, "The access token is invalid.").
 			WithHeader("WWW-Authenticate", realm+`, error="invalid_token"`)
 	}
+	if m.revocation != nil {
+		if p := m.revocation.check(r.Context(), memberID, issuedAt); p != nil {
+			if p.Status == http.StatusUnauthorized {
+				p = p.WithHeader("WWW-Authenticate", realm+`, error="invalid_token", error_description="revoked"`)
+			}
+			return "", p
+		}
+	}
 	return memberID, nil
+}
+
+// check runs on every authenticated request (spec: deleteMe), so a deleted
+// member's outstanding access tokens get 401 at once rather than at their
+// 15-minute expiry. A failed check fails closed (503 or 500), never open.
+func (c *revocationCheck) check(ctx context.Context, memberID string, issuedAt time.Time) *problem.Problem {
+	member, err := uuid.Parse(memberID)
+	if err != nil { // Verify already checked sub is a UUID
+		return problem.New(http.StatusUnauthorized, problem.CodeInvalidToken, "The access token is invalid.")
+	}
+	revoked, err := c.profiles.TokenRevoked(ctx, member, issuedAt)
+	if err != nil {
+		c.logger.ErrorContext(ctx, "token revocation check failed",
+			slog.String("request_id", reqctx.RequestID(ctx)), slog.Any("err", err))
+		if sp := storageProblem(c.classify, err); sp != nil {
+			return sp
+		}
+		return problem.Internal()
+	}
+	if revoked {
+		return problem.New(http.StatusUnauthorized, problem.CodeInvalidToken, "The access token has been revoked; sign in again.")
+	}
+	return nil
 }
 
 // errTooLarge is returned by limitReader once its limit is exceeded.

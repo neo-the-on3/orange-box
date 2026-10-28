@@ -100,6 +100,14 @@ func (t *Tokens) Issue(memberID string) (string, time.Duration, error) {
 // Verify checks signature, kid, alg, iss, aud, exp, nbf and sub, and returns
 // the member id (sub).
 func (t *Tokens) Verify(raw string) (string, error) {
+	member, _, err := t.VerifyIssued(raw)
+	return member, err
+}
+
+// VerifyIssued is Verify that also returns the token's issue time (iat,
+// whole seconds, UTC), so a caller can reject tokens issued before a
+// member's tokensValidAfter (DELETE /v1/me).
+func (t *Tokens) VerifyIssued(raw string) (string, time.Time, error) {
 	var claims Claims
 	_, err := jwt.ParseWithClaims(raw, &claims, func(tok *jwt.Token) (any, error) {
 		kid, _ := tok.Header["kid"].(string)
@@ -119,14 +127,17 @@ func (t *Tokens) Verify(raw string) (string, error) {
 	)
 	switch {
 	case errors.Is(err, jwt.ErrTokenExpired):
-		return "", ErrTokenExpired
+		return "", time.Time{}, ErrTokenExpired
 	case err != nil:
-		return "", ErrTokenInvalid
+		return "", time.Time{}, ErrTokenInvalid
 	}
 	if _, err := uuid.Parse(claims.Subject); err != nil {
-		return "", ErrTokenInvalid
+		return "", time.Time{}, ErrTokenInvalid
 	}
-	return claims.Subject, nil
+	if claims.IssuedAt == nil { // the server always sets it
+		return "", time.Time{}, ErrTokenInvalid
+	}
+	return claims.Subject, claims.IssuedAt.UTC(), nil
 }
 
 // ParsePrivateKeyPEM parses a P-256 private key in PKCS#8 or SEC 1 PEM.

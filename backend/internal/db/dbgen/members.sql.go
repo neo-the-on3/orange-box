@@ -96,6 +96,35 @@ func (q *Queries) GetMemberByEmail(ctx context.Context, email string) (Member, e
 	return i, err
 }
 
+const getMemberForUpdate = `-- name: GetMemberForUpdate :one
+SELECT id, email, display_name, country_code, region_code, ranking_opt_in, auth_provider, version, tokens_valid_after, created_at, updated_at, deleted_at FROM members
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// PATCH /v1/me: locks the live member so the If-Match check and the write
+// happen against the version they replace. A concurrent DELETE /v1/me
+// waits its turn; after it, the member is no longer live.
+func (q *Queries) GetMemberForUpdate(ctx context.Context, id uuid.UUID) (Member, error) {
+	row := q.db.QueryRow(ctx, getMemberForUpdate, id)
+	var i Member
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.CountryCode,
+		&i.RegionCode,
+		&i.RankingOptIn,
+		&i.AuthProvider,
+		&i.Version,
+		&i.TokensValidAfter,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const insertMember = `-- name: InsertMember :one
 INSERT INTO members (id, email)
 VALUES ($1, $2::text)
