@@ -68,7 +68,7 @@ func (s *Vehicles) CreateVehicle(ctx context.Context, member uuid.UUID, clientID
 			return toVehicle(row), store.Existing, nil
 		}
 	}
-	return store.Vehicle{}, 0, errors.New("vehicles: create kept racing a purge; retry")
+	return store.Vehicle{}, 0, fmt.Errorf("vehicles: create kept racing a purge: %w", ErrKeptRacing)
 }
 
 // GetVehicle implements store.Vehicles.

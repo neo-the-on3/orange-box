@@ -29,6 +29,7 @@ func TestClassify(t *testing.T) {
 		"idle in tx timeout": {fmt.Errorf("get trip: %w", &pgconn.PgError{Code: "25P03"}), store.FailureBusy},
 		"idle session":       {&pgconn.PgError{Code: "57P05"}, store.FailureBusy},
 		"read only":          {&pgconn.PgError{Code: "25006"}, store.FailureUnavailable},
+		"kept racing":        {fmt.Errorf("create: %w", db.ErrKeptRacing), store.FailureBusy},
 		"cluster changed":    {fmt.Errorf("acquire: %w", db.ErrClusterChanged), store.FailureUnavailable},
 		"deadline":           {fmt.Errorf("acquire: %w", context.DeadlineExceeded), store.FailureBusy},
 		"connection failure": {&pgconn.PgError{Code: "08006"}, store.FailureUnavailable},

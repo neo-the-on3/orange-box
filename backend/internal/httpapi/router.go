@@ -71,6 +71,9 @@ type Deps struct {
 	// telemetry operations answer 501.
 	Telemetry store.Telemetry
 	Objects   objstore.Store
+	// DtcReports stores DTC reports. Nil (no database) makes the DTC
+	// report operations answer 501.
+	DtcReports store.DtcReports
 	// SyncTokenKey signs sync tokens and trip cursors (SYNC_TOKEN_KEY).
 	// Nil generates an ephemeral key: tokens then expire on restart.
 	SyncTokenKey []byte
@@ -136,6 +139,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 		trips:      d.Trips,
 		telemetry:  d.Telemetry,
 		objects:    d.Objects,
+		dtcReports: d.DtcReports,
 		sync:       syncCodec,
 	}
 	errs := errorHandlers{logger: d.Logger, classify: d.ClassifyError}

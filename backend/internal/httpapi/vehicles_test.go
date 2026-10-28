@@ -46,6 +46,7 @@ func newDBTestEnvPool(t *testing.T) (*testEnv, *pgxpool.Pool) {
 		d.Trips = trips
 		d.Telemetry = db.NewTelemetry(pool)
 		d.Objects = objstore.NewMemory()
+		d.DtcReports = db.NewDtcReports(pool)
 		d.Idempotency = db.NewIdempotency(pool)
 		d.ClassifyError = db.Classify
 	}), pool

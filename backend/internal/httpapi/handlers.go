@@ -40,10 +40,11 @@ type Server struct {
 	now        func() time.Time
 	ready      func(context.Context) error
 	logger     *slog.Logger
-	vehicles   store.Vehicles  // nil without a database
-	trips      store.Trips     // nil without a database
-	telemetry  store.Telemetry // nil without a database
-	objects    objstore.Store  // nil without object storage
+	vehicles   store.Vehicles   // nil without a database
+	trips      store.Trips      // nil without a database
+	telemetry  store.Telemetry  // nil without a database
+	objects    objstore.Store   // nil without object storage
+	dtcReports store.DtcReports // nil without a database
 	sync       *synctoken.Codec
 }
 
