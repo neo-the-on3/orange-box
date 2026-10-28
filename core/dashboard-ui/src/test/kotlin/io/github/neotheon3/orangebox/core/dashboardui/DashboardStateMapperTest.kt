@@ -58,6 +58,15 @@ class DashboardStateMapperTest {
         assertEquals(IndicatorLevel.NORMAL, s.battery)
     }
 
+    @Test fun `speedometer offset only changes the shown speed (#210)`() {
+        val plain = DashboardStateMapper.map(connected, snap())
+        val offset = DashboardStateMapper.map(connected, snap(), speedometerOffsetPercent = 5)
+        assertEquals("59", plain.speed)
+        assertEquals("62", offset.speed) // 59.x × 1.05
+        assertEquals(plain.overspeed, offset.overspeed)
+        assertEquals(plain.tripKm, offset.tripKm)
+    }
+
     @Test fun `left glow - legacy mapping, fuel cut has no tint of its own (#198)`() {
         assertEquals(PanelGlow.ECO_GREEN, DashboardStateMapper.leftGlow(1))
         assertEquals(PanelGlow.ECO_YELLOW, DashboardStateMapper.leftGlow(2))

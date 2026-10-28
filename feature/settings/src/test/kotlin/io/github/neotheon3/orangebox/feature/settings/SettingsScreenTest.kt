@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertTextContains
@@ -119,6 +120,23 @@ class SettingsScreenTest {
             ),
             changed,
         )
+    }
+
+    @Test fun `petrol blend and speedometer offset (#208, #210)`() {
+        val blends = mutableListOf<io.github.neotheon3.orangebox.core.model.PetrolBlend>()
+        compose.setContent {
+            OrangeBoxTheme {
+                SettingsScreen(
+                    SettingsUiState(petrolBlend = io.github.neotheon3.orangebox.core.model.PetrolBlend.E20), onBack = {}, onModeSelected = {}, onUrlChanged = {}, onSaveUrl = {},
+                    actions = SettingsActions(onPetrolBlendChanged = { blends += it }),
+                )
+            }
+        }
+        compose.onNodeWithTag("settings_petrol_blend_e20").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("settings_petrol_blend_e0").performClick()
+        assertEquals(listOf(io.github.neotheon3.orangebox.core.model.PetrolBlend.E0), blends)
+        compose.onNodeWithTag("settings_speedometer_offset").performScrollTo()
+        compose.onNodeWithTag("settings_speedometer_offset_value", useUnmergedTree = true).assertTextEquals("Off")
     }
 
     @Test fun `each driving alert has its own switch (#59)`() {

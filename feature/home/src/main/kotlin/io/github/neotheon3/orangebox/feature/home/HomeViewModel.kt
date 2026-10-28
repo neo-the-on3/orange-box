@@ -11,6 +11,8 @@ import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import io.github.neotheon3.orangebox.core.telemetry.TelemetrySnapshot
 import io.github.neotheon3.orangebox.core.telemetry.RecordedTripTotals
@@ -42,12 +44,20 @@ class HomeViewModel @Inject constructor(
     telemetry: TelemetrySource,
     recorded: RecordedTripTotals = RecordedTripTotals.NONE,
     units: io.github.neotheon3.orangebox.core.datastore.DisplayUnits = io.github.neotheon3.orangebox.core.datastore.DisplayUnits.METRIC,
+    prefs: io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository? = null,
 ) : ViewModel() {
+    /** The dashboard's display-only speedometer offset (#210), so the Home card shows the same number. */
+    private val speedometerOffset: kotlinx.coroutines.flow.Flow<Int> =
+        prefs?.preferences?.map { it.dashboard.speedometerOffsetPercent }?.distinctUntilChanged() ?: kotlinx.coroutines.flow.flowOf(0)
+
     val uiState: StateFlow<HomeUiState> =
-        combine(backendConfigRepository.config, obd.state, telemetry.latest, recorded.totals(), units.units()) { backend, obdState, live, trip, u ->
+        combine(
+            combine(backendConfigRepository.config, obd.state, telemetry.latest, ::Triple),
+            recorded.totals(), units.units(), speedometerOffset,
+        ) { (backend, obdState, live), trip, u, offset ->
             HomeUiState(
                 backend = backend, loading = false, obd = obdState, live = live,
-                dashboard = DashboardStateMapper.map(obdState, live, recordedTrip = trip, units = u),
+                dashboard = DashboardStateMapper.map(obdState, live, recordedTrip = trip, units = u, speedometerOffsetPercent = offset),
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 

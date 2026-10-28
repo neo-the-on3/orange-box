@@ -84,6 +84,8 @@ object DashboardStateMapper {
         activePids: Set<ObdPid> = emptySet(),
         recordedTrip: TripTotals? = null,
         units: UnitPreferences = UnitPreferences(),
+        /** Display-only speedometer offset, % (#210); the overspeed state and everything recorded keep the true speed. */
+        speedometerOffsetPercent: Int = 0,
     ): DashboardUiState {
         if (connection !is ObdConnectionState.Connected || snapshot == null) {
             return DashboardUiState(
@@ -100,7 +102,8 @@ object DashboardStateMapper {
         return DashboardUiState(
             live = true,
             rpm = i.rpm?.takeIf { it >= 0 }?.roundToInt()?.toString() ?: DashboardUiState.NO_INT,
-            speed = i.speedKph?.takeIf { it >= 0 }?.let { units.speed(it).roundToInt().toString() } ?: DashboardUiState.NO_INT,
+            speed = i.speedKph?.takeIf { it >= 0 }
+                ?.let { units.speed(it * (1 + speedometerOffsetPercent / 100.0)).roundToInt().toString() } ?: DashboardUiState.NO_INT,
             fuelCut = i.fuelCut,
             overspeed = i.overspeed,
             harshAccel = i.harshAccel,

@@ -39,9 +39,12 @@ class DashboardViewModel @Inject constructor(
     private val crash: io.github.neotheon3.orangebox.core.driving.crash.CrashMonitor,
     units: io.github.neotheon3.orangebox.core.datastore.DisplayUnits,
 ) : ViewModel() {
-    val state: StateFlow<DashboardUiState> = combine(connection.state, telemetry.latest, recorded.totals(), units.units()) { c, s, trip, u ->
-        DashboardStateMapper.map(c, s, poller.activePids, recordedTrip = trip, units = u)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
+    private val speedometerOffset = prefs.preferences.map { it.dashboard.speedometerOffsetPercent }.distinctUntilChanged()
+
+    val state: StateFlow<DashboardUiState> =
+        combine(connection.state, telemetry.latest, recorded.totals(), units.units(), speedometerOffset) { c, s, trip, u, offset ->
+            DashboardStateMapper.map(c, s, poller.activePids, recordedTrip = trip, units = u, speedometerOffsetPercent = offset)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
 
     val controls: StateFlow<DashboardControls> = prefs.preferences.map { it.dashboard }.distinctUntilChanged()
         .map { d ->
