@@ -119,3 +119,35 @@ func TestNewRejectsShortKey(t *testing.T) {
 		t.Fatal("31-byte key accepted")
 	}
 }
+
+// Cursors and tokens are signed, so a client can't edit their times; a
+// time outside the range the API stores (and Postgres accepts) is still
+// invalid rather than reaching a query.
+func TestTimesOutOfRange(t *testing.T) {
+	t.Parallel()
+	c, member := codec(t), uuid.New()
+	for _, at := range []time.Time{
+		time.UnixMicro(-210866803200000001).UTC(), // before 4713 BC
+		time.Date(0, 12, 31, 23, 59, 59, 0, time.UTC),
+		time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
+	} {
+		s := c.Cursor(member, Cursor{Kind: History, Identity: point.Identity, History: store.HistoryPos{StartedAt: at, ID: uuid.New()}})
+		if _, err := c.ParseCursor(member, s); !errors.Is(err, ErrInvalid) {
+			t.Errorf("history cursor at %v: %v", at, err)
+		}
+		p := point
+		p.IssuedAt = at
+		if _, err := c.ParseToken(member, c.Token(member, p)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("token issued at %v: %v", at, err)
+		}
+		s = c.Cursor(member, Cursor{Kind: Changes, Identity: point.Identity, Since: &p, Next: &point})
+		if _, err := c.ParseCursor(member, s); !errors.Is(err, ErrInvalid) {
+			t.Errorf("changes cursor since %v: %v", at, err)
+		}
+	}
+	end := time.Date(9999, 12, 31, 23, 59, 59, 999999000, time.UTC)
+	s := c.Cursor(member, Cursor{Kind: History, Identity: point.Identity, History: store.HistoryPos{StartedAt: end, ID: uuid.New()}})
+	if got, err := c.ParseCursor(member, s); err != nil || !got.History.StartedAt.Equal(end) {
+		t.Errorf("history cursor at the end of 9999: %+v, %v", got, err)
+	}
+}

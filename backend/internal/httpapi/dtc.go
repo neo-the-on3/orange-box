@@ -13,6 +13,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/api"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
+	"github.com/neo-the-on3/orange-box/backend/internal/timeutil"
 )
 
 // DTC report operations (#112): POST and GET
@@ -184,7 +185,11 @@ func decodeDtcCursor(c string) (store.DtcReportPos, bool) {
 	if !ok {
 		return store.DtcReportPos{}, false
 	}
-	return store.DtcReportPos{ReadAt: time.UnixMicro(micros).UTC(), ID: u}, true
+	readAt := time.UnixMicro(micros).UTC()
+	if !timeutil.InRange(readAt) { // no stored readAt is outside it, and Postgres rejects some
+		return store.DtcReportPos{}, false
+	}
+	return store.DtcReportPos{ReadAt: readAt, ID: u}, true
 }
 
 func toAPIDtcReport(r store.DtcReport) api.DtcReport {
