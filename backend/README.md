@@ -47,6 +47,26 @@ and validated. Implemented so far:
   database embedded in the binary, so aliases such as `Asia/Calcutta` work.
   A deleted trip's item in a replayed batch comes back as `trip_deleted`.
   Without `DATABASE_URL` they answer `501`.
+- Telemetry (#111), on Postgres and object storage: `POST
+  /v1/telemetry/batches` (`202` with `accepted`, `duplicate` for a
+  `clientBatchId` already stored, with the original counts, or
+  `trip_deleted` for a tombstoned `clientTripId`; `404 vehicle_not_found`
+  when `vehicleId` isn't one of the caller's live vehicles; an unknown
+  `clientTripId` is fine, the summary may come later), and `GET
+  /v1/trips/{tripRef}/samples` and `/events` (cursor pages in `t` order;
+  the trip must exist). Samples are de-duplicated within a batch by `t`
+  (truncated to milliseconds), sorted, gzipped and written to object storage
+  as one object per batch (`members/<memberId>/trips/<clientTripId>/<batchId>.json.gz`)
+  before the batch row commits, so a `202` means both are stored. Repeats
+  across batches are dropped on read-back (the earliest stored batch's sample
+  wins). Events go to `trip_events`, de-duplicated on insert by
+  `clientEventId` or the fallback key; the acknowledgement counts cover the
+  batch only, as the spec says. Trip and cascade vehicle deletes remove the
+  objects after the rows (best effort: a failure is logged and the object
+  stays until reconciliation, #179). An object storage failure is `503
+  service_unavailable` (retry); nothing is stored. A replayed upload whose
+  trip has since been deleted comes back as `trip_deleted`. Without
+  `DATABASE_URL` the operations answer `501`.
 - Trip size limits (in the spec since 1.0.0-draft.9; `internal/httpapi/limits.go`
   also applies them at startup so a spec edit can't loosen them), enforced
   like schema limits (`422` with a pointer): `vehicleId` ≤ 64 characters, `app.version` ≤ 64,
@@ -54,7 +74,7 @@ and validated. Implemented so far:
   list ≤ 128 codes; a trip is at most 16 KiB of JSON, and a page of trips
   ends early (with a cursor) before 512 KiB.
 - `Idempotency-Key` on every operation that declares it (`POST /v1/vehicles`
-  and `POST /v1/trips/batch` so far): a retry with the same key and
+  `POST /v1/trips/batch` and `POST /v1/telemetry/batches` so far): a retry with the same key and
   request gets the stored response, another request under the key `422
   idempotency_key_reused`, a retry while the first runs `409
   idempotency_in_flight` (also on uploads, where a different upload in flight
@@ -66,8 +86,9 @@ and validated. Implemented so far:
 Postgres storage (#105): the schema, goose migrations and sqlc queries for
 members, vehicles, trips with deletion tombstones and sync watermarks,
 telemetry batch metadata and events, DTC reports and idempotency keys are
-in `internal/db` (see [Database](#database)). Members, vehicles, trips and
-idempotency keys are stored in Postgres when `DATABASE_URL` is set; the
+in `internal/db` (see [Database](#database)). Members, vehicles, trips,
+telemetry metadata and events, and idempotency keys are stored in Postgres
+when `DATABASE_URL` is set; the
 handlers for the other resources are still `501` and will use the queries as
 they land. Nothing purges tombstones or expired idempotency keys yet (the
 queries exist; the job is to come).
@@ -142,6 +163,11 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `SYNC_TOKEN_KEY`   | none         | Base64 secret (at least 32 bytes) that signs trip sync tokens and page cursors. Required unless `ENV` is `local`/`ci`/`sandbox`, where a missing one is generated at startup (tokens then die with the process). Rotating it expires every client's token: they do one full walk. |
 | `SYNC_DEPLOYMENT_ID` | `dev-<ENV>` in `local`/`ci`/`sandbox` | Names this deployment of the database in sync tokens and cursors, together with the cluster's `system_identifier` (`[A-Za-z0-9._:-]`, up to 64, e.g. `prod-2026-10-25`). Required unless `ENV` is `local`/`ci`/`sandbox`. **Change it after every restore, PITR or branch reset**, with a full restart (see "Restoring the database"). The `dev-<ENV>` default is for dev environments only and never changes, so a restore of a dev database onto the same cluster goes undetected unless you set one (the server warns at startup when it uses the default). |
 | `SYNC_IDENTITY_SOURCE` | `cluster_and_deployment_id` | What sync tokens bind. `cluster_and_deployment_id`: the cluster's `system_identifier` and `SYNC_DEPLOYMENT_ID`; the role must be allowed to run `pg_control_system()`, or the server doesn't start, and the server refuses to serve if the endpoint starts reaching another cluster. `deployment_id_only`: `SYNC_DEPLOYMENT_ID` only, for roles that can't (`system_identifier` isn't read, and cluster switches go unnoticed: change `SYNC_DEPLOYMENT_ID` and restart on any cluster change). Every instance must use the same value. |
+| `TELEMETRY_STORE`  | `r2`; `memory` in `local`/`ci`/`sandbox` | Where raw telemetry samples go: `r2` (Cloudflare R2 through its S3 API; the only value allowed outside `local`/`ci`/`sandbox`), `dir` (files under `TELEMETRY_DIR`, dev only) or `memory` (dev only; lost on restart, while the batch rows stay in Postgres, so read-back then skips those samples and logs an error). |
+| `TELEMETRY_DIR`    | none         | Directory for `TELEMETRY_STORE=dir`. |
+| `R2_ENDPOINT`      | none         | With `TELEMETRY_STORE=r2`: `https://<account id>.r2.cloudflarestorage.com` (`http` only in dev environments, e.g. a local S3-compatible server). |
+| `R2_BUCKET`        | none         | With `r2`: the bucket. Keep it private (no public access). |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | none | With `r2`: an R2 API token's S3 credentials, scoped to the bucket with object read and write. Secrets: keep them in the host's secret store, never in the repo. Bad credentials don't stop startup; uploads then answer `503`. |
 | `DB_MAX_CONNS`     | `10`         | Postgres pool size (1–200). |
 | `MIGRATE_ON_START` | `false`      | `true` applies pending migrations at startup (an advisory lock serialises instances). Otherwise run `server migrate up` as a release step. |
 
@@ -157,9 +183,10 @@ a sync token key: `openssl rand -base64 32`.
 | `internal/api`           | **Generated** strict server + models (`api.gen.go`) and 501 stubs (`stubs.gen.go`) |
 | `internal/httpapi`       | Router, middleware, OpenAPI validation, handlers |
 | `internal/auth`          | ES256 access tokens, member store interface, test-mode codes |
-| `internal/store`         | Storage interfaces and domain types the handlers use (vehicles, trips, idempotency keys) |
-| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member, vehicle, trip and idempotency stores |
+| `internal/store`         | Storage interfaces and domain types the handlers use (vehicles, trips, telemetry, idempotency keys) |
+| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member, vehicle, trip, telemetry and idempotency stores |
 | `internal/synctoken`     | HMAC-signed sync tokens and page cursors |
+| `internal/objstore`      | Object storage for raw telemetry: R2 (S3 API), a local directory, or memory |
 | `internal/db/dbgen`      | **Generated** by sqlc from `queries/` and `migrations/` (`sqlc.yaml`) |
 | `internal/db/dbtest`     | Throwaway databases for integration tests |
 | `internal/config`        | Environment config (fails closed) |
@@ -295,7 +322,7 @@ Schema overview (`internal/db/migrations`):
 | `vehicles` | Vehicle fields, `version` (ETag), `archived`. A live vehicle needs only `fuel_type`; `make` and `model` may be NULL (00008). A deleted vehicle with a `clientVehicleId` stays as a data-less tombstone row (`deleted_at` set) so `POST /v1/vehicles` can answer `410`; unique `(member_id, client_vehicle_id)`. |
 | `trips` | Trip summaries (including `over_speed_count`, `fuel_cut_count` and `end_reason`, 00009), unique `(member_id, client_trip_id)`. Deleting clears every data column and sets `deleted_at` (the tombstone). `writer_xid` is set to `pg_current_xact_id()` by a trigger on every write. A batch upload holds `FOR SHARE` locks on its live vehicles, so a vehicle delete (and its cascade) waits for it or runs first, and the batch then rejects its trips with `vehicle_not_found`. |
 | `trip_purge_boundaries` | Per member, the latest `deleted_at` and highest `writer_xid` among purged trip tombstones; sync tokens at or below it get `sync_window_expired`. |
-| `telemetry_batches` | One row per uploaded batch: `clientBatchId` (unique per member), counts for duplicate replies, sample time range, object-storage key (raw batches go to R2 with #110). |
+| `telemetry_batches` | One row per uploaded batch: `clientBatchId` (unique per member), counts for duplicate replies, sample time range, object-storage key of its samples (NULL for a batch without samples). An upload share-locks its vehicle, then takes a per-trip advisory lock (shared; trip and cascade deletes take it exclusively), then share-locks the trip row, so a delete never leaves a batch behind its tombstone, even for a trip created and deleted while the upload ran. |
 | `trip_events` | Driving events, de-duplicated on insert by `clientEventId` and by the fallback key (`client_trip_id`, `t`, `type`, `active`, `dtc`; `NULLS NOT DISTINCT`). |
 | `dtc_reports` | DTC read/clear records, unique `(member_id, client_report_id)`. `mil` is NULL when unknown (00010). |
 | `idempotency_keys` | `Idempotency-Key` per (member, method, route template): fingerprint, in-progress lease and claim token (only the current claim can complete or release it), stored response, expiry (an expired key counts as absent). |
