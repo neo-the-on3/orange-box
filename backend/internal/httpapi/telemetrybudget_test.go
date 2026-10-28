@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/neo-the-on3/orange-box/backend/internal/api"
 )
 
 // pidsJSON is a pids object with n entries, keyed 0x00, 0x01, ...
@@ -118,5 +120,28 @@ func TestSampleReadBackBounded(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("walk returned %d samples, want %d (in order, once each)", len(got), len(want))
+	}
+}
+
+// Telemetry operations answer 503 when object storage or the database is
+// unavailable, so each declares it.
+func TestTelemetryOperationsDeclare503(t *testing.T) {
+	t.Parallel()
+	doc, err := api.GetSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, method := range map[string]string{
+		"/v1/telemetry/batches":      http.MethodPost,
+		"/v1/trips/{tripId}/samples": http.MethodGet,
+		"/v1/trips/{tripId}/events":  http.MethodGet,
+	} {
+		item := doc.Paths.Find(path)
+		if item == nil || item.GetOperation(method) == nil {
+			t.Fatalf("no %s %s", method, path)
+		}
+		if item.GetOperation(method).Responses.Status(http.StatusServiceUnavailable) == nil {
+			t.Errorf("%s %s doesn't declare 503", method, path)
+		}
 	}
 }
