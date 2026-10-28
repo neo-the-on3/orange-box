@@ -40,6 +40,7 @@ func TestStorageErrorsAre503(t *testing.T) {
 		"idle in tx timeout": {fmt.Errorf("upsert: %w", &pgconn.PgError{Code: "25P03"}), http.StatusServiceUnavailable, "server_busy", "1"},
 		"idle session":       {&pgconn.PgError{Code: "57P05"}, http.StatusServiceUnavailable, "server_busy", "1"},
 		"deadline":           {fmt.Errorf("acquire: %w", context.DeadlineExceeded), http.StatusServiceUnavailable, "server_busy", "1"},
+		"kept racing":        {fmt.Errorf("dtc reports: create kept racing a delete: %w", db.ErrKeptRacing), http.StatusServiceUnavailable, "server_busy", "1"},
 		"unreachable":        {&pgconn.PgError{Code: "08006"}, http.StatusServiceUnavailable, "service_unavailable", "5"},
 		"other":              {errors.New("boom"), http.StatusInternalServerError, "internal_error", ""},
 	} {

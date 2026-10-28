@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,7 +80,7 @@ func (s *DtcReports) CreateDtcReport(ctx context.Context, member, vehicle uuid.U
 				return nil
 			}
 		}
-		return errors.New("dtc reports: create kept racing a delete; retry")
+		return fmt.Errorf("dtc reports: create kept racing a delete: %w", ErrKeptRacing)
 	})
 	if err != nil {
 		return store.DtcReport{}, 0, err

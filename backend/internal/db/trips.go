@@ -530,7 +530,7 @@ func upsertOne(ctx context.Context, q *dbgen.Queries, member uuid.UUID, it store
 			return store.UpsertResult{Outcome: store.TripUnchanged, ID: cur.ID}, nil
 		}
 	}
-	return store.UpsertResult{}, errors.New("trips: upsert kept racing a purge; retry")
+	return store.UpsertResult{}, fmt.Errorf("trips: upsert kept racing a purge: %w", ErrKeptRacing)
 }
 
 func upsertParams(member uuid.UUID, it store.TripUpload) dbgen.UpsertTripParams {
