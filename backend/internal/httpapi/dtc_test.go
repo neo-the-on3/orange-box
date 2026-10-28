@@ -58,6 +58,9 @@ func TestDtcReportCreate(t *testing.T) {
 		rep["odometerKm"] != float64(42000) || rep["distanceSinceMilKm"] != float64(12) || rep["clientTripId"] != nil {
 		t.Fatalf("created: %s", r.body)
 	}
+	if loc := r.header.Get("Location"); loc != "" {
+		t.Errorf("201 has Location %q; there is no single-report URL", loc)
+	}
 	if _, ok := rep["permanent"]; ok {
 		t.Errorf("a list left out came back: %s", r.body)
 	}
@@ -74,6 +77,9 @@ func TestDtcReportCreate(t *testing.T) {
 	dup := m.postDtc(vehicle, clearedReport(clientID, "2026-10-24T00:00:00Z"))
 	if dup.status != http.StatusOK || dup.json(t)["id"] != id || dup.json(t)["kind"] != "read" {
 		t.Fatalf("duplicate clientReportId: %d %s", dup.status, dup.body)
+	}
+	if loc := dup.header.Get("Location"); loc != "" {
+		t.Errorf("200 has Location %q", loc)
 	}
 
 	// A read whose MIL couldn't be read, gzipped.

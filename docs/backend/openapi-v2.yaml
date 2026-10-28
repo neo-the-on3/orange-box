@@ -1300,15 +1300,13 @@ paths:
         '200':
           description: Replay. A report with this `clientReportId` (or `Idempotency-Key`) already exists; it is returned unchanged.
           headers:
-            Location: {$ref: '#/components/headers/Location'}
             X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DtcReport'}
         '201':
-          description: Created
+          description: Created. There is no URL for a single report, so no `Location`.
           headers:
-            Location: {$ref: '#/components/headers/Location'}
             X-Request-Id: {$ref: '#/components/headers/X-Request-Id'}
           content:
             application/json:
