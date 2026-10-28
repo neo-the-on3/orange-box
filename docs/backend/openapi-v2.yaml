@@ -1180,6 +1180,10 @@ paths:
         - $ref: '#/components/parameters/TripId'
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 5000, default: 1000}}
         - $ref: '#/components/parameters/Cursor'
+      description: |
+        Samples in `t` order, one per `t`. A page holds up to `limit` samples but ends early, with a `nextCursor`,
+        before its items pass 2 MiB of JSON, and always returns at least one item. A page with fewer than `limit`
+        items therefore doesn't mean the end: only `nextCursor: null` does.
       responses:
         '200':
           description: Page of samples
@@ -2111,7 +2115,8 @@ components:
             z: {type: number, format: double}
         pids:
           type: object
-          description: Extra SAE J1979 mode 01 values keyed by hex PID (e.g. `"0x0B"`), already scaled to SI units.
+          maxProperties: 256
+          description: Extra SAE J1979 mode 01 values keyed by hex PID (e.g. `"0x0B"`), already scaled to SI units. At most 256 entries (one per mode 01 PID); more is `422` at `/samples/{i}/pids`.
           additionalProperties: {type: number, format: double}
     Event:
       type: object

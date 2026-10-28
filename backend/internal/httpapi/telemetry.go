@@ -51,6 +51,11 @@ const (
 	// maxObjectBytes bounds an inflated sample object on read-back (a full
 	// batch is about 1.5 MB of JSON).
 	maxObjectBytes = 16 << 20
+	// samplePageBudget caps the JSON of a page of samples: a page ends
+	// early, with a nextCursor, before its items pass it (always with at
+	// least one item). A full page of ordinary 1 Hz samples (about 300 B
+	// each) is about 1.5 MB, so only samples with many pids end early.
+	samplePageBudget = 2 << 20
 )
 
 // sampleObjectVersion is the format version of a stored sample object.
@@ -420,10 +425,26 @@ func invalidCursor() *problem.Problem {
 	return problem.New(http.StatusBadRequest, problem.CodeBadRequest, "The cursor is invalid or has expired.")
 }
 
-// candidate is a sample read back, with the batch it came from.
+// candidate is a sample read back, with the batch it came from and the
+// size of its JSON.
 type candidate struct {
 	sample api.Sample
 	batch  uuid.UUID
+	size   int
+}
+
+// samplePage returns how many of the candidates at ts (sorted) make the
+// page: at most limit, and no more than fit in samplePageBudget, but at
+// least one.
+func samplePage(ts []int64, cands map[int64]candidate, limit int) int {
+	size := 0
+	for n, t := range ts {
+		if n == limit || (n > 0 && size+cands[t].size+1 > samplePageBudget) {
+			return n
+		}
+		size += cands[t].size + 1
+	}
+	return len(ts)
 }
 
 // ListTripSamples implements GET /v1/trips/{tripId}/samples: the trip's
@@ -458,23 +479,29 @@ func (s *Server) ListTripSamples(ctx context.Context, req api.ListTripSamplesReq
 	}
 
 	cands := map[int64]candidate{}
-	// threshold is the (limit+1)-th smallest t known, once there are that many.
-	threshold := func() (time.Time, bool) {
-		if len(cands) <= limit {
-			return time.Time{}, false
-		}
-		ts := slices.Sorted(func(yield func(int64) bool) {
+	sorted := func() []int64 {
+		return slices.Sorted(func(yield func(int64) bool) {
 			for t := range cands {
 				if !yield(t) {
 					return
 				}
 			}
 		})
-		// Keep only the limit+1 smallest: larger ones can't be on this page.
-		for _, t := range ts[limit+1:] {
+	}
+	// threshold is the t of the first known sample past the page (the
+	// page ends at limit samples or at samplePageBudget bytes), once there
+	// is one. Only a sample before it can still change the page, so
+	// candidates after it are dropped: memory stays within about one page.
+	threshold := func() (time.Time, bool) {
+		ts := sorted()
+		n := samplePage(ts, cands, limit)
+		if n == len(ts) {
+			return time.Time{}, false
+		}
+		for _, t := range ts[n+1:] {
 			delete(cands, t)
 		}
-		return time.UnixMilli(ts[limit]).UTC(), true
+		return time.UnixMilli(ts[n]).UTC(), true
 	}
 	var afterBatch *store.SampleBatch
 read:
@@ -501,31 +528,40 @@ read:
 			if err != nil {
 				return nil, fmt.Errorf("telemetry object of batch %s: %w", b.ID, err)
 			}
+			th, bounded := threshold()
 			for _, smp := range o.Samples {
 				t := smp.T.UnixMilli()
 				if after != nil && t <= after.UnixMilli() {
 					continue
 				}
+				if bounded && smp.T.After(th) {
+					break // samples are sorted; none of the rest can be on the page
+				}
 				if c, ok := cands[t]; ok && bytes.Compare(c.batch[:], b.ID[:]) <= 0 {
 					continue // the earliest stored batch wins
 				}
-				cands[t] = candidate{sample: smp, batch: b.ID}
+				js, err := json.Marshal(smp)
+				if err != nil {
+					return nil, err
+				}
+				cands[t] = candidate{sample: smp, batch: b.ID, size: len(js)}
 			}
+			o.Samples = nil // let the decoded object go before the next one
 		}
 		if len(batches) < sampleBatchChunk {
 			break
 		}
 		afterBatch = &batches[len(batches)-1]
 	}
-	items := make([]api.Sample, 0, min(len(cands), limit))
-	for _, c := range cands {
-		items = append(items, c.sample)
+	ts := sorted()
+	n := samplePage(ts, cands, limit)
+	items := make([]api.Sample, n)
+	for i, t := range ts[:n] {
+		items[i] = cands[t].sample
 	}
-	slices.SortFunc(items, func(a, b api.Sample) int { return a.T.Compare(b.T.Time) })
 	next := ""
-	if len(items) > limit {
-		items = items[:limit]
-		next = encodeSampleCursor(items[limit-1].T.Time)
+	if n < len(ts) {
+		next = encodeSampleCursor(items[n-1].T.Time)
 	}
 	return api.ListTripSamples200JSONResponse{Items: items, NextCursor: api.NullIfEmpty(next)}, nil
 }
