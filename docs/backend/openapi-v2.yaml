@@ -990,7 +990,9 @@ paths:
       description: |
         Each trip is keyed by its client-generated `clientTripId`. A trip may be sent several times while
         `state=in_progress` (the app sends periodic snapshots) and finally with `state=completed`; the server
-        upserts by (member, `clientTripId`) and ignores snapshots older than the stored `snapshotAt`.
+        upserts by (member, `clientTripId`) and ignores snapshots older than the stored `snapshotAt`. A newer
+        snapshot replaces every field, `vehicleId` included, so it can move the trip to another of the caller's
+        vehicles; the trip's telemetry moves with it (see `POST /v1/telemetry/batches`).
         A `completed` trip is immutable except for deletion. Per-item results are returned; the batch as a whole
         succeeds (`200`) even if some items are rejected.
 
@@ -1254,6 +1256,9 @@ paths:
         has already arrived, `vehicleId` must also be the trip's vehicle, otherwise `422` at `/vehicleId` (a
         stored `clientBatchId` is still a `duplicate`). Telemetry sent before its summary goes with the trip's
         vehicle once the summary arrives: a cascade vehicle delete removes it only if the trip is that vehicle's.
+        A newer trip snapshot may move the trip to another vehicle (`POST /v1/trips/batch`). From then on the new
+        vehicle is the one that counts: uploads naming the old vehicle get `422`, and batches already stored stay
+        with the trip, whichever vehicle they named.
 
         Size limits: at most 5,000 samples and 500 events per batch (more is `422` with a pointer), and at most
         1 MiB compressed / 8 MiB uncompressed and 500,000 JSON values per body (more is `413`); see Conventions →
