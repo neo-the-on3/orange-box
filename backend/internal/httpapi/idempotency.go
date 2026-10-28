@@ -39,8 +39,8 @@ import (
 //
 // An operation may register a replay guard that can override a stored
 // replay (POST /v1/vehicles: a deletion tombstone beats it with 410), or a
-// rewrite that adjusts it (POST /v1/trips/batch: items deleted since are
-// replayed as trip_deleted).
+// rewrite that adjusts it (POST /v1/trips/batch and /v1/telemetry/batches:
+// what has been deleted since is replayed as trip_deleted).
 
 const (
 	idempotencyTTL = 24 * time.Hour
@@ -59,9 +59,10 @@ var replayedHeaders = []string{"Content-Type", "ETag", "Location"}
 type replayGuard func(ctx context.Context, member uuid.UUID, body []byte) (*problem.Problem, error)
 
 // replayRewrite may change a stored response body before it is replayed
-// (POST /v1/trips/batch: items whose trip has since been deleted become
-// trip_deleted). It returns stored unchanged when nothing applies.
-type replayRewrite func(ctx context.Context, member uuid.UUID, status int, stored []byte) ([]byte, error)
+// (POST /v1/trips/batch and /v1/telemetry/batches: what has since been
+// deleted becomes trip_deleted). body is the (decompressed) request body.
+// It returns stored unchanged when nothing applies.
+type replayRewrite func(ctx context.Context, member uuid.UUID, body []byte, status int, stored []byte) ([]byte, error)
 
 type idempotency struct {
 	store    store.Idempotency
@@ -218,7 +219,7 @@ func (m *idempotency) replay(w http.ResponseWriter, r *http.Request, route *rout
 	out := rec.Body
 	if rewrite := m.rewrites[strings.ToLower(route.Operation.OperationID)]; rewrite != nil {
 		var err error
-		if out, err = rewrite(r.Context(), member, rec.Status, rec.Body); err != nil {
+		if out, err = rewrite(r.Context(), member, body, rec.Status, rec.Body); err != nil {
 			m.fail(w, r, err)
 			return
 		}

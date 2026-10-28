@@ -20,6 +20,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/api"
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
 	"github.com/neo-the-on3/orange-box/backend/internal/db/dbtest"
+	"github.com/neo-the-on3/orange-box/backend/internal/objstore"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 )
 
@@ -44,6 +45,8 @@ func newDBTestEnvPool(t *testing.T) (*testEnv, *pgxpool.Pool) {
 		d.Profiles = db.NewMembers(pool)
 		d.Vehicles = db.NewVehicles(pool)
 		d.Trips = trips
+		d.Telemetry = db.NewTelemetry(pool)
+		d.Objects = objstore.NewMemory()
 		d.DtcReports = db.NewDtcReports(pool)
 		d.Idempotency = db.NewIdempotency(pool)
 		d.ClassifyError = db.Classify
