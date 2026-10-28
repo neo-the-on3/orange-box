@@ -1,5 +1,6 @@
 package io.github.neotheon3.orangebox.core.obd
 
+import io.github.neotheon3.orangebox.core.common.ConnectionLog
 import io.github.neotheon3.orangebox.core.common.OrangeLog
 import io.github.neotheon3.orangebox.core.common.runCatchingCancellable
 import kotlinx.coroutines.sync.Mutex
@@ -80,6 +81,10 @@ class Elm327Session(
             OrangeLog.Areas.OBD, "protocol_detected", "protocol" to protocol.name, "can" to protocol.isCan, "adapter" to id,
             "ecus" to probeResponders, "response_count" to (fastPolling && protocol.isCan && probeResponders == 1),
         )
+        // Session header of the connection log (#200): what explains the rest of the session.
+        ConnectionLog.pin("adapter", id.ifEmpty { "?" })
+        ConnectionLog.pin("protocol", "${protocol.name} can=${protocol.isCan} ecus=$probeResponders response_count=${fastPolling && protocol.isCan && probeResponders == 1}")
+        ConnectionLog.pin("voltage_at_connect", voltage?.let { "$it V" } ?: "?")
         return Elm327Info(id, protocol, voltage).also { info = it }
     }
 
@@ -171,7 +176,10 @@ class Elm327Session(
             bitmaps[base] = data
             if (data[3] and 0x01 == 0) break // next bitmap not supported
         }
-        return io.github.neotheon3.orangebox.core.obd.pid.SupportedPids.fromBitmaps(bitmaps)
+        return io.github.neotheon3.orangebox.core.obd.pid.SupportedPids.fromBitmaps(bitmaps).also { supported ->
+            ConnectionLog.pin("pid_bitmaps", bitmaps.entries.joinToString(" ") { (base, d) -> "%02X:".format(base) + d.joinToString("") { "%02X".format(it) } })
+            ConnectionLog.pin("supported_pids", supported.all.sorted().joinToString(" ") { "%02X".format(it) })
+        }
     }
 
     /** Reads and decodes one PID; null for unsupported/garbled answers. */

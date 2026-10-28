@@ -109,7 +109,8 @@ class DebugExports @Inject constructor(
             out.write("# Orange Box connection log ${BuildConfig.VERSION_NAME}, exported ${IsoUtc.format(System.currentTimeMillis())}\n")
             out.write("# Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}), ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n")
             out.write("# Debug build: contains raw ELM327 traffic incl. VIN replies and the dongle address.\n")
-            out.write("# Kinds: CONNECT/OPEN/CLOSE transport, TX/RX raw lines (RX with ms since TX), ERR transport errors, LOG app events (state, retries).\n")
+            out.write("# Kinds: CONNECT/OPEN/CLOSE transport, TR request > reply (ms since the request), TX request without a reply, ERR transport errors, LOG app events (state, retries).\n")
+            out.write("# Session headers (adapter, protocol, PID bitmaps, poll plan, vehicle) come first and are kept for the last ${ConnectionLog.MAX_SESSIONS} connections.\n")
             ConnectionLog.writeTo(out)
         }
         OrangeLog.i(OrangeLog.Areas.APP, "debug_export_connection_log", "lines" to ConnectionLog.snapshot().size, "file" to file.name)

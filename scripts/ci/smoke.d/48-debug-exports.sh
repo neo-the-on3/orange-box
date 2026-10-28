@@ -61,7 +61,12 @@ log=$(grep '^connection-log-' "$OUT/exports.txt" | head -n1)
 adb shell cat "$DIR/$log" > "$OUT/connection-log.txt"
 # Earlier steps connected the simulated dongle: its traffic must be in the log.
 grep -q ' CONNECT simulated dongle' "$OUT/connection-log.txt" || { echo "no CONNECT line in the log" >&2; exit 1; }
-grep -Eq ' TX AT' "$OUT/connection-log.txt" || { echo "no AT init TX lines in the log" >&2; exit 1; }
-grep -Eq ' RX .*\([0-9]+ms\)' "$OUT/connection-log.txt" || { echo "no timed RX lines in the log" >&2; exit 1; }
+grep -Eq ' TR AT[A-Z0-9@]* > ' "$OUT/connection-log.txt" || { echo "no AT init request/reply lines in the log" >&2; exit 1; }
+grep -Eq ' TR 01[0-9A-F]+ > .*\([0-9]+ms\)$' "$OUT/connection-log.txt" || { echo "no timed PID request/reply lines in the log" >&2; exit 1; }
+# Session header (#200): kept outside the ring buffer, written first.
+grep -Eq '^# session [0-9]+ started ' "$OUT/connection-log.txt" || { echo "no session header in the log" >&2; exit 1; }
+for key in adapter protocol pid_bitmaps supported_pids poll_plan; do
+  grep -Eq "^#   $key: " "$OUT/connection-log.txt" || { echo "session header has no $key" >&2; exit 1; }
+done
 wait_for_regex 'content-desc="More"' exports-home 10
 echo "debug exports smoke OK"
