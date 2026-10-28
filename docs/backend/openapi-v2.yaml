@@ -29,6 +29,9 @@ info:
       `Content-Encoding` on any other operation, returns `415` (`code=unsupported_encoding`). Servers should honour
       `Accept-Encoding: gzip` on responses.
     * **Time**: all timestamps are RFC 3339 / ISO-8601 in UTC with a `Z` suffix (e.g. `2026-10-23T14:05:00Z`).
+      A timestamp sent with an offset is converted to UTC; one whose UTC instant falls outside years 0001-9999
+      (e.g. `9999-12-31T23:59:59-01:00`) is rejected: `422` (`code=validation_failed`, pointing at the field) in a
+      body, `400` in a query parameter. Nothing is stored.
       Calendar dates (`YYYY-MM-DD`) are interpreted in the IANA time zone passed in the `tz` query parameter where
       one exists, otherwise UTC.
     * **Units**: metric units encoded in field names (`distanceKm`, `speedKmh`, `durationS`, `fuelUsedL`,
