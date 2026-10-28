@@ -11,7 +11,6 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Keyless raster tiles under the OSMF tile usage policy (docs/adr/0001-keyless-map-library.md):
@@ -67,7 +66,8 @@ object MapTiles {
      * 403/429 if the server limits us) just leave the tile empty: the route is drawn regardless.
      */
     class Provider(private val client: OkHttpClient, private val template: String = URL_TEMPLATE) : TileStreamProvider {
-        private val loggedFailure = AtomicBoolean(false)
+        /** Failure kinds already logged: each distinct cause once per map, not once per tile (#212). */
+        private val loggedFailures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
         override suspend fun getTileStream(row: Int, col: Int, zoomLvl: Int): InputStream? {
             if (zoomLvl > MAX_ZOOM) return null
@@ -75,20 +75,28 @@ object MapTiles {
             return try {
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        logOnce("http_${response.code}")
+                        logOnce("http", "status" to response.code, "message" to response.message.take(MAX_DETAIL).ifBlank { null })
                         null
                     } else {
                         ByteArrayInputStream(response.body.bytes())
                     }
                 }
             } catch (e: IOException) {
-                logOnce("io")
+                // The cause, so a log tells offline (UnknownHostException) from a timeout or a TLS problem (#212).
+                logOnce("io", "error" to e.javaClass.simpleName, "message" to e.message?.take(MAX_DETAIL))
                 null
             }
         }
 
-        private fun logOnce(reason: String) {
-            if (loggedFailure.compareAndSet(false, true)) OrangeLog.i(OrangeLog.Areas.APP, "map_tiles_unavailable", "reason" to reason)
+        private fun logOnce(reason: String, vararg detail: Pair<String, Any?>) {
+            val key = reason + ":" + detail.firstOrNull()?.second
+            if (loggedFailures.add(key)) {
+                OrangeLog.i(OrangeLog.Areas.APP, "map_tiles_unavailable", "reason" to reason, *detail.filter { it.second != null }.toTypedArray())
+            }
+        }
+
+        private companion object {
+            const val MAX_DETAIL = 120
         }
     }
 }
