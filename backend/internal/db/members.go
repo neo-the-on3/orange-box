@@ -135,6 +135,17 @@ func (s *Members) UpdateProfile(ctx context.Context, member uuid.UUID, check fun
 // row waits for the erasure job (ListMembersPendingErasure, EraseMember).
 // Refresh-token families don't exist yet (#106); revoking them belongs in
 // this transaction once they do.
+//
+// For the erasure job (#218): requests that passed the revocation check
+// just before this commits can still write afterwards (a vehicle create,
+// a trip or telemetry upload), so the member's rows don't stop changing
+// when deleted_at is set. Erasure must therefore delete by member_id when
+// it runs (EraseMember's ON DELETE CASCADE does), never from a list of rows
+// or object keys taken earlier, and must delete the R2 prefix
+// members/<member id>/ the same way, after the rows (#179). Stored
+// Idempotency-Key responses can hold personal data (e.g. a vehicle create
+// echoes its VIN and plate), so the member's idempotency_keys rows must be
+// erased with them (the cascade covers it), not left to the 24 h expiry.
 func (s *Members) DeleteAccount(ctx context.Context, member uuid.UUID) (time.Time, error) {
 	row, err := s.q.MarkMemberDeleted(ctx, member)
 	if errors.Is(err, pgx.ErrNoRows) {
