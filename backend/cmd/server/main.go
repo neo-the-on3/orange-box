@@ -129,6 +129,7 @@ type store struct {
 	members     auth.MemberStore
 	vehicles    storage.Vehicles            // nil without a database
 	trips       *db.Trips                   // nil without a database
+	dtcReports  storage.DtcReports          // nil without a database
 	idempotency storage.Idempotency         // nil without a database
 	classify    func(error) storage.Failure // nil without a database
 	ready       func(context.Context) error // nil when there is nothing to check
@@ -139,7 +140,7 @@ type store struct {
 // (config.Load requires it outside dev environments), in-memory otherwise.
 func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (store, error) {
 	if cfg.DatabaseURL == "" {
-		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle and trip operations answer 501")
+		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle, trip and DTC report operations answer 501")
 		return store{members: auth.NewMemoryMembers(), close: func() {}}, nil
 	}
 	// Pins the pool to the cluster the sync identity binds (blue/green or
@@ -196,6 +197,7 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		trips:       trips,
 		members:     db.NewMembers(pool),
 		vehicles:    db.NewVehicles(pool),
+		dtcReports:  db.NewDtcReports(pool),
 		idempotency: db.NewIdempotency(pool),
 		classify:    db.Classify,
 		ready: func(ctx context.Context) error {
@@ -232,6 +234,7 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		Members:             st.members,
 		Vehicles:            st.vehicles,
 		Trips:               tripStore(st.trips),
+		DtcReports:          st.dtcReports,
 		SyncTokenKey:        cfg.SyncTokenKey,
 		Idempotency:         st.idempotency,
 		ClassifyError:       st.classify,
