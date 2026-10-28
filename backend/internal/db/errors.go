@@ -12,6 +12,12 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
+// ErrKeptRacing means a create or upsert gave up after maxAttempts
+// because the row that blocked it kept vanishing before it could be read
+// (a concurrent delete or purge). Retrying shortly is likely to work, so
+// Classify makes it FailureBusy (503 server_busy with Retry-After).
+var ErrKeptRacing = errors.New("kept racing a concurrent delete; retry")
+
 // Classify sorts a storage error into a store.Failure (#178): lock and
 // statement timeouts (55P03, 57014), deadlocks and serialization failures
 // (40P01, 40001), idle session timeouts (25P03, 57P05) and context deadlines (a pool acquire or query that
@@ -20,6 +26,9 @@ import (
 // auth, 53300, 3D000), a closed pool and ErrClusterChanged are
 // FailureUnavailable.
 func Classify(err error) store.Failure {
+	if errors.Is(err, ErrKeptRacing) {
+		return store.FailureBusy
+	}
 	if errors.Is(err, ErrClusterChanged) {
 		return store.FailureUnavailable
 	}
