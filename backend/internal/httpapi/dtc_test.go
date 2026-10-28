@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/google/uuid"
+
+	"github.com/neo-the-on3/orange-box/backend/internal/api"
 )
 
 // newVehicle creates a vehicle for m and returns its id.
@@ -251,6 +254,26 @@ func TestDtcReportsWithoutDatabase(t *testing.T) {
 	} {
 		if r.status != http.StatusNotImplemented || r.problemCode(t) != "not_implemented" {
 			t.Errorf("%d %s", r.status, r.body)
+		}
+	}
+}
+
+// Both DTC operations answer 503 (server_busy, service_unavailable) with
+// Retry-After when Postgres is busy or unreachable, so the spec declares it
+// on both rather than leaving it to default.
+func TestDtcOperationsDeclare503(t *testing.T) {
+	t.Parallel()
+	doc, err := api.GetSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := doc.Paths.Find("/v1/vehicles/{vehicleId}/dtc-reports")
+	if item == nil {
+		t.Fatal("no DTC reports path")
+	}
+	for method, op := range map[string]*openapi3.Operation{"POST": item.Post, "GET": item.Get} {
+		if op == nil || op.Responses.Status(http.StatusServiceUnavailable) == nil {
+			t.Errorf("%s %s doesn't declare 503", method, "/v1/vehicles/{vehicleId}/dtc-reports")
 		}
 	}
 }

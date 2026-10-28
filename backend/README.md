@@ -238,7 +238,9 @@ strict handlers.
   soon as the inflated output passes 8 MiB. Other bodies are limited to
   16 KiB.
 - Validation errors are `422` (`validation_failed`) with JSON pointers,
-  including integers sent as `415.0`, `1e3` or out of range; bad
+  including integers sent as `415.0`, `1e3` or out of range, and
+  timestamps whose UTC instant falls outside years 0001-9999 (a
+  query timestamp out of range is a `400`); bad
   parameters, malformed JSON or a missing body are `400`; a wrong
   `Content-Type` is `415`. Messages are built from the schema and never echo
   submitted values.
