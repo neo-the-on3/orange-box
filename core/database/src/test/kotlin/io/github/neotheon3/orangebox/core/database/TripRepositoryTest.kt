@@ -116,4 +116,37 @@ class TripRepositoryTest {
         assertEquals(totals.harshEvents, viaDefault.harshEvents)
         db.close()
     }
+
+    @Test fun `an excluded trip leaves the totals, survives checkpoints, and delete removes it with its rows (#211)`() = runBlocking {
+        val db = open()
+        val repo = RoomTripRepository(db.tripDao(), db.syncDao()) { 42L }
+        suspend fun add(start: Long, km: Double): TripEntity {
+            val t = repo.start(TripEntity(vehicleId = null, startedAtMillis = start, lastSampleAtMillis = start))
+            val done = t.copy(endedAtMillis = start + 600_000, distanceKm = km, durationS = 600.0)
+            repo.checkpoint(
+                done,
+                listOf(TripSampleEntity(tripId = t.id, timestampMillis = start + 1, speedKph = 50.0, rpm = 1800.0, fuelFlowLph = 2.0, coolantC = 85.0)),
+                listOf(TripEventEntity(tripId = t.id, timestampMillis = start + 2, type = "fuel_cut", value = 50.0, durationS = 2.0)),
+            )
+            return done
+        }
+        val keep = add(1_000, 10.0)
+        val wrong = add(2_000, 90.0)
+        repo.setExcludedFromStats(wrong.id, true)
+        assertEquals(1, repo.totals(0, 10_000).trips)
+        assertEquals(10.0, repo.totals(0, 10_000).distanceKm, 1e-9)
+        // A stale in-memory copy (the recorder's) doesn't put it back.
+        repo.checkpoint(wrong, emptyList(), emptyList())
+        assertEquals(true, repo.trip(wrong.id)!!.excludedFromStats)
+        assertEquals("the trip itself is unchanged", 90.0, repo.trip(wrong.id)!!.distanceKm, 1e-9)
+        repo.setExcludedFromStats(wrong.id, false)
+        assertEquals(2, repo.totals(0, 10_000).trips)
+
+        repo.delete(wrong.id)
+        assertNull(repo.trip(wrong.id))
+        assertEquals(0, repo.samples(wrong.id).size)
+        assertEquals(0, repo.events(wrong.id).size)
+        assertEquals(listOf(keep.id), repo.trips.first().map { it.id })
+        db.close()
+    }
 }

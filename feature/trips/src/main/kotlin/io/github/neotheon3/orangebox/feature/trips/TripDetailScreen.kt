@@ -36,6 +36,9 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -76,8 +79,15 @@ fun TripDetailRoute(onBack: () -> Unit, viewModel: TripDetailViewModel = hiltVie
     TripDetailScreen(
         state, tiles, onBack = onBack, onTilesChanged = viewModel::setTilesEnabled,
         move = MoveTripsActions(viewModel::startMove, viewModel::selectMoveTarget, viewModel::confirmMove, viewModel::dismissMove),
+        trip = TripActions(onExcludedChanged = viewModel::setExcludedFromStats, onDelete = { viewModel.delete(onBack) }),
     )
 }
+
+/** #211: per-trip actions in the overflow menu, for finished trips. */
+data class TripActions(
+    val onExcludedChanged: (Boolean) -> Unit = {},
+    val onDelete: () -> Unit = {},
+)
 
 /** Trip detail (Material 3): route map (#44), summary metrics, charts (#45) and events. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,8 +110,24 @@ fun TripDetailScreen(
     /** System bars and cutouts to keep clear of; in landscape 3-button navigation sits on a side (#188). */
     contentInsets: WindowInsets = WindowInsets.safeDrawing,
     move: MoveTripsActions = MoveTripsActions(),
+    trip: TripActions = TripActions(),
 ) {
     state.moveDialog?.let { MoveTripsDialogView(it, move) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            modifier = Modifier.testTag("trip_detail_delete_dialog"),
+            title = { Text(stringResource(R.string.trip_detail_delete_title)) },
+            text = { Text(stringResource(R.string.trip_detail_delete_message)) },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; trip.onDelete() }, modifier = Modifier.testTag("trip_detail_delete_confirm")) {
+                    Text(stringResource(R.string.trip_detail_delete_confirm), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.trip_detail_delete_cancel)) } },
+        )
+    }
     Scaffold(
         contentWindowInsets = contentInsets,
         topBar = {
@@ -124,7 +150,15 @@ fun TripDetailScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.trips_back))
                     }
                 },
-                actions = { MapMenu(state.tilesEnabled, onTilesChanged) },
+                actions = {
+                    val header = state.detail?.header
+                    MapMenu(
+                        state.tilesEnabled, onTilesChanged,
+                        excluded = header?.takeIf { !it.recording }?.excludedFromStats,
+                        onExcludedChanged = trip.onExcludedChanged,
+                        onDelete = { confirmDelete = true },
+                    )
+                },
             )
         },
     ) { padding ->
@@ -201,7 +235,14 @@ fun TripDetailScreen(
 }
 
 @Composable
-private fun MapMenu(tilesEnabled: Boolean, onTilesChanged: (Boolean) -> Unit) {
+private fun MapMenu(
+    tilesEnabled: Boolean,
+    onTilesChanged: (Boolean) -> Unit,
+    /** Null: no trip actions (still recording, or not loaded). */
+    excluded: Boolean? = null,
+    onExcludedChanged: (Boolean) -> Unit = {},
+    onDelete: () -> Unit = {},
+) {
     var open by remember { mutableStateOf(false) }
     val uri = LocalUriHandler.current
     IconButton(onClick = { open = true }, modifier = Modifier.testTag("trip_detail_more")) {
@@ -218,6 +259,19 @@ private fun MapMenu(tilesEnabled: Boolean, onTilesChanged: (Boolean) -> Unit) {
             text = { Text(stringResource(R.string.trip_detail_report_map_issue)) },
             onClick = { open = false; runCatching { uri.openUri(MapTiles.FIX_THE_MAP_URL) } },
         )
+        if (excluded != null) {
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(stringResource(if (excluded) R.string.trip_detail_include_in_stats else R.string.trip_detail_exclude_from_stats)) },
+                onClick = { open = false; onExcludedChanged(!excluded) },
+                modifier = Modifier.testTag("trip_detail_exclude_toggle"),
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.trip_detail_delete), color = MaterialTheme.colorScheme.error) },
+                onClick = { open = false; onDelete() },
+                modifier = Modifier.testTag("trip_detail_delete"),
+            )
+        }
     }
 }
 

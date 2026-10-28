@@ -105,6 +105,26 @@ class MigrationTest {
         }
     }
 
+    @Test fun `6 to 7 keeps every trip, its samples and events, and counts it in stats (#211)`() {
+        helper.createDatabase(DB, 6).use { db ->
+            db.execSQL("INSERT INTO trips (vehicleId, startedAtMillis, endedAtMillis, lastSampleAtMillis, durationS, distanceKm, fuelLitres, co2Grams, idleS, fuelCutS, ecoS, overspeedS, harshAccelCount, harshBrakeCount, overspeedCount, maxSpeedKph, clientTripId, accountId) VALUES (NULL, 1, 2, 2, 600, 7.5, 0.5, 1100, 30, 12, 300, 0, 1, 0, 0, 82, 'c1', 'm1')")
+            db.execSQL("INSERT INTO trip_samples (tripId, timestampMillis, speedKph, rpm, fuelFlowLph, coolantC, fuelRatePidLph, mafGps) VALUES (1, 1, 40, 1800, 2.5, 90, NULL, 6.1)")
+            db.execSQL("INSERT INTO trip_events (tripId, timestampMillis, type, value, durationS) VALUES (1, 1, 'fuel_cut', 55, 3.5)")
+        }
+        helper.runMigrationsAndValidate(DB, 7, true, *Migrations.ALL).use { db ->
+            db.query("SELECT excludedFromStats, distanceKm, clientTripId, accountId FROM trips").use { c ->
+                assertEquals(1, c.count)
+                c.moveToFirst()
+                assertEquals("existing trips stay in stats", 0, c.getInt(0))
+                assertEquals(7.5, c.getDouble(1), 0.0)
+                assertEquals("c1", c.getString(2))
+                assertEquals("m1", c.getString(3))
+            }
+            db.query("SELECT COUNT(*) FROM trip_samples").use { c -> c.moveToFirst(); assertEquals(1, c.getInt(0)) }
+            db.query("SELECT durationS FROM trip_events").use { c -> c.moveToFirst(); assertEquals(3.5, c.getDouble(0), 0.0) }
+        }
+    }
+
     @Test fun `all migrations reach the current version`() {
         helper.createDatabase(DB, 1).close()
         helper.runMigrationsAndValidate(DB, OrangeBoxDatabase.VERSION, true, *Migrations.ALL).close()

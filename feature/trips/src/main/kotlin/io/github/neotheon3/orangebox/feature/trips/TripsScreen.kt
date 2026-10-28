@@ -270,16 +270,26 @@ private fun TripRow(trip: TripListItem, locale: Locale, orphaned: Boolean = fals
     val period = trip.start.format(day) + ", " + trip.start.format(time) + (trip.end?.let { " – " + it.format(time) } ?: "")
     OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag("trip_row_${trip.id}")) {
         ListItem(
-            overlineContent = if (orphaned) {
-                {
-                    Text(
-                        stringResource(R.string.trips_vehicle_deleted_elsewhere),
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.testTag("trip_orphaned_${trip.id}"),
-                    )
+            overlineContent = when {
+                orphaned -> {
+                    {
+                        Text(
+                            stringResource(R.string.trips_vehicle_deleted_elsewhere),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("trip_orphaned_${trip.id}"),
+                        )
+                    }
                 }
-            } else {
-                null
+                trip.excludedFromStats -> {
+                    {
+                        Text(
+                            stringResource(R.string.trips_excluded_from_stats),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("trip_excluded_${trip.id}"),
+                        )
+                    }
+                }
+                else -> null
             },
             headlineContent = { Text(period) },
             supportingContent = {

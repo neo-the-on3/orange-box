@@ -26,14 +26,27 @@ interface TripRepository {
 
     /** Totals of the finished trips that started in [fromMillis, toMillis) (#46). */
     suspend fun totals(fromMillis: Long, toMillis: Long): TripPeriodTotals = trips.first()
-        .filter { it.endedAtMillis != null && it.startedAtMillis >= fromMillis && it.startedAtMillis < toMillis }
+        .filter { it.endedAtMillis != null && !it.excludedFromStats && it.startedAtMillis >= fromMillis && it.startedAtMillis < toMillis }
         .fold(TripPeriodTotals()) { acc, t -> acc + t }
 
     /** Events of a batch of trips (a few at a time), in time order per trip. */
     suspend fun eventsOf(tripIds: List<Long>): Map<Long, List<TripEventEntity>> = tripIds.associateWith { events(it) }
+
+    /** Leaves a finished trip out of the totals and stats, or puts it back (#211). The trip itself is unchanged. */
+    suspend fun setExcludedFromStats(id: Long, excluded: Boolean) = Unit
+
+    /** Deletes a finished trip with its samples and events (#211); the sync deletes the account's copy too. */
+    suspend fun delete(id: Long) = Unit
 }
 
-class RoomTripRepository @Inject constructor(private val dao: TripDao) : TripRepository {
+class RoomTripRepository(
+    private val dao: TripDao,
+    /** Null in tests that don't delete. */
+    private val sync: SyncDao? = null,
+    private val clock: () -> Long = System::currentTimeMillis,
+) : TripRepository {
+    @Inject constructor(dao: TripDao, sync: SyncDao) : this(dao, sync, System::currentTimeMillis)
+
     override val trips: Flow<List<TripEntity>> = dao.observeTrips()
     /** A trip recorded while signed in belongs to that account. */
     override suspend fun start(trip: TripEntity): TripEntity {
@@ -49,4 +62,9 @@ class RoomTripRepository @Inject constructor(private val dao: TripDao) : TripRep
     override suspend fun samplesOf(tripIds: List<Long>) = dao.samplesOf(tripIds).groupBy { it.tripId }
     override suspend fun totals(fromMillis: Long, toMillis: Long) = dao.totals(fromMillis, toMillis)
     override suspend fun eventsOf(tripIds: List<Long>) = dao.eventsOf(tripIds).groupBy { it.tripId }
+    override suspend fun setExcludedFromStats(id: Long, excluded: Boolean) = dao.setExcludedFromStats(id, excluded)
+    override suspend fun delete(id: Long) {
+        val trip = dao.trip(id)?.takeIf { it.endedAtMillis != null } ?: return
+        checkNotNull(sync) { "delete needs the sync DAO" }.deleteTripHere(trip.clientTripId, clock())
+    }
 }

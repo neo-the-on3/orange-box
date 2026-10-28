@@ -19,6 +19,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4),
         AutoMigration(from = 5, to = 6),
+        // 7: trips.excludedFromStats (#211), default 0, so every existing trip still counts.
+        AutoMigration(from = 6, to = 7),
     ],
 )
 abstract class OrangeBoxDatabase : RoomDatabase() {
@@ -28,7 +30,7 @@ abstract class OrangeBoxDatabase : RoomDatabase() {
     abstract fun syncDao(): SyncDao
 
     companion object {
-        const val VERSION = 6
+        const val VERSION = 7
         const val NAME = "orangebox.db"
     }
 }

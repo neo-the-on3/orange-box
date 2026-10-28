@@ -54,6 +54,18 @@ class TripsCalendarTest {
         assertEquals(1, utc.days.single { it.date == LocalDate.of(2026, 10, 4) }.tripCount)
     }
 
+    @Test fun `an excluded trip stays listed and marked but leaves the month summary (#211)`() {
+        val trips = listOf(
+            trip(1, LocalDateTime.of(2026, 10, 3, 8, 0), km = 10.0),
+            trip(2, LocalDateTime.of(2026, 10, 4, 8, 0), km = 90.0).copy(excludedFromStats = true),
+        )
+        val s = TripsCalendar.state(trips, oct, null, TEST_ZONE, today, DayOfWeek.MONDAY)
+        assertEquals(listOf(2L, 1L), s.trips.map { it.id })
+        assertTrue(s.trips.first().excludedFromStats)
+        assertEquals(1, s.summary.trips)
+        assertEquals(10.0, s.summary.distanceKm, 1e-9)
+    }
+
     @Test fun `selecting a day filters the list, other months ignore the selection`() {
         val trips = listOf(trip(1, LocalDateTime.of(2026, 10, 3, 8, 0)), trip(2, LocalDateTime.of(2026, 10, 9, 8, 0)))
         val s = TripsCalendar.state(trips, oct, LocalDate.of(2026, 10, 9), TEST_ZONE, today, DayOfWeek.MONDAY)

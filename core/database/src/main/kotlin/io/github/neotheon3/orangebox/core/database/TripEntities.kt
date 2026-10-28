@@ -41,6 +41,11 @@ data class TripEntity(
      * (or in Fake mode). Kept on sign-out; only that account syncs it. The recorder's checkpoints never change it.
      */
     val accountId: String? = null,
+    /**
+     * The user left this trip out of the totals and stats (#211; schema 7), e.g. one with a wrong reading.
+     * Local only: never uploaded, kept by the recorder and by sync updates.
+     */
+    @ColumnInfo(defaultValue = "0") val excludedFromStats: Boolean = false,
 )
 
 /** About one per second while recording. Location columns are null without a fix or permission. */

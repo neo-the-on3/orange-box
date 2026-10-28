@@ -75,6 +75,19 @@ class TripDetailViewModel internal constructor(
     fun confirmMove() = mover.confirm()
     fun dismissMove() = mover.dismiss()
 
+    /** #211: leave this trip out of the totals and stats, or put it back. */
+    fun setExcludedFromStats(excluded: Boolean) {
+        viewModelScope.launch { repository.setExcludedFromStats(tripId, excluded) }
+    }
+
+    /** #211: delete this (finished) trip, then [onDeleted]. */
+    fun delete(onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            repository.delete(tripId)
+            onDeleted()
+        }
+    }
+
     fun setTilesEnabled(enabled: Boolean) {
         viewModelScope.launch { prefs.setMapTilesEnabled(enabled) }
     }

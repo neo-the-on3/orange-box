@@ -34,4 +34,10 @@ class FakeTripRepository(
     override suspend fun trip(id: Long) = trips.value.firstOrNull { it.id == id }
     override suspend fun samples(tripId: Long) = samplesByTrip[tripId].orEmpty()
     override suspend fun events(tripId: Long) = eventsByTrip[tripId].orEmpty()
+    override suspend fun setExcludedFromStats(id: Long, excluded: Boolean) {
+        trips.update { list -> list.map { if (it.id == id) it.copy(excludedFromStats = excluded) else it } }
+    }
+    override suspend fun delete(id: Long) {
+        trips.update { list -> list.filterNot { it.id == id && it.endedAtMillis != null } }
+    }
 }
