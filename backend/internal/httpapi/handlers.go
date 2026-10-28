@@ -39,8 +39,9 @@ type Server struct {
 	now        func() time.Time
 	ready      func(context.Context) error
 	logger     *slog.Logger
-	vehicles   store.Vehicles // nil without a database
-	trips      store.Trips    // nil without a database
+	vehicles   store.Vehicles   // nil without a database
+	trips      store.Trips      // nil without a database
+	dtcReports store.DtcReports // nil without a database
 	sync       *synctoken.Codec
 }
 
