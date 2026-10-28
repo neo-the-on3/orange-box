@@ -12,6 +12,7 @@ import (
 
 	"github.com/neo-the-on3/orange-box/backend/internal/api"
 	"github.com/neo-the-on3/orange-box/backend/internal/auth"
+	"github.com/neo-the-on3/orange-box/backend/internal/objstore"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
@@ -39,8 +40,10 @@ type Server struct {
 	now        func() time.Time
 	ready      func(context.Context) error
 	logger     *slog.Logger
-	vehicles   store.Vehicles // nil without a database
-	trips      store.Trips    // nil without a database
+	vehicles   store.Vehicles  // nil without a database
+	trips      store.Trips     // nil without a database
+	telemetry  store.Telemetry // nil without a database
+	objects    objstore.Store  // nil without object storage
 	sync       *synctoken.Codec
 }
 

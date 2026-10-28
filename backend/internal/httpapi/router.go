@@ -15,6 +15,7 @@ import (
 
 	"github.com/neo-the-on3/orange-box/backend/internal/api"
 	"github.com/neo-the-on3/orange-box/backend/internal/auth"
+	"github.com/neo-the-on3/orange-box/backend/internal/objstore"
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
@@ -65,6 +66,11 @@ type Deps struct {
 	// Trips stores trips. Nil (no database) makes the trip operations
 	// answer 501.
 	Trips store.Trips
+	// Telemetry stores telemetry batch metadata and events, and Objects
+	// the batches' samples (R2 in production). Without either the
+	// telemetry operations answer 501.
+	Telemetry store.Telemetry
+	Objects   objstore.Store
 	// SyncTokenKey signs sync tokens and trip cursors (SYNC_TOKEN_KEY).
 	// Nil generates an ephemeral key: tokens then expire on restart.
 	SyncTokenKey []byte
@@ -128,6 +134,8 @@ func NewRouter(d Deps) (http.Handler, error) {
 		logger:     d.Logger,
 		vehicles:   d.Vehicles,
 		trips:      d.Trips,
+		telemetry:  d.Telemetry,
+		objects:    d.Objects,
 		sync:       syncCodec,
 	}
 	errs := errorHandlers{logger: d.Logger, classify: d.ClassifyError}
@@ -155,9 +163,12 @@ func NewRouter(d Deps) (http.Handler, error) {
 			store: d.Idempotency,
 			// Outlives the request (its context ends at RequestTimeout), so a
 			// live request is never taken over.
-			lease:    d.RequestTimeout + 2*idempotencyStoreTimeout,
-			guards:   map[string]replayGuard{"createvehicle": srv.createVehicleReplayGuard},
-			rewrites: map[string]replayRewrite{"uploadtrips": srv.uploadTripsReplay},
+			lease:  d.RequestTimeout + 2*idempotencyStoreTimeout,
+			guards: map[string]replayGuard{"createvehicle": srv.createVehicleReplayGuard},
+			rewrites: map[string]replayRewrite{
+				"uploadtrips":          srv.uploadTripsReplay,
+				"uploadtelemetrybatch": srv.uploadTelemetryReplay,
+			},
 			logger:   d.Logger,
 			classify: d.ClassifyError,
 		}

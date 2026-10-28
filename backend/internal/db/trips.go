@@ -582,10 +582,12 @@ func (s *Trips) GetTrip(ctx context.Context, member uuid.UUID, ref store.TripRef
 	return toTrip(row), nil
 }
 
-// DeleteTrip implements store.Trips. The tombstone UPDATE locks the row,
-// so a concurrent snapshot upsert or telemetry upload (which share-locks
-// the trip) either commits first and is erased with it, or runs after and
-// finds the tombstone.
+// DeleteTrip implements store.Trips. It takes the trip's telemetry
+// advisory lock exclusively before the tombstone UPDATE locks the row, so
+// a concurrent telemetry upload (which holds that lock shared, and
+// share-locks the trip row if there is one) either commits first and is
+// erased with it, or runs after and finds the tombstone. A concurrent
+// snapshot upsert is settled by the row lock in the same way.
 func (s *Trips) DeleteTrip(ctx context.Context, member uuid.UUID, ref store.TripRef) ([]string, error) {
 	var keys []string
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -593,6 +595,9 @@ func (s *Trips) DeleteTrip(ctx context.Context, member uuid.UUID, ref store.Trip
 		row, err := liveTrip(ctx, q, member, ref)
 		if err != nil {
 			return err
+		}
+		if err := q.LockClientTripsTelemetry(ctx, dbgen.LockClientTripsTelemetryParams{MemberID: member, ClientTripIds: []uuid.UUID{row.ClientTripID}}); err != nil {
+			return fmt.Errorf("lock trip telemetry: %w", err)
 		}
 		gone, err := q.TombstoneTrip(ctx, dbgen.TombstoneTripParams{MemberID: member, ID: row.ID})
 		if errors.Is(err, pgx.ErrNoRows) {

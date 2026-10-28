@@ -175,6 +175,12 @@ func (s *Vehicles) DeleteVehicle(ctx context.Context, member, id uuid.UUID, chec
 		if !cascade {
 			return nil
 		}
+		// Before tombstoning: a telemetry upload for one of these trips
+		// either commits first (and is deleted below) or finds the
+		// tombstone.
+		if err := q.LockVehicleTripsTelemetry(ctx, dbgen.LockVehicleTripsTelemetryParams{MemberID: member, VehicleID: id}); err != nil {
+			return fmt.Errorf("lock trips telemetry: %w", err)
+		}
 		trips, err := q.TombstoneVehicleTrips(ctx, dbgen.TombstoneVehicleTripsParams{MemberID: member, VehicleID: id})
 		if err != nil {
 			return fmt.Errorf("tombstone trips: %w", err)

@@ -254,6 +254,9 @@ func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 			return
 		}
 		setBody(r, body) // the validator consumed it
+		if info := reqctx.InfoFrom(r.Context()); info != nil {
+			info.BodyBytes = len(body)
+		}
 		if m.idempotency != nil && r.Header.Get("Idempotency-Key") != "" && acceptsIdempotencyKey(route.Operation) {
 			m.idempotency.serve(w, r, route, pathParams, body, next)
 			return

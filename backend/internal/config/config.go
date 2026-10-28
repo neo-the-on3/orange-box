@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +102,30 @@ type Config struct {
 	// connection, that the database endpoint still reaches the cluster
 	// its sync identity was computed for (cluster_and_deployment_id only).
 	SyncClusterCheckInterval time.Duration
+
+	// TelemetryStore (TELEMETRY_STORE) is where raw telemetry samples go:
+	// "r2" (Cloudflare R2; required outside dev environments), or, in
+	// local, ci and sandbox only, "dir" (files under TelemetryDir) or
+	// "memory" (the dev default; lost on restart).
+	TelemetryStore string
+	// TelemetryDir (TELEMETRY_DIR) is the directory of TELEMETRY_STORE=dir.
+	TelemetryDir string
+	// R2 is the bucket of TELEMETRY_STORE=r2.
+	R2 R2Config
+}
+
+// R2Config is a Cloudflare R2 bucket, reached through R2's S3 API.
+type R2Config struct {
+	// Endpoint (R2_ENDPOINT) is the account's S3 endpoint,
+	// https://<account id>.r2.cloudflarestorage.com.
+	Endpoint string
+	// Bucket (R2_BUCKET) holds the telemetry objects.
+	Bucket string
+	// AccessKeyID and SecretAccessKey (R2_ACCESS_KEY_ID,
+	// R2_SECRET_ACCESS_KEY) are an R2 API token's S3 credentials, scoped
+	// to Bucket with object read and write.
+	AccessKeyID     string
+	SecretAccessKey string
 }
 
 // IsDevEnvironment reports whether Env is one of local, ci or sandbox.
@@ -223,6 +248,7 @@ func Load(getenv func(string) string) (Config, error) {
 		c.SyncClusterCheckInterval < 10*time.Second || c.SyncClusterCheckInterval > 30*time.Second {
 		errs = append(errs, errors.New("SYNC_CLUSTER_CHECK_INTERVAL must be a duration from 10s to 30s (default 15s)"))
 	}
+	errs = append(errs, c.loadTelemetryStore(getenv)...)
 	if err := c.LogLevel.UnmarshalText([]byte(orDefault(getenv("LOG_LEVEL"), "info"))); err != nil {
 		errs = append(errs, errors.New("LOG_LEVEL must be debug, info, warn or error"))
 	}
@@ -231,6 +257,51 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid configuration: %w", errors.Join(errs...))
 	}
 	return c, nil
+}
+
+// loadTelemetryStore reads TELEMETRY_STORE and its settings.
+func (c *Config) loadTelemetryStore(getenv func(string) string) []error {
+	var errs []error
+	def := "r2"
+	if c.IsDevEnvironment() {
+		def = "memory"
+	}
+	c.TelemetryStore = orDefault(strings.TrimSpace(getenv("TELEMETRY_STORE")), def)
+	switch c.TelemetryStore {
+	case "r2":
+		c.R2 = R2Config{
+			Endpoint:        strings.TrimSpace(getenv("R2_ENDPOINT")),
+			Bucket:          strings.TrimSpace(getenv("R2_BUCKET")),
+			AccessKeyID:     strings.TrimSpace(getenv("R2_ACCESS_KEY_ID")),
+			SecretAccessKey: strings.TrimSpace(getenv("R2_SECRET_ACCESS_KEY")),
+		}
+		u, err := url.Parse(c.R2.Endpoint)
+		switch {
+		case c.R2.Endpoint == "":
+			errs = append(errs, errors.New("R2_ENDPOINT is required with TELEMETRY_STORE=r2 (https://<account id>.r2.cloudflarestorage.com); TELEMETRY_STORE is r2 unless ENV is local, ci or sandbox"))
+		case err != nil || u.Host == "" || (u.Scheme != "https" && (!c.IsDevEnvironment() || u.Scheme != "http")):
+			errs = append(errs, errors.New("R2_ENDPOINT must be an https URL (http only when ENV is local, ci or sandbox)"))
+		}
+		for _, v := range []struct{ name, value string }{
+			{"R2_BUCKET", c.R2.Bucket}, {"R2_ACCESS_KEY_ID", c.R2.AccessKeyID}, {"R2_SECRET_ACCESS_KEY", c.R2.SecretAccessKey},
+		} {
+			if v.value == "" {
+				errs = append(errs, fmt.Errorf("%s is required with TELEMETRY_STORE=r2", v.name))
+			}
+		}
+	case "dir", "memory":
+		if !c.IsDevEnvironment() {
+			errs = append(errs, fmt.Errorf("TELEMETRY_STORE=%s is only allowed when ENV is local, ci or sandbox; use r2", c.TelemetryStore))
+		}
+		if c.TelemetryStore == "dir" {
+			if c.TelemetryDir = strings.TrimSpace(getenv("TELEMETRY_DIR")); c.TelemetryDir == "" {
+				errs = append(errs, errors.New("TELEMETRY_DIR is required with TELEMETRY_STORE=dir"))
+			}
+		}
+	default:
+		errs = append(errs, errors.New(`TELEMETRY_STORE must be "r2", "dir" or "memory"`))
+	}
+	return errs
 }
 
 // ValidateTestCode checks AUTH_TEST_CODE: exactly 6 ASCII digits, not all

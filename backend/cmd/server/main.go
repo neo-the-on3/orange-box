@@ -19,6 +19,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/db"
 	"github.com/neo-the-on3/orange-box/backend/internal/httpapi"
 	"github.com/neo-the-on3/orange-box/backend/internal/logging"
+	"github.com/neo-the-on3/orange-box/backend/internal/objstore"
 	storage "github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
@@ -129,6 +130,8 @@ type store struct {
 	members     auth.MemberStore
 	vehicles    storage.Vehicles            // nil without a database
 	trips       *db.Trips                   // nil without a database
+	telemetry   storage.Telemetry           // nil without a database
+	objects     objstore.Store              // nil without a database
 	idempotency storage.Idempotency         // nil without a database
 	classify    func(error) storage.Failure // nil without a database
 	ready       func(context.Context) error // nil when there is nothing to check
@@ -139,8 +142,12 @@ type store struct {
 // (config.Load requires it outside dev environments), in-memory otherwise.
 func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (store, error) {
 	if cfg.DatabaseURL == "" {
-		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle and trip operations answer 501")
+		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle, trip and telemetry operations answer 501")
 		return store{members: auth.NewMemoryMembers(), close: func() {}}, nil
+	}
+	objects, err := openObjects(cfg, logger)
+	if err != nil {
+		return store{}, err
 	}
 	// Pins the pool to the cluster the sync identity binds (blue/green or
 	// failover behind the same address); not possible without
@@ -193,6 +200,8 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 	}
 	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
 	return store{
+		telemetry:   db.NewTelemetry(pool),
+		objects:     objects,
 		trips:       trips,
 		members:     db.NewMembers(pool),
 		vehicles:    db.NewVehicles(pool),
@@ -232,6 +241,8 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		Members:             st.members,
 		Vehicles:            st.vehicles,
 		Trips:               tripStore(st.trips),
+		Telemetry:           st.telemetry,
+		Objects:             st.objects,
 		SyncTokenKey:        cfg.SyncTokenKey,
 		Idempotency:         st.idempotency,
 		ClassifyError:       st.classify,
@@ -247,6 +258,38 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		AnonBodyConcurrency: cfg.AnonBodyConcurrency,
 		AnonReadConcurrency: cfg.AnonReadConcurrency,
 	})
+}
+
+// openObjects opens the object store raw telemetry samples go to
+// (TELEMETRY_STORE). It makes no request: a bad R2 credential shows up as
+// 503s on telemetry uploads, not as a failed start.
+func openObjects(cfg config.Config, logger *slog.Logger) (objstore.Store, error) {
+	switch cfg.TelemetryStore {
+	case "r2":
+		s, err := objstore.NewS3(objstore.S3Options{
+			Endpoint: cfg.R2.Endpoint, Bucket: cfg.R2.Bucket,
+			AccessKeyID: cfg.R2.AccessKeyID, SecretAccessKey: cfg.R2.SecretAccessKey,
+		})
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("telemetry samples go to R2", slog.String("bucket", cfg.R2.Bucket))
+		return s, nil
+	case "dir":
+		s, err := objstore.NewDir(cfg.TelemetryDir)
+		if err != nil {
+			return nil, err
+		}
+		logger.Warn("telemetry samples go to a local directory (dev only)", slog.String("dir", cfg.TelemetryDir))
+		return s, nil
+	case "memory":
+		// config.Load only allows this in local, ci and sandbox.
+		logger.Warn("TELEMETRY_STORE=memory: telemetry samples are kept in memory and lost on restart, " +
+			"while their metadata stays in Postgres (read-back then skips them)")
+		return objstore.NewMemory(), nil
+	default:
+		return nil, fmt.Errorf("unknown TELEMETRY_STORE %q", cfg.TelemetryStore)
+	}
 }
 
 // tripStore keeps a nil *db.Trips a nil interface.

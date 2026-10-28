@@ -47,7 +47,7 @@ func TestLoadTestMode(t *testing.T) {
 		{"code trivial", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "true", "AUTH_TEST_CODE": "123456"}, "AUTH_TEST_CODE"},
 		{"mode TRUE", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "TRUE", "AUTH_TEST_CODE": good}, "AUTH_TEST_MODE must be"},
 		{"mode 1", map[string]string{"ENV": "local", "AUTH_TEST_MODE": "1", "AUTH_TEST_CODE": good}, "AUTH_TEST_MODE must be"},
-		{"mode off in prod", map[string]string{"ENV": "production", "AUTH_TEST_MODE": "false", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob", "SYNC_TOKEN_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "SYNC_DEPLOYMENT_ID": "prod-1"}, ""},
+		{"mode off in prod", map[string]string{"ENV": "production", "AUTH_TEST_MODE": "false", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob", "SYNC_TOKEN_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "SYNC_DEPLOYMENT_ID": "prod-1", "TELEMETRY_STORE": "r2", "R2_ENDPOINT": "https://acct.r2.cloudflarestorage.com", "R2_BUCKET": "ob", "R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s"}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,7 +147,8 @@ func TestLoadDatabaseRules(t *testing.T) {
 func TestLoadSyncTokenRules(t *testing.T) {
 	t.Parallel()
 	prod := func(extra ...string) map[string]string {
-		m := map[string]string{"ENV": "production", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob"}
+		m := map[string]string{"ENV": "production", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob",
+			"R2_ENDPOINT": "https://acct.r2.cloudflarestorage.com", "R2_BUCKET": "ob", "R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s"}
 		for i := 0; i+1 < len(extra); i += 2 {
 			m[extra[i]] = extra[i+1]
 		}
@@ -186,7 +187,8 @@ func TestLoadSyncTokenRules(t *testing.T) {
 func TestLoadSyncDeploymentIDRequired(t *testing.T) {
 	t.Parallel()
 	const key = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-	base := map[string]string{"JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob", "SYNC_TOKEN_KEY": key}
+	base := map[string]string{"JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob", "SYNC_TOKEN_KEY": key,
+		"R2_ENDPOINT": "https://acct.r2.cloudflarestorage.com", "R2_BUCKET": "ob", "R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s"}
 	with := func(kv ...string) map[string]string {
 		m := map[string]string{}
 		for k, v := range base {
@@ -226,7 +228,8 @@ func TestLoadSyncDeploymentIDRequired(t *testing.T) {
 func TestLoadSyncIdentitySource(t *testing.T) {
 	t.Parallel()
 	prod := map[string]string{"ENV": "production", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob",
-		"SYNC_TOKEN_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "SYNC_DEPLOYMENT_ID": "prod-1"}
+		"SYNC_TOKEN_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "SYNC_DEPLOYMENT_ID": "prod-1",
+		"TELEMETRY_STORE": "r2", "R2_ENDPOINT": "https://acct.r2.cloudflarestorage.com", "R2_BUCKET": "ob", "R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s"}
 	with := func(v string) map[string]string {
 		m := map[string]string{"SYNC_IDENTITY_SOURCE": v}
 		for k, x := range prod {
@@ -262,5 +265,63 @@ func TestLoadSyncClusterCheckInterval(t *testing.T) {
 		if _, err := Load(env(map[string]string{"ENV": "local", "SYNC_CLUSTER_CHECK_INTERVAL": bad})); err == nil || !strings.Contains(err.Error(), "SYNC_CLUSTER_CHECK_INTERVAL must be") {
 			t.Errorf("%q: %v", bad, err)
 		}
+	}
+}
+
+func TestLoadTelemetryStore(t *testing.T) {
+	t.Parallel()
+	prod := map[string]string{"ENV": "production", "JWT_PRIVATE_KEY": "x", "JWT_KEY_ID": "k", "DATABASE_URL": "postgres://db/ob",
+		"SYNC_TOKEN_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "SYNC_DEPLOYMENT_ID": "prod-1"}
+	r2 := map[string]string{"R2_ENDPOINT": "https://acct.r2.cloudflarestorage.com", "R2_BUCKET": "ob-telemetry",
+		"R2_ACCESS_KEY_ID": "test-access-key", "R2_SECRET_ACCESS_KEY": "test-secret"}
+	merge := func(ms ...map[string]string) map[string]string {
+		out := map[string]string{}
+		for _, m := range ms {
+			for k, v := range m {
+				out[k] = v
+			}
+		}
+		return out
+	}
+	// Dev environments default to memory; production to r2, which needs its settings.
+	if c, err := Load(env(map[string]string{"ENV": "local"})); err != nil || c.TelemetryStore != "memory" {
+		t.Errorf("local default: %q, %v", c.TelemetryStore, err)
+	}
+	c, err := Load(env(merge(prod, r2)))
+	if err != nil || c.TelemetryStore != "r2" || c.R2 != (R2Config{Endpoint: r2["R2_ENDPOINT"], Bucket: "ob-telemetry", AccessKeyID: "test-access-key", SecretAccessKey: "test-secret"}) {
+		t.Errorf("production r2: %+v, %v", c.R2, err)
+	}
+	cases := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{"prod without r2 settings", prod, "R2_ENDPOINT is required"},
+		{"prod without bucket", merge(prod, r2, map[string]string{"R2_BUCKET": ""}), "R2_BUCKET is required"},
+		{"prod without key id", merge(prod, r2, map[string]string{"R2_ACCESS_KEY_ID": ""}), "R2_ACCESS_KEY_ID is required"},
+		{"prod without secret", merge(prod, r2, map[string]string{"R2_SECRET_ACCESS_KEY": " "}), "R2_SECRET_ACCESS_KEY is required"},
+		{"prod http endpoint", merge(prod, r2, map[string]string{"R2_ENDPOINT": "http://acct.r2.cloudflarestorage.com"}), "R2_ENDPOINT must be an https URL"},
+		{"prod bad endpoint", merge(prod, r2, map[string]string{"R2_ENDPOINT": "acct.r2.cloudflarestorage.com"}), "R2_ENDPOINT must be an https URL"},
+		{"prod memory", merge(prod, map[string]string{"TELEMETRY_STORE": "memory"}), "TELEMETRY_STORE=memory is only allowed"},
+		{"prod dir", merge(prod, map[string]string{"TELEMETRY_STORE": "dir", "TELEMETRY_DIR": "/data"}), "TELEMETRY_STORE=dir is only allowed"},
+		{"unknown", map[string]string{"ENV": "local", "TELEMETRY_STORE": "s3"}, "TELEMETRY_STORE must be"},
+		{"dir without path", map[string]string{"ENV": "local", "TELEMETRY_STORE": "dir"}, "TELEMETRY_DIR is required"},
+		{"local dir", map[string]string{"ENV": "local", "TELEMETRY_STORE": "dir", "TELEMETRY_DIR": "/tmp/ob"}, ""},
+		{"local r2 over http (e.g. a local S3 server)", merge(r2, map[string]string{"ENV": "local", "TELEMETRY_STORE": "r2", "R2_ENDPOINT": "http://127.0.0.1:9000"}), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Load(env(tc.env))
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+			if err != nil && strings.Contains(err.Error(), "test-secret") {
+				t.Errorf("error leaks the secret: %v", err)
+			}
+		})
 	}
 }
