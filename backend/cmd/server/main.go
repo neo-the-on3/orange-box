@@ -128,6 +128,7 @@ const poolCloseTimeout = time.Second
 type store struct {
 	members     auth.MemberStore
 	vehicles    storage.Vehicles            // nil without a database
+	profiles    storage.Profiles            // nil without a database
 	trips       *db.Trips                   // nil without a database
 	idempotency storage.Idempotency         // nil without a database
 	classify    func(error) storage.Failure // nil without a database
@@ -139,7 +140,7 @@ type store struct {
 // (config.Load requires it outside dev environments), in-memory otherwise.
 func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (store, error) {
 	if cfg.DatabaseURL == "" {
-		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the vehicle and trip operations answer 501")
+		logger.Warn("DATABASE_URL not set: members are kept in memory and lost on restart, and the profile, vehicle and trip operations answer 501")
 		return store{members: auth.NewMemoryMembers(), close: func() {}}, nil
 	}
 	// Pins the pool to the cluster the sync identity binds (blue/green or
@@ -192,9 +193,11 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 		logger.Info("checking the database cluster", slog.String("interval", cfg.SyncClusterCheckInterval.String()))
 	}
 	logger.Info("using Postgres", slog.Int("max_conns", cfg.DBMaxConns))
+	members := db.NewMembers(pool)
 	return store{
 		trips:       trips,
-		members:     db.NewMembers(pool),
+		members:     members,
+		profiles:    members,
 		vehicles:    db.NewVehicles(pool),
 		idempotency: db.NewIdempotency(pool),
 		classify:    db.Classify,
@@ -231,6 +234,7 @@ func newHandler(cfg config.Config, logger *slog.Logger, st store) (http.Handler,
 		Tokens:              tokens,
 		Members:             st.members,
 		Vehicles:            st.vehicles,
+		Profiles:            st.profiles,
 		Trips:               tripStore(st.trips),
 		SyncTokenKey:        cfg.SyncTokenKey,
 		Idempotency:         st.idempotency,

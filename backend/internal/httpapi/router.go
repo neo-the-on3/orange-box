@@ -62,6 +62,11 @@ type Deps struct {
 	// Idempotency stores Idempotency-Keys. Nil (no database) means the
 	// header is validated but not acted on.
 	Idempotency store.Idempotency
+	// Profiles stores member profiles and account deletion, and is asked on
+	// every authenticated request whether the token was revoked. Nil (no
+	// database) makes the profile operations answer 501 and skips the
+	// check.
+	Profiles store.Profiles
 	// Trips stores trips. Nil (no database) makes the trip operations
 	// answer 501.
 	Trips store.Trips
@@ -128,6 +133,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 		logger:     d.Logger,
 		vehicles:   d.Vehicles,
 		trips:      d.Trips,
+		profiles:   d.Profiles,
 		sync:       syncCodec,
 	}
 	errs := errorHandlers{logger: d.Logger, classify: d.ClassifyError}
@@ -149,6 +155,9 @@ func NewRouter(d Deps) (http.Handler, error) {
 		})
 	if err != nil {
 		return nil, err
+	}
+	if d.Profiles != nil {
+		oa.revocation = &revocationCheck{profiles: d.Profiles, logger: d.Logger, classify: d.ClassifyError}
 	}
 	if d.Idempotency != nil {
 		oa.idempotency = &idempotency{

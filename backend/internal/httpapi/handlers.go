@@ -41,6 +41,7 @@ type Server struct {
 	logger     *slog.Logger
 	vehicles   store.Vehicles // nil without a database
 	trips      store.Trips    // nil without a database
+	profiles   store.Profiles // nil without a database
 	sync       *synctoken.Codec
 }
 

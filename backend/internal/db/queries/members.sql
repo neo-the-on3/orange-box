@@ -14,6 +14,14 @@ WHERE email = @email::text AND deleted_at IS NULL;
 SELECT * FROM members
 WHERE id = @id AND deleted_at IS NULL;
 
+-- name: GetMemberForUpdate :one
+-- PATCH /v1/me: locks the live member so the If-Match check and the write
+-- happen against the version they replace. A concurrent DELETE /v1/me
+-- waits its turn; after it, the member is no longer live.
+SELECT * FROM members
+WHERE id = @id AND deleted_at IS NULL
+FOR UPDATE;
+
 -- name: GetMemberAuthState :one
 -- What the auth middleware checks on every request: the member exists, is
 -- not deleted and the token is not older than tokens_valid_after.
