@@ -4,11 +4,11 @@
 INSERT INTO telemetry_batches (
     id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key,
     accepted_samples, accepted_events, dropped_samples, dropped_events,
-    first_sample_t, last_sample_t, body_bytes
+    first_sample_t, last_sample_t, body_bytes, content_sha256
 ) VALUES (
     @id, @member_id, @client_batch_id, @client_trip_id, @vehicle_id, sqlc.narg(object_key),
     @accepted_samples, @accepted_events, @dropped_samples, @dropped_events,
-    sqlc.narg(first_sample_t), sqlc.narg(last_sample_t), @body_bytes
+    sqlc.narg(first_sample_t), sqlc.narg(last_sample_t), @body_bytes, sqlc.narg(content_sha256)
 )
 ON CONFLICT (member_id, client_batch_id) DO NOTHING
 RETURNING *;
@@ -48,11 +48,18 @@ LIMIT @max_rows;
 -- name: DeleteTelemetry :many
 -- Deletes telemetry (batch metadata and events) of the given trips and, if
 -- vehicle_id is not NULL, every batch uploaded for that vehicle (cascade
--- delete). Returns the object keys to remove from object storage.
+-- delete) unless its trip belongs to another vehicle: telemetry can
+-- arrive before its trip, and the trip's vehicle is the one that counts.
+-- Returns the object keys to remove from object storage.
 WITH batches AS (
     DELETE FROM telemetry_batches tb
     WHERE tb.member_id = @member_id
-      AND (tb.client_trip_id = ANY (@client_trip_ids::uuid[]) OR tb.vehicle_id = sqlc.narg(vehicle_id)::uuid)
+      AND (tb.client_trip_id = ANY (@client_trip_ids::uuid[])
+           OR (tb.vehicle_id = sqlc.narg(vehicle_id)::uuid
+               AND NOT EXISTS (
+                   SELECT 1 FROM trips t
+                   WHERE t.member_id = tb.member_id AND t.client_trip_id = tb.client_trip_id
+                     AND t.vehicle_id <> sqlc.narg(vehicle_id)::uuid)))
     RETURNING tb.client_trip_id, tb.object_key
 ), events AS (
     DELETE FROM trip_events te

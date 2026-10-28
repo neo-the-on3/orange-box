@@ -94,8 +94,9 @@ WHERE member_id = @member_id AND id = @id AND deleted_at IS NULL;
 -- Taken by a telemetry upload before it stores anything: a tombstone means
 -- trip_deleted, and the share lock makes a concurrent trip delete wait until
 -- the upload commits (so the delete then removes its events too). No row
--- means the summary has not arrived yet, which is normal.
-SELECT id, deleted_at FROM trips
+-- means the summary has not arrived yet, which is normal. A live trip's
+-- vehicle_id must be the batch's.
+SELECT id, vehicle_id, deleted_at FROM trips
 WHERE member_id = @member_id AND client_trip_id = @client_trip_id
 FOR SHARE;
 

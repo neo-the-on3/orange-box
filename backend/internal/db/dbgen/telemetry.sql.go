@@ -17,7 +17,12 @@ const deleteTelemetry = `-- name: DeleteTelemetry :many
 WITH batches AS (
     DELETE FROM telemetry_batches tb
     WHERE tb.member_id = $1
-      AND (tb.client_trip_id = ANY ($2::uuid[]) OR tb.vehicle_id = $3::uuid)
+      AND (tb.client_trip_id = ANY ($2::uuid[])
+           OR (tb.vehicle_id = $3::uuid
+               AND NOT EXISTS (
+                   SELECT 1 FROM trips t
+                   WHERE t.member_id = tb.member_id AND t.client_trip_id = tb.client_trip_id
+                     AND t.vehicle_id <> $3::uuid)))
     RETURNING tb.client_trip_id, tb.object_key
 ), events AS (
     DELETE FROM trip_events te
@@ -36,7 +41,9 @@ type DeleteTelemetryParams struct {
 
 // Deletes telemetry (batch metadata and events) of the given trips and, if
 // vehicle_id is not NULL, every batch uploaded for that vehicle (cascade
-// delete). Returns the object keys to remove from object storage.
+// delete) unless its trip belongs to another vehicle: telemetry can
+// arrive before its trip, and the trip's vehicle is the one that counts.
+// Returns the object keys to remove from object storage.
 func (q *Queries) DeleteTelemetry(ctx context.Context, arg DeleteTelemetryParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, deleteTelemetry, arg.MemberID, arg.ClientTripIds, arg.VehicleID)
 	if err != nil {
@@ -58,7 +65,7 @@ func (q *Queries) DeleteTelemetry(ctx context.Context, arg DeleteTelemetryParams
 }
 
 const getTelemetryBatchByClientID = `-- name: GetTelemetryBatchByClientID :one
-SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at FROM telemetry_batches
+SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at, content_sha256 FROM telemetry_batches
 WHERE member_id = $1 AND client_batch_id = $2
 `
 
@@ -85,6 +92,7 @@ func (q *Queries) GetTelemetryBatchByClientID(ctx context.Context, arg GetTeleme
 		&i.LastSampleT,
 		&i.BodyBytes,
 		&i.CreatedAt,
+		&i.ContentSha256,
 	)
 	return i, err
 }
@@ -93,14 +101,14 @@ const insertTelemetryBatch = `-- name: InsertTelemetryBatch :one
 INSERT INTO telemetry_batches (
     id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key,
     accepted_samples, accepted_events, dropped_samples, dropped_events,
-    first_sample_t, last_sample_t, body_bytes
+    first_sample_t, last_sample_t, body_bytes, content_sha256
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10,
-    $11, $12, $13
+    $11, $12, $13, $14
 )
 ON CONFLICT (member_id, client_batch_id) DO NOTHING
-RETURNING id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at
+RETURNING id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at, content_sha256
 `
 
 type InsertTelemetryBatchParams struct {
@@ -117,6 +125,7 @@ type InsertTelemetryBatchParams struct {
 	FirstSampleT    *time.Time
 	LastSampleT     *time.Time
 	BodyBytes       int32
+	ContentSha256   []byte
 }
 
 // Returns no row when this clientBatchId was already stored; the caller
@@ -136,6 +145,7 @@ func (q *Queries) InsertTelemetryBatch(ctx context.Context, arg InsertTelemetryB
 		arg.FirstSampleT,
 		arg.LastSampleT,
 		arg.BodyBytes,
+		arg.ContentSha256,
 	)
 	var i TelemetryBatch
 	err := row.Scan(
@@ -153,6 +163,7 @@ func (q *Queries) InsertTelemetryBatch(ctx context.Context, arg InsertTelemetryB
 		&i.LastSampleT,
 		&i.BodyBytes,
 		&i.CreatedAt,
+		&i.ContentSha256,
 	)
 	return i, err
 }
@@ -258,7 +269,7 @@ func (q *Queries) ListSampleBatches(ctx context.Context, arg ListSampleBatchesPa
 }
 
 const listTripBatches = `-- name: ListTripBatches :many
-SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at FROM telemetry_batches
+SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at, content_sha256 FROM telemetry_batches
 WHERE member_id = $1 AND client_trip_id = $2
 ORDER BY first_sample_t NULLS LAST, id
 `
@@ -293,6 +304,7 @@ func (q *Queries) ListTripBatches(ctx context.Context, arg ListTripBatchesParams
 			&i.LastSampleT,
 			&i.BodyBytes,
 			&i.CreatedAt,
+			&i.ContentSha256,
 		); err != nil {
 			return nil, err
 		}

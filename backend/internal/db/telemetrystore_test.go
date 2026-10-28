@@ -46,7 +46,7 @@ func TestTelemetryStoreOutcomes(t *testing.T) {
 	trip := newID()
 
 	b := telemetryBatch(trip, vehicle, t0, 10, ev(t0, "harsh_brake", nil))
-	if o, _, err := tel.CheckBatch(ctx, member, b.ClientBatchID, trip, vehicle); err != nil || o != store.BatchAccepted {
+	if o, _, err := tel.CheckBatch(ctx, member, b.ClientBatchID, trip, vehicle, nil); err != nil || o != store.BatchAccepted {
 		t.Fatalf("check new: %v %v", o, err)
 	}
 	o, c, err := tel.StoreBatch(ctx, member, b)
@@ -56,7 +56,7 @@ func TestTelemetryStoreOutcomes(t *testing.T) {
 	// Same clientBatchId again (other content): duplicate with the original counts.
 	dup := telemetryBatch(trip, vehicle, t0, 3)
 	dup.ClientBatchID = b.ClientBatchID
-	if o, c, err := tel.CheckBatch(ctx, member, dup.ClientBatchID, trip, vehicle); err != nil || o != store.BatchDuplicate || c != b.Counts {
+	if o, c, err := tel.CheckBatch(ctx, member, dup.ClientBatchID, trip, vehicle, nil); err != nil || o != store.BatchDuplicate || c != b.Counts {
 		t.Fatalf("check dup: %v %+v %v", o, c, err)
 	}
 	if o, c, err := tel.StoreBatch(ctx, member, dup); err != nil || o != store.BatchDuplicate || c != b.Counts {
@@ -71,7 +71,7 @@ func TestTelemetryStoreOutcomes(t *testing.T) {
 	// Someone else's vehicle, or an unknown one: not found.
 	for _, v := range []uuid.UUID{otherVehicle, newID()} {
 		nb := telemetryBatch(trip, v, t0, 1)
-		if o, _, err := tel.CheckBatch(ctx, member, nb.ClientBatchID, trip, v); err != nil || o != store.BatchVehicleNotFound {
+		if o, _, err := tel.CheckBatch(ctx, member, nb.ClientBatchID, trip, v, nil); err != nil || o != store.BatchVehicleNotFound {
 			t.Errorf("check vehicle %v: %v %v", v, o, err)
 		}
 		if o, _, err := tel.StoreBatch(ctx, member, nb); err != nil || o != store.BatchVehicleNotFound {
@@ -103,7 +103,7 @@ func TestTelemetryStoreOutcomes(t *testing.T) {
 	}
 	for _, v := range []uuid.UUID{vehicle, newID()} {
 		late := telemetryBatch(trip, v, t0, 2)
-		if o, _, err := tel.CheckBatch(ctx, member, late.ClientBatchID, trip, v); err != nil || o != store.BatchTripDeleted {
+		if o, _, err := tel.CheckBatch(ctx, member, late.ClientBatchID, trip, v, nil); err != nil || o != store.BatchTripDeleted {
 			t.Errorf("check late: %v %v", o, err)
 		}
 		if o, c, err := tel.StoreBatch(ctx, member, late); err != nil || o != store.BatchTripDeleted || c != (store.BatchCounts{}) {
