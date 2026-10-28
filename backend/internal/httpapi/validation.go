@@ -143,8 +143,24 @@ func newOpenAPIMiddleware(tokens TokenVerifier, uploads *uploadLimiter, uploadRe
 	return &openAPIMiddleware{doc: doc, router: router, tokens: tokens, uploads: uploads, uploadReadTimeout: uploadReadTimeout, bodies: bodies}, nil
 }
 
+// listHeaders are list-valued request fields the operations read as one
+// value. RFC 9110 §5.3 lets a recipient combine repeated lines of such a
+// field into one comma-separated line, which keeps their meaning; the
+// generated code would otherwise answer 400 for more than one line.
+var listHeaders = []string{"If-Match", "If-None-Match"}
+
+// combineListHeaders joins repeated lines of listHeaders, in order.
+func combineListHeaders(h http.Header) {
+	for _, name := range listHeaders {
+		if vs := h.Values(name); len(vs) > 1 {
+			h.Set(name, strings.Join(vs, ", "))
+		}
+	}
+}
+
 func (m *openAPIMiddleware) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		combineListHeaders(r.Header)
 		route, pathParams, p := m.findRoute(r)
 		if p != nil {
 			problem.Write(w, r, p)
@@ -433,7 +449,10 @@ func (m *openAPIMiddleware) authenticate(r *http.Request) (string, *problem.Prob
 
 // check runs on every authenticated request (spec: deleteMe), so a deleted
 // member's outstanding access tokens get 401 at once rather than at their
-// 15-minute expiry. A failed check fails closed (503 or 500), never open.
+// 15-minute expiry. A failed check fails closed, never open: 503
+// server_busy or service_unavailable as classified, and any other error
+// (e.g. a missing table) is 503 service_unavailable too, with Retry-After,
+// so clients back off and retry instead of treating it as their bug.
 func (c *revocationCheck) check(ctx context.Context, memberID string, issuedAt time.Time) *problem.Problem {
 	member, err := uuid.Parse(memberID)
 	if err != nil { // Verify already checked sub is a UUID
@@ -446,7 +465,9 @@ func (c *revocationCheck) check(ctx context.Context, memberID string, issuedAt t
 		if sp := storageProblem(c.classify, err); sp != nil {
 			return sp
 		}
-		return problem.Internal()
+		return problem.New(http.StatusServiceUnavailable, problem.CodeUnavailable,
+			"The access token can't be checked right now; retry later.").
+			WithTitle("Service unavailable").WithRetryAfter(retryAfterUnavailable)
 	}
 	if revoked {
 		return problem.New(http.StatusUnauthorized, problem.CodeInvalidToken, "The access token has been revoked; sign in again.")

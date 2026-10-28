@@ -569,6 +569,7 @@ paths:
               schema: {$ref: '#/components/schemas/Profile'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
         default: {$ref: '#/components/responses/InternalError'}
     patch:
       tags: [me]
@@ -597,6 +598,7 @@ paths:
         '422': {$ref: '#/components/responses/UnprocessableContent'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
         default: {$ref: '#/components/responses/InternalError'}
     delete:
       tags: [me]
@@ -627,6 +629,7 @@ paths:
               schema: {$ref: '#/components/schemas/AccountDeletion'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
         default: {$ref: '#/components/responses/InternalError'}
 
   /v1/vehicles:
@@ -1773,10 +1776,10 @@ components:
       required: [id, displayName, email, createdAt, updatedAt]
       properties:
         id: {type: string, readOnly: true}
-        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Shown on leaderboards. Legacy memberNm.'}
+        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Shown on leaderboards. Legacy memberNm. Leading and trailing white space is trimmed; the trimmed name must not be empty and must not contain control or format characters (Unicode Cc and Cf, e.g. bidi overrides and zero-width spaces) or line/paragraph separators (Zl, Zp). Exception: U+200D (zero-width joiner) is allowed between two other characters, for emoji sequences. Otherwise `422`.'}
         email: {type: string, format: email, readOnly: true, description: 'Verified sign-in e-mail address (verified by the one-time code), normalised to lower case and unique per member. Used to sign in; never accepted as an identifier in requests.'}
         countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$', description: 'ISO 3166-1 alpha-2. Legacy countryCd.'}
-        regionCode: {type: [string, 'null'], description: 'ISO 3166-2 subdivision. Legacy localCd.'}
+        regionCode: {type: [string, 'null'], pattern: '^[A-Z]{2}-[A-Z0-9]{1,3}$', description: 'ISO 3166-2 subdivision code, e.g. `IN-KA`. Its country part must equal `countryCode`: a `regionCode` needs a `countryCode`, and a `PATCH` that leaves the two inconsistent is `422`. Legacy localCd.'}
         rankingOptIn: {type: boolean, default: false}
         authProvider: {type: string, readOnly: true, enum: [email_otp], description: 'Sign-in method. Only `email_otp` in v1; new values may be added. Replaces the legacy joinRouteCd social-login values, which are not carried over.'}
         createdAt: {type: string, format: date-time, readOnly: true}
@@ -1786,9 +1789,9 @@ components:
       additionalProperties: false
       minProperties: 1
       properties:
-        displayName: {type: string, minLength: 1, maxLength: 40}
+        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Leading and trailing white space is trimmed; the trimmed name must not be empty and must not contain control or format characters (Unicode Cc and Cf, e.g. bidi overrides and zero-width spaces) or line/paragraph separators (Zl, Zp). Exception: U+200D (zero-width joiner) is allowed between two other characters, for emoji sequences. Otherwise `422`.'}
         countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$'}
-        regionCode: {type: [string, 'null']}
+        regionCode: {type: [string, 'null'], pattern: '^[A-Z]{2}-[A-Z0-9]{1,3}$', description: 'ISO 3166-2 subdivision code, e.g. `IN-KA`. Its country part must equal `countryCode`: a `regionCode` needs a `countryCode`, and a `PATCH` that leaves the two inconsistent is `422`.'}
         rankingOptIn: {type: boolean}
     AccountDeletion:
       type: object
