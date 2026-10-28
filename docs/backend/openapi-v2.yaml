@@ -1194,6 +1194,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
         default: {$ref: '#/components/responses/InternalError'}
 
   /v1/trips/{tripId}/events:
@@ -1217,6 +1218,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
         default: {$ref: '#/components/responses/InternalError'}
 
   /v1/telemetry/batches:
