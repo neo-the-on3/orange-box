@@ -47,6 +47,7 @@ const (
 	CodePreconditionReq     = "precondition_required"
 	CodeIdempotencyReused   = "idempotency_key_reused"
 	CodeIdempotencyInFlight = "idempotency_in_flight"
+	CodeBatchIDReused       = "client_batch_id_reused"
 	CodeVehicleDeleted      = "vehicle_deleted"
 	CodeVehicleNotFound     = "vehicle_not_found"
 	CodeTripDeleted         = "trip_deleted"

@@ -17,7 +17,12 @@ const deleteTelemetry = `-- name: DeleteTelemetry :many
 WITH batches AS (
     DELETE FROM telemetry_batches tb
     WHERE tb.member_id = $1
-      AND (tb.client_trip_id = ANY ($2::uuid[]) OR tb.vehicle_id = $3::uuid)
+      AND (tb.client_trip_id = ANY ($2::uuid[])
+           OR (tb.vehicle_id = $3::uuid
+               AND NOT EXISTS (
+                   SELECT 1 FROM trips t
+                   WHERE t.member_id = tb.member_id AND t.client_trip_id = tb.client_trip_id
+                     AND t.vehicle_id <> $3::uuid)))
     RETURNING tb.client_trip_id, tb.object_key
 ), events AS (
     DELETE FROM trip_events te
@@ -36,7 +41,9 @@ type DeleteTelemetryParams struct {
 
 // Deletes telemetry (batch metadata and events) of the given trips and, if
 // vehicle_id is not NULL, every batch uploaded for that vehicle (cascade
-// delete). Returns the object keys to remove from object storage.
+// delete) unless its trip belongs to another vehicle: telemetry can
+// arrive before its trip, and the trip's vehicle is the one that counts.
+// Returns the object keys to remove from object storage.
 func (q *Queries) DeleteTelemetry(ctx context.Context, arg DeleteTelemetryParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, deleteTelemetry, arg.MemberID, arg.ClientTripIds, arg.VehicleID)
 	if err != nil {
@@ -58,7 +65,7 @@ func (q *Queries) DeleteTelemetry(ctx context.Context, arg DeleteTelemetryParams
 }
 
 const getTelemetryBatchByClientID = `-- name: GetTelemetryBatchByClientID :one
-SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at FROM telemetry_batches
+SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at, content_sha256 FROM telemetry_batches
 WHERE member_id = $1 AND client_batch_id = $2
 `
 
@@ -85,6 +92,7 @@ func (q *Queries) GetTelemetryBatchByClientID(ctx context.Context, arg GetTeleme
 		&i.LastSampleT,
 		&i.BodyBytes,
 		&i.CreatedAt,
+		&i.ContentSha256,
 	)
 	return i, err
 }
@@ -93,14 +101,14 @@ const insertTelemetryBatch = `-- name: InsertTelemetryBatch :one
 INSERT INTO telemetry_batches (
     id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key,
     accepted_samples, accepted_events, dropped_samples, dropped_events,
-    first_sample_t, last_sample_t, body_bytes
+    first_sample_t, last_sample_t, body_bytes, content_sha256
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10,
-    $11, $12, $13
+    $11, $12, $13, $14
 )
 ON CONFLICT (member_id, client_batch_id) DO NOTHING
-RETURNING id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at
+RETURNING id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at, content_sha256
 `
 
 type InsertTelemetryBatchParams struct {
@@ -117,6 +125,7 @@ type InsertTelemetryBatchParams struct {
 	FirstSampleT    *time.Time
 	LastSampleT     *time.Time
 	BodyBytes       int32
+	ContentSha256   []byte
 }
 
 // Returns no row when this clientBatchId was already stored; the caller
@@ -136,6 +145,7 @@ func (q *Queries) InsertTelemetryBatch(ctx context.Context, arg InsertTelemetryB
 		arg.FirstSampleT,
 		arg.LastSampleT,
 		arg.BodyBytes,
+		arg.ContentSha256,
 	)
 	var i TelemetryBatch
 	err := row.Scan(
@@ -153,6 +163,7 @@ func (q *Queries) InsertTelemetryBatch(ctx context.Context, arg InsertTelemetryB
 		&i.LastSampleT,
 		&i.BodyBytes,
 		&i.CreatedAt,
+		&i.ContentSha256,
 	)
 	return i, err
 }
@@ -191,8 +202,74 @@ func (q *Queries) InsertTripEvents(ctx context.Context, arg InsertTripEventsPara
 	return result.RowsAffected(), nil
 }
 
+const listSampleBatches = `-- name: ListSampleBatches :many
+SELECT id, object_key::text AS object_key,
+       first_sample_t::timestamptz AS first_sample_t, last_sample_t::timestamptz AS last_sample_t
+FROM telemetry_batches
+WHERE member_id = $1
+  AND client_trip_id = $2
+  AND object_key IS NOT NULL
+  AND first_sample_t IS NOT NULL
+  AND ($3::timestamptz IS NULL OR last_sample_t > $3::timestamptz)
+  AND ($4::timestamptz IS NULL
+       OR (first_sample_t, id) > ($4::timestamptz, $5::uuid))
+ORDER BY first_sample_t, id
+LIMIT $6
+`
+
+type ListSampleBatchesParams struct {
+	MemberID     uuid.UUID
+	ClientTripID uuid.UUID
+	AfterT       *time.Time
+	AfterFirst   *time.Time
+	AfterID      uuid.UUID
+	MaxRows      int32
+}
+
+type ListSampleBatchesRow struct {
+	ID           uuid.UUID
+	ObjectKey    string
+	FirstSampleT time.Time
+	LastSampleT  time.Time
+}
+
+// Read-back of GET /v1/trips/{tripId}/samples: the trip's batches with
+// samples later than after_t (all if NULL), in (first sample, id) order,
+// continuing after (after_first, after_id) if after_first is not NULL.
+func (q *Queries) ListSampleBatches(ctx context.Context, arg ListSampleBatchesParams) ([]ListSampleBatchesRow, error) {
+	rows, err := q.db.Query(ctx, listSampleBatches,
+		arg.MemberID,
+		arg.ClientTripID,
+		arg.AfterT,
+		arg.AfterFirst,
+		arg.AfterID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSampleBatchesRow{}
+	for rows.Next() {
+		var i ListSampleBatchesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ObjectKey,
+			&i.FirstSampleT,
+			&i.LastSampleT,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTripBatches = `-- name: ListTripBatches :many
-SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at FROM telemetry_batches
+SELECT id, member_id, client_batch_id, client_trip_id, vehicle_id, object_key, accepted_samples, accepted_events, dropped_samples, dropped_events, first_sample_t, last_sample_t, body_bytes, created_at, content_sha256 FROM telemetry_batches
 WHERE member_id = $1 AND client_trip_id = $2
 ORDER BY first_sample_t NULLS LAST, id
 `
@@ -227,6 +304,7 @@ func (q *Queries) ListTripBatches(ctx context.Context, arg ListTripBatchesParams
 			&i.LastSampleT,
 			&i.BodyBytes,
 			&i.CreatedAt,
+			&i.ContentSha256,
 		); err != nil {
 			return nil, err
 		}
@@ -302,4 +380,68 @@ func (q *Queries) ListTripEvents(ctx context.Context, arg ListTripEventsParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockClientTripTelemetryShared = `-- name: LockClientTripTelemetryShared :exec
+
+SELECT pg_advisory_xact_lock_shared(7311, hashtext(($1::uuid)::text || '/' || ($2::uuid)::text))
+`
+
+type LockClientTripTelemetrySharedParams struct {
+	MemberID     uuid.UUID
+	ClientTripID uuid.UUID
+}
+
+// Telemetry uploads and trip deletes serialise per (member, clientTripId)
+// on a transaction-level advisory lock in namespace 7311 (a hash of the
+// pair; a collision only serialises two unrelated trips). An upload takes
+// it shared, a delete exclusive, so a trip that is created and deleted
+// while an upload runs (the upload saw no trip row to share-lock) can't
+// leave the upload's batch behind its tombstone. Lock order everywhere:
+// vehicle row, then this lock, then the trip row.
+func (q *Queries) LockClientTripTelemetryShared(ctx context.Context, arg LockClientTripTelemetrySharedParams) error {
+	_, err := q.db.Exec(ctx, lockClientTripTelemetryShared, arg.MemberID, arg.ClientTripID)
+	return err
+}
+
+const lockClientTripsTelemetry = `-- name: LockClientTripsTelemetry :exec
+SELECT pg_advisory_xact_lock(7311, k.key)
+FROM (
+    SELECT DISTINCT hashtext(($1::uuid)::text || '/' || c::text) AS key
+    FROM unnest($2::uuid[]) AS c
+    ORDER BY 1
+) AS k
+`
+
+type LockClientTripsTelemetryParams struct {
+	MemberID      uuid.UUID
+	ClientTripIds []uuid.UUID
+}
+
+// Exclusive, for deletes; keys in a fixed order.
+func (q *Queries) LockClientTripsTelemetry(ctx context.Context, arg LockClientTripsTelemetryParams) error {
+	_, err := q.db.Exec(ctx, lockClientTripsTelemetry, arg.MemberID, arg.ClientTripIds)
+	return err
+}
+
+const lockVehicleTripsTelemetry = `-- name: LockVehicleTripsTelemetry :exec
+SELECT pg_advisory_xact_lock(7311, k.key)
+FROM (
+    SELECT DISTINCT hashtext(($1::uuid)::text || '/' || t.client_trip_id::text) AS key
+    FROM trips t
+    WHERE t.member_id = $1 AND t.vehicle_id = $2::uuid AND t.deleted_at IS NULL
+    ORDER BY 1
+) AS k
+`
+
+type LockVehicleTripsTelemetryParams struct {
+	MemberID  uuid.UUID
+	VehicleID uuid.UUID
+}
+
+// Exclusive, for DELETE /v1/vehicles/{id}?cascade=true: every live trip of
+// the vehicle (taken after the vehicle row lock, before tombstoning).
+func (q *Queries) LockVehicleTripsTelemetry(ctx context.Context, arg LockVehicleTripsTelemetryParams) error {
+	_, err := q.db.Exec(ctx, lockVehicleTripsTelemetry, arg.MemberID, arg.VehicleID)
+	return err
 }

@@ -165,3 +165,76 @@ func TestMeTimestampsRange(t *testing.T) {
 	inRange("requestedAt", r.json(t)["requestedAt"])
 	inRange("completeBy", r.json(t)["completeBy"])
 }
+
+// Telemetry read-back cursors (s1: samples, e1: events) carry a unix ms
+// time. One outside timeutil's range was never issued and must be a 400,
+// not a Postgres error (#219).
+func TestTelemetryCursorTimeRange(t *testing.T) {
+	t.Parallel()
+	e, _, _ := newTelemetryEnv(t)
+	m := e.member("tel-cursor")
+	vehicle := m.vehicle()
+	trip := uuid.New()
+	samples := []string{sampleJSON("2026-10-23T14:00:00.000Z", 10), sampleJSON("2026-10-23T14:00:01.000Z", 20)}
+	ackOf(t, m.sendTelemetry(telemetryJSON(uuid.New(), trip, vehicle, samples, nil), ""))
+	m.upload(tripJSON(trip, vehicle, "completed", "2026-10-23T14:00:00Z", "2026-10-23T14:30:00Z"))
+	base := "/v1/trips/client:" + trip.String()
+	cursor := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+	for _, ms := range []string{
+		"-210866803200001",     // before 4713 BC: Postgres rejects it
+		"-62135596800001",      // the last ms of year 0
+		"253402300800000",      // 10000-01-01
+		"9224318016000000",     // about year 294276: past Postgres's range
+		"9223372036854775807",  // int64 max
+		"-9223372036854775808", // int64 min
+	} {
+		for path, c := range map[string]string{"/samples": cursor("s1:" + ms), "/events": cursor("e1:" + ms + ":1")} {
+			if r := m.call(http.MethodGet, base+path+"?cursor="+c, ""); r.status != http.StatusBadRequest || r.problemCode(t) != "bad_request" {
+				t.Errorf("%s cursor at %s ms: %d %s", path, ms, r.status, r.body)
+			}
+		}
+	}
+	// The ends of the range are valid positions (with nothing after them).
+	for _, ms := range []string{"-62135596800000", "253402300799999"} {
+		for path, c := range map[string]string{"/samples": cursor("s1:" + ms), "/events": cursor("e1:" + ms + ":1")} {
+			if r := m.call(http.MethodGet, base+path+"?cursor="+c, ""); r.status != http.StatusOK {
+				t.Errorf("%s cursor at %s ms: %d %s", path, ms, r.status, r.body)
+			}
+		}
+	}
+}
+
+// A year-0000 sample or event time passes the UtcInstant pattern but has
+// no Postgres equivalent: it is a 422 at its pointer, nothing is stored,
+// and the edges of the range are accepted.
+func TestTelemetryYearZero(t *testing.T) {
+	t.Parallel()
+	e, objects, _ := newTelemetryEnv(t)
+	m := e.member("tel-year0")
+	vehicle := m.vehicle()
+	trip := uuid.New()
+	ok := sampleJSON("2026-10-23T14:00:00.000Z", 1)
+	event := func(at string) string { return `{"t":"` + at + `","type":"harsh_brake"}` }
+	for _, at := range []string{"0000-01-01T00:00:00Z", "0000-12-31T23:59:59.999Z"} {
+		for _, c := range []struct {
+			body, pointer string
+		}{
+			{telemetryJSON(uuid.New(), trip, vehicle, []string{sampleJSON(at, 1)}, nil), "/samples/0/t"},
+			{telemetryJSON(uuid.New(), trip, vehicle, []string{ok}, []string{event(at)}), "/events/0/t"},
+		} {
+			r := m.sendTelemetry(c.body, "")
+			if r.status != http.StatusUnprocessableEntity || fmt.Sprint(pointers(t, r)) != "["+c.pointer+"]" {
+				t.Errorf("%s at %s: %d %s", c.pointer, at, r.status, r.body)
+			}
+		}
+	}
+	if n := len(objects.Keys()); n != 0 {
+		t.Errorf("%d objects written for rejected batches", n)
+	}
+	for _, at := range []string{"0001-01-01T00:00:00Z", "9999-12-31T23:59:59.999999999Z"} {
+		r := m.sendTelemetry(telemetryJSON(uuid.New(), trip, vehicle, []string{sampleJSON(at, 1)}, []string{event(at)}), "")
+		if r.status != http.StatusAccepted {
+			t.Errorf("edge %s: %d %s", at, r.status, r.body)
+		}
+	}
+}

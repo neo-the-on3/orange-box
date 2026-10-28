@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -197,7 +196,7 @@ func (s *Server) UploadTrips(ctx context.Context, req api.UploadTripsRequestObje
 // replay: a deletion tombstone beats a stored replay (spec, Idempotency),
 // so an accepted item whose trip has since been deleted is replayed as
 // rejected with trip_deleted, like a new upload of it would be.
-func (s *Server) uploadTripsReplay(ctx context.Context, member uuid.UUID, status int, stored []byte) ([]byte, error) {
+func (s *Server) uploadTripsReplay(ctx context.Context, member uuid.UUID, _ []byte, status int, stored []byte) ([]byte, error) {
 	if s.trips == nil || status != http.StatusOK {
 		return stored, nil
 	}
@@ -442,11 +441,8 @@ func (s *Server) DeleteTrip(ctx context.Context, req api.DeleteTripRequestObject
 	if err != nil {
 		return nil, err
 	}
-	if len(keys) > 0 {
-		// Telemetry uploads (#111) will write to object storage; until that
-		// lands there is nothing to remove, so keys here mean a gap.
-		s.logger.WarnContext(ctx, "trip delete left telemetry objects in object storage", slog.Int("objects", len(keys)))
-	}
+	// The rows are gone; remove their samples (best effort, see removeObjects).
+	s.removeObjects(ctx, keys)
 	return api.DeleteTrip204Response{}, nil
 }
 
