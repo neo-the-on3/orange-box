@@ -76,6 +76,7 @@ type TelemetryBatch struct {
 	LastSampleT     *time.Time
 	BodyBytes       int32
 	CreatedAt       time.Time
+	ContentSha256   []byte
 }
 
 type Trip struct {

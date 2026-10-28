@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -205,14 +206,18 @@ func (s *Server) UploadTelemetryBatch(ctx context.Context, req api.UploadTelemet
 		events, counts.DroppedEvents = normaliseEvents(*in.Events)
 	}
 	counts.AcceptedSamples, counts.AcceptedEvents = len(samples), len(events)
+	fingerprint, err := batchFingerprint(in, samples, events)
+	if err != nil {
+		return nil, err
+	}
 
 	// Cheap pre-check, so retries and late batches don't write objects.
-	outcome, stored, err := s.telemetry.CheckBatch(ctx, member, in.ClientBatchId, in.ClientTripId, vehicle)
+	outcome, stored, err := s.telemetry.CheckBatch(ctx, member, in.ClientBatchId, in.ClientTripId, vehicle, fingerprint)
 	if err != nil {
 		return nil, err
 	}
 	if outcome == store.BatchAccepted {
-		outcome, stored, err = s.storeBatch(ctx, member, in, vehicle, samples, events, counts)
+		outcome, stored, err = s.storeBatch(ctx, member, in, vehicle, samples, events, counts, fingerprint)
 		if err != nil {
 			return nil, err
 		}
@@ -226,22 +231,47 @@ func (s *Server) UploadTelemetryBatch(ctx context.Context, req api.UploadTelemet
 		return telemetryAck(in.ClientBatchId, api.TelemetryBatchAckStatusTripDeleted, store.BatchCounts{}), nil
 	case store.BatchVehicleNotFound:
 		return nil, telemetryVehicleNotFound()
+	case store.BatchVehicleMismatch:
+		return nil, problem.New(http.StatusUnprocessableEntity, problem.CodeValidationFailed, "1 field is invalid").
+			WithTitle("Validation failed").
+			WithErrors(problem.FieldError{Pointer: "/vehicleId", Detail: "must be the vehicle of the trip clientTripId"})
+	case store.BatchConflict:
+		return nil, problem.New(http.StatusUnprocessableEntity, problem.CodeBatchIDReused,
+			"clientBatchId was already stored with other content; send new content under a new clientBatchId.")
 	default:
 		return nil, fmt.Errorf("upload telemetry: unexpected outcome %d", outcome)
 	}
 }
 
+// batchFingerprint is the SHA-256 of a batch's normalised content: what
+// a clientBatchId stands for. Resending the same content (re-encoded,
+// reordered or with sub-millisecond digits) gives the same fingerprint.
+func batchFingerprint(in *api.TelemetryBatch, samples []api.Sample, events []store.TelemetryEvent) ([]byte, error) {
+	b, err := json.Marshal(struct {
+		V            int                    `json:"v"`
+		ClientTripID uuid.UUID              `json:"clientTripId"`
+		VehicleID    string                 `json:"vehicleId"`
+		Samples      []api.Sample           `json:"samples"`
+		Events       []store.TelemetryEvent `json:"events"`
+	}{1, in.ClientTripId, in.VehicleId, samples, events})
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(b)
+	return sum[:], nil
+}
+
 // storeBatch writes the samples object, then the batch row and events.
 // The object is removed again unless the batch was stored.
 func (s *Server) storeBatch(ctx context.Context, member uuid.UUID, in *api.TelemetryBatch, vehicle uuid.UUID,
-	samples []api.Sample, events []store.TelemetryEvent, counts store.BatchCounts) (store.BatchOutcome, store.BatchCounts, error) {
+	samples []api.Sample, events []store.TelemetryEvent, counts store.BatchCounts, fingerprint []byte) (store.BatchOutcome, store.BatchCounts, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return 0, store.BatchCounts{}, err
 	}
 	b := store.TelemetryBatch{
 		ID: id, ClientBatchID: in.ClientBatchId, ClientTripID: in.ClientTripId, VehicleID: vehicle,
-		Counts: counts, Events: events,
+		Counts: counts, Events: events, Fingerprint: fingerprint,
 	}
 	if info := reqctx.InfoFrom(ctx); info != nil {
 		b.BodyBytes = info.BodyBytes
