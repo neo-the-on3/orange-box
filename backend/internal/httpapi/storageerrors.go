@@ -9,7 +9,8 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
-// storageProblem maps a busy or unreachable database to a 503 (#178), or
+// storageProblem maps a busy or unreachable database (or failing object
+// storage) to a 503 (#178), or
 // returns nil for any other error. Lock and statement timeouts, deadlocks
 // and waits that outlived the request (context deadline, pool acquire) are
 // 503 server_busy with Retry-After: 1; an unreachable database is 503
@@ -19,6 +20,10 @@ func storageProblem(classify func(error) store.Failure, err error) *problem.Prob
 	f := store.FailureOther
 	if classify != nil {
 		f = classify(err)
+	}
+	var oe *objectStoreError
+	if f == store.FailureOther && errors.As(err, &oe) && !errors.Is(err, context.DeadlineExceeded) {
+		f = store.FailureUnavailable // object storage (R2) failed
 	}
 	if f == store.FailureOther && errors.Is(err, context.DeadlineExceeded) {
 		f = store.FailureBusy

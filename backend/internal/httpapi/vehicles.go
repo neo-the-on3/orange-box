@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -323,12 +322,8 @@ func (s *Server) DeleteVehicle(ctx context.Context, req api.DeleteVehicleRequest
 	if err != nil {
 		return nil, err
 	}
-	if len(res.ObjectKeys) > 0 {
-		// Telemetry uploads (#111) will write to object storage; until that
-		// lands there is nothing to remove, so keys here mean a gap.
-		s.logger.WarnContext(ctx, "cascade delete left telemetry objects in object storage",
-			slog.Int("objects", len(res.ObjectKeys)))
-	}
+	// The rows are gone; remove their samples (best effort, see removeObjects).
+	s.removeObjects(ctx, res.ObjectKeys)
 	return api.DeleteVehicle204Response{}, nil
 }
 
