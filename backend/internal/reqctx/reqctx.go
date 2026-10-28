@@ -47,6 +47,9 @@ type Info struct {
 	OperationID string
 	// MemberID is the authenticated member, if any.
 	MemberID string
+	// BodyBytes is the size of the request body after decompression, once
+	// it has been read and validated.
+	BodyBytes int
 }
 
 // WithInfo returns ctx carrying a fresh *Info.
