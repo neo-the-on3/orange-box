@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
+	"github.com/neo-the-on3/orange-box/backend/internal/timeutil"
 )
 
 // Format versions. A token or cursor with another version is invalid.
@@ -178,7 +179,7 @@ func (c *Codec) ParseCursor(member uuid.UUID, s string) (Cursor, error) {
 	cur.Next = r.optPoint()
 	switch cur.Kind {
 	case History:
-		cur.History.StartedAt = time.UnixMicro(int64(r.uint64())).UTC() //nolint:gosec // round-trips through uint64
+		cur.History.StartedAt = r.instant()
 		copy(cur.History.ID[:], r.take(16))
 	case Changes, Deletions:
 		cur.Change.Xid = r.uint64()
@@ -241,6 +242,17 @@ func (r *reader) take(n int) []byte {
 func (r *reader) byte() byte     { return r.take(1)[0] }
 func (r *reader) uint64() uint64 { return binary.BigEndian.Uint64(r.take(8)) }
 func (r *reader) done() bool     { return !r.bad && len(r.b) == 0 }
+
+// instant reads a unix µs time. One outside timeutil's range was never
+// issued (no stored time is outside it) and would fail in Postgres, so
+// it makes the token or cursor invalid.
+func (r *reader) instant() time.Time {
+	t := time.UnixMicro(int64(r.uint64())).UTC() //nolint:gosec // round-trips through uint64
+	if !timeutil.InRange(t) {
+		r.bad = true
+	}
+	return t
+}
 func (r *reader) point() store.SyncPoint {
 	n := int(r.byte())
 	if n > maxIdentity {
@@ -248,7 +260,7 @@ func (r *reader) point() store.SyncPoint {
 		return store.SyncPoint{}
 	}
 	id := string(r.take(n))
-	issued := time.UnixMicro(int64(r.uint64())).UTC() //nolint:gosec // round-trips through uint64
+	issued := r.instant()
 	return store.SyncPoint{Identity: id, IssuedAt: issued, Watermark: r.uint64()}
 }
 

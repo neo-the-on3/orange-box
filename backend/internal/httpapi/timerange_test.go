@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"testing"
@@ -56,6 +57,30 @@ func TestDtcReportReadAtRange(t *testing.T) {
 	}
 	if r := m.call(http.MethodGet, dtcPath(vehicle), ""); r.status != http.StatusOK || len(r.json(t)["items"].([]any)) != 4 {
 		t.Fatalf("list: %d %s", r.status, r.body)
+	}
+}
+
+func TestDtcCursorTimeRange(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("dtc-cursor")
+	vehicle := m.newVehicle()
+	id := uuid.NewString()
+	for _, micros := range []string{
+		"-210866803200000001",  // before 4713 BC: Postgres rejects it (22008)
+		"-62135596800000001",   // the last µs of year 0
+		"253402300800000000",   // 10000-01-01
+		"9223372036854775807",  // int64 max
+		"-9223372036854775808", // int64 min
+	} {
+		c := base64.RawURLEncoding.EncodeToString([]byte("d1:" + micros + ":" + id))
+		if r := m.call(http.MethodGet, dtcPath(vehicle)+"?cursor="+c, ""); r.status != http.StatusBadRequest || r.problemCode(t) != "bad_request" {
+			t.Errorf("cursor at %s µs: %d %s", micros, r.status, r.body)
+		}
+	}
+	c := base64.RawURLEncoding.EncodeToString([]byte("d1:253402300799999999:" + id)) // 9999-12-31T23:59:59.999999Z
+	if r := m.call(http.MethodGet, dtcPath(vehicle)+"?cursor="+c, ""); r.status != http.StatusOK {
+		t.Errorf("cursor at the end of 9999: %d %s", r.status, r.body)
 	}
 }
 
