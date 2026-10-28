@@ -16,11 +16,16 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // ErrNotFound means no object has the key.
 var ErrNotFound = errors.New("objstore: not found")
+
+// ErrBusy means a Dir store already has as many file system calls in
+// flight as it allows (they are hung or slow); retry later.
+var ErrBusy = errors.New("objstore: too many operations in flight")
 
 // ErrInvalidKey means a key is empty, too long, or has a character or
 // path segment Store implementations don't accept.
@@ -129,41 +134,81 @@ func (m *Memory) Keys() []string {
 // own goroutine and Dir stops waiting for it when the context ends, or
 // after dirOpTimeout without a deadline: a hung disk or network mount
 // then answers like a slow R2 (the caller's 503), instead of holding the
-// request and its upload slot. The abandoned call finishes on its own; a
-// Put that completes late leaves an object without a row, which
-// reconciliation removes (#179).
+// request and its upload slot.
+//
+// An abandoned call keeps running, and keeps an OS thread while it is
+// blocked in the kernel, so at most maxInflight calls run at once; past
+// that, operations fail at once with ErrBusy until calls return. A Put
+// whose caller gave up was never acknowledged (no batch row refers to
+// it), so if it completes later its object is removed again.
 type Dir struct {
-	root    string
-	timeout time.Duration
-	hook    func() // tests: runs before each file system operation
+	root     string
+	timeout  time.Duration
+	sem      chan struct{} // one slot per file system call in flight
+	inflight sync.WaitGroup
+	hook     func() // tests: runs before each file system operation
 }
 
-// dirOpTimeout bounds a Dir operation whose context has no deadline (or a
-// later one).
-const dirOpTimeout = 30 * time.Second
+const (
+	// dirOpTimeout bounds a Dir operation whose context has no deadline
+	// (or a later one).
+	dirOpTimeout = 30 * time.Second
+	// maxInflight bounds a Dir's file system calls in flight, hung ones
+	// included.
+	maxInflight = 64
+)
+
+// Call states, for the race between the caller giving up and the call
+// returning.
+const (
+	callRunning int32 = iota
+	callReturned
+	callAbandoned
+)
 
 // run runs op in a goroutine and returns its error, or the context's once
-// it ends first.
-func (d *Dir) run(ctx context.Context, op func() error) error {
+// it ends first. If the caller gave up and op then succeeds, abandoned
+// (if not nil) runs to undo it.
+func (d *Dir) run(ctx context.Context, op func() error, abandoned func()) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	select {
+	case d.sem <- struct{}{}:
+	default:
+		return ErrBusy
+	}
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
+	var state atomic.Int32
 	done := make(chan error, 1)
+	d.inflight.Add(1)
 	go func() {
+		defer d.inflight.Done()
+		defer func() { <-d.sem }()
 		if d.hook != nil {
 			d.hook()
 		}
-		done <- op()
+		err := op()
+		if !state.CompareAndSwap(callRunning, callReturned) && err == nil && abandoned != nil {
+			abandoned()
+		}
+		done <- err
 	}()
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		return ctx.Err()
+		if state.CompareAndSwap(callRunning, callAbandoned) {
+			return ctx.Err()
+		}
+		return <-done // it returned just as the context ended
 	}
 }
+
+// wait waits for every file system call in flight, abandoned ones
+// included (tests).
+func (d *Dir) wait() { d.inflight.Wait() }
 
 // NewDir returns a Store rooted at dir, creating it if needed.
 func NewDir(dir string) (*Dir, error) {
@@ -177,7 +222,7 @@ func NewDir(dir string) (*Dir, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("objstore: create %s: %w", abs, err)
 	}
-	return &Dir{root: abs, timeout: dirOpTimeout}, nil
+	return &Dir{root: abs, timeout: dirOpTimeout, sem: make(chan struct{}, maxInflight)}, nil
 }
 
 func (d *Dir) path(key string) (string, error) {
@@ -193,7 +238,7 @@ func (d *Dir) Put(ctx context.Context, key string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	return d.run(ctx, func() error { return put(p, body) })
+	return d.run(ctx, func() error { return put(p, body) }, func() { _ = os.Remove(p) })
 }
 
 func put(p string, body []byte) error {
@@ -231,7 +276,7 @@ func (d *Dir) Get(ctx context.Context, key string) ([]byte, error) {
 		var err error
 		b, err = os.ReadFile(p) //nolint:gosec // G304: p is d.path(key), and ValidateKey rejects empty, . and .. segments
 		return err
-	})
+	}, nil)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
@@ -252,5 +297,5 @@ func (d *Dir) Delete(ctx context.Context, key string) error {
 			return err
 		}
 		return nil
-	})
+	}, nil)
 }
