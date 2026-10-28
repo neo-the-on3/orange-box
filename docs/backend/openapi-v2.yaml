@@ -1224,7 +1224,12 @@ paths:
       description: |
         Samples and events are appended to the trip identified by `clientTripId` (the trip summary may arrive
         before or after its telemetry, so an unknown `clientTripId` is normal and is **never** a `404`).
-        De-duplication is by `clientBatchId` (and the `Idempotency-Key` header). Individual samples are
+        De-duplication is by `clientBatchId` (and the `Idempotency-Key` header). A `clientBatchId` names fixed
+        content: resending it with the same content (compared after the normalisation below, so re-encoding,
+        reordering or sub-millisecond digits don't matter) is `202` with `status=duplicate` and the original counts,
+        under any key; with other content (another `clientTripId`, `vehicleId`, sample or event) it is `422` with
+        `code=client_batch_id_reused` and nothing is stored. Don't retry that: send new content under a new
+        `clientBatchId`. Individual samples are
         de-duplicated by (`clientTripId`, `t`). An event is a duplicate if it matches an existing event of the trip
         on `clientEventId` (when it has one) **or** on the fallback key (`clientTripId`, `t`, `type`, `active`,
         `dtc`). Both checks always run, so an event first sent without an id and resent with one can't be stored
@@ -1234,14 +1239,19 @@ paths:
         `UtcInstant`) before storage and de-duplication. Processing may be
         asynchronous: `202` means durably stored, not necessarily aggregated.
 
-        The counts in the acknowledgement cover **this batch only**: in-batch duplicates and out-of-range values
-        are dropped and counted, but duplicates of samples or events from *earlier* batches are not detected at
+        The counts in the acknowledgement cover **this batch only**: in-batch duplicates are dropped and counted,
+        but duplicates of samples or events from *earlier* batches are not detected at
         upload time. They are removed when telemetry is read back or compacted, so `GET /v1/trips/{tripId}/samples`
-        and `/events` never return duplicates.
+        and `/events` never return duplicates. Values are not dropped for being out of range: a value outside
+        its schema's limits (e.g. `lat: 91`, or a `t` outside years 0001 to 9999) fails the whole batch with `422`
+        and a pointer to it, so the app should clean values before sending.
 
         If `clientTripId` has a tombstone (the trip was deleted), the batch is discarded and acknowledged with
         `202` and `status=trip_deleted`, so the app can drop it. Otherwise `vehicleId` must be one of the caller's
-        vehicles; if it is not (unknown, another member's, or deleted), the response is `404`.
+        vehicles; if it is not (unknown, another member's, or deleted), the response is `404`. If the trip summary
+        has already arrived, `vehicleId` must also be the trip's vehicle, otherwise `422` at `/vehicleId` (a
+        stored `clientBatchId` is still a `duplicate`). Telemetry sent before its summary goes with the trip's
+        vehicle once the summary arrives: a cascade vehicle delete removes it only if the trip is that vehicle's.
 
         Size limits: at most 5,000 samples and 500 events per batch (more is `422` with a pointer), and at most
         1 MiB compressed / 8 MiB uncompressed and 500,000 JSON values per body (more is `413`); see Conventions →
@@ -1691,7 +1701,7 @@ components:
         instance: {type: string, format: uri-reference}
         code:
           type: string
-          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `test_address_rejected`, `internal_error`, `etag_mismatch`, `batch_too_large`, `unsupported_encoding`, `idempotency_in_flight`, `vehicle_deleted`, `vehicle_not_found`, `trip_deleted`, `sync_window_expired`, `request_timeout` (408), `upload_in_progress` (429), `precondition_required` (428), `server_busy`, `uploads_busy`, `service_unavailable` and `email_sign_in_unavailable` (503); see Conventions → Request limits and Busy and unavailable).
+          description: Stable machine-readable code (e.g. `validation_failed`, `idempotency_key_reused`, `client_batch_id_reused`, `token_expired`, `invalid_grant`, `otp_attempts_exceeded`, `otp_locked`, `test_address_rejected`, `internal_error`, `etag_mismatch`, `batch_too_large`, `unsupported_encoding`, `idempotency_in_flight`, `vehicle_deleted`, `vehicle_not_found`, `trip_deleted`, `sync_window_expired`, `request_timeout` (408), `upload_in_progress` (429), `precondition_required` (428), `server_busy`, `uploads_busy`, `service_unavailable` and `email_sign_in_unavailable` (503); see Conventions → Request limits and Busy and unavailable).
         requestId: {type: string}
         errors:
           type: array
@@ -2153,7 +2163,7 @@ components:
         status: {type: string, enum: [accepted, duplicate, trip_deleted], description: '`duplicate`: this `clientBatchId` was already stored (the original counts are returned). `trip_deleted`: the trip has a tombstone; nothing was stored.'}
         acceptedSamples: {type: integer, minimum: 0, description: 'Samples stored from this batch (0 for `trip_deleted`).'}
         acceptedEvents: {type: integer, minimum: 0, description: 'Events stored from this batch (0 for `trip_deleted`).'}
-        droppedSamples: {type: integer, minimum: 0, description: 'Samples dropped within this batch (in-batch duplicates or out-of-range values). Duplicates of earlier batches are not counted; they are removed on read-back or compaction.'}
+        droppedSamples: {type: integer, minimum: 0, description: 'Samples dropped within this batch (in-batch duplicates by `t`; out-of-range values fail the batch with `422` instead). Duplicates of earlier batches are not counted; they are removed on read-back or compaction.'}
         droppedEvents: {type: integer, minimum: 0, description: 'Events dropped within this batch, on the same terms as `droppedSamples`.'}
     SamplePage:
       allOf:

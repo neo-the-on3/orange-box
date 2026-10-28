@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,13 +39,36 @@ func batchCounts(b dbgen.TelemetryBatch) store.BatchCounts {
 	}
 }
 
+// sameContent reports whether a stored batch's fingerprint matches; an
+// unknown one (nil, stored before fingerprints) matches anything.
+func sameContent(stored, fingerprint []byte) bool {
+	return stored == nil || fingerprint == nil || bytes.Equal(stored, fingerprint)
+}
+
+// existingBatch is the outcome for a clientBatchId already stored.
+func existingBatch(b dbgen.TelemetryBatch, fingerprint []byte) (store.BatchOutcome, store.BatchCounts) {
+	if !sameContent(b.ContentSha256, fingerprint) {
+		return store.BatchConflict, store.BatchCounts{}
+	}
+	return store.BatchDuplicate, batchCounts(b)
+}
+
+// otherVehicle reports whether a live trip belongs to a vehicle other
+// than vehicle.
+func otherVehicle(tripVehicle *uuid.UUID, vehicle uuid.UUID) bool {
+	return tripVehicle != nil && *tripVehicle != vehicle
+}
+
 // CheckBatch implements store.Telemetry.
-func (s *Telemetry) CheckBatch(ctx context.Context, member, clientBatch, clientTrip, vehicle uuid.UUID) (store.BatchOutcome, store.BatchCounts, error) {
+func (s *Telemetry) CheckBatch(ctx context.Context, member, clientBatch, clientTrip, vehicle uuid.UUID, fingerprint []byte) (store.BatchOutcome, store.BatchCounts, error) {
 	trip, err := s.q.GetTripByClientID(ctx, dbgen.GetTripByClientIDParams{MemberID: member, ClientTripID: clientTrip})
+	tripVehicle := (*uuid.UUID)(nil)
 	switch {
 	case err == nil && trip.DeletedAt != nil:
 		return store.BatchTripDeleted, store.BatchCounts{}, nil
-	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+	case err == nil:
+		tripVehicle = trip.VehicleID
+	case !errors.Is(err, pgx.ErrNoRows):
 		return 0, store.BatchCounts{}, fmt.Errorf("check trip: %w", err)
 	}
 	live, err := s.q.VehicleExists(ctx, dbgen.VehicleExistsParams{MemberID: member, ID: vehicle})
@@ -57,7 +81,10 @@ func (s *Telemetry) CheckBatch(ctx context.Context, member, clientBatch, clientT
 	b, err := s.q.GetTelemetryBatchByClientID(ctx, dbgen.GetTelemetryBatchByClientIDParams{MemberID: member, ClientBatchID: clientBatch})
 	switch {
 	case err == nil:
-		return store.BatchDuplicate, batchCounts(b), nil
+		outcome, counts := existingBatch(b, fingerprint)
+		return outcome, counts, nil
+	case errors.Is(err, pgx.ErrNoRows) && otherVehicle(tripVehicle, vehicle):
+		return store.BatchVehicleMismatch, store.BatchCounts{}, nil
 	case errors.Is(err, pgx.ErrNoRows):
 		return store.BatchAccepted, store.BatchCounts{}, nil
 	default:
@@ -95,6 +122,7 @@ func (s *Telemetry) StoreBatch(ctx context.Context, member uuid.UUID, b store.Te
 	params.ID, params.MemberID, params.ClientBatchID, params.ClientTripID, params.VehicleID =
 		b.ID, member, b.ClientBatchID, b.ClientTripID, b.VehicleID
 	params.ObjectKey, params.FirstSampleT, params.LastSampleT = b.ObjectKey, utcPtr(b.FirstSampleT), utcPtr(b.LastSampleT)
+	params.ContentSha256 = b.Fingerprint
 	for _, f := range []struct {
 		dst  *int32
 		n    int
@@ -145,12 +173,27 @@ func (s *Telemetry) StoreBatch(ctx context.Context, member uuid.UUID, b store.Te
 			outcome = store.BatchVehicleNotFound
 			return nil
 		}
+		// A stored clientBatchId wins over the vehicle check, as in
+		// CheckBatch: its trip may have arrived since, with another vehicle.
+		orig, err := q.GetTelemetryBatchByClientID(ctx, dbgen.GetTelemetryBatchByClientIDParams{MemberID: member, ClientBatchID: b.ClientBatchID})
+		switch {
+		case err == nil:
+			outcome, counts = existingBatch(orig, b.Fingerprint)
+			return nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("read batch: %w", err)
+		}
+		if trip.DeletedAt == nil && otherVehicle(trip.VehicleID, b.VehicleID) {
+			outcome = store.BatchVehicleMismatch
+			return nil
+		}
 		if _, err := q.InsertTelemetryBatch(ctx, params); errors.Is(err, pgx.ErrNoRows) {
+			// Stored concurrently (its upload committed after our read).
 			orig, err := q.GetTelemetryBatchByClientID(ctx, dbgen.GetTelemetryBatchByClientIDParams{MemberID: member, ClientBatchID: b.ClientBatchID})
 			if err != nil {
 				return fmt.Errorf("read duplicate batch: %w", err)
 			}
-			outcome, counts = store.BatchDuplicate, batchCounts(orig)
+			outcome, counts = existingBatch(orig, b.Fingerprint)
 			return nil
 		} else if err != nil {
 			return fmt.Errorf("insert batch: %w", err)

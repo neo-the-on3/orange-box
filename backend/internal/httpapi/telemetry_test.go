@@ -177,14 +177,19 @@ func TestTelemetryUploadAndReadBack(t *testing.T) {
 	if keys := objects.Keys(); len(keys) != 1 || !strings.HasPrefix(keys[0], "members/"+m.id+"/trips/"+trip.String()+"/") {
 		t.Fatalf("objects = %v", keys)
 	}
-	// The same request replays byte for byte; the same clientBatchId under
-	// another key is a duplicate with the original counts, and stores nothing.
+	// The same request replays byte for byte; the same batch under another
+	// key is a duplicate with the original counts, and stores nothing.
+	// Other content under its clientBatchId is rejected (see
+	// TestTelemetryBatchIDReused).
 	if again := m.sendTelemetry(body, key); again.status != r.status || !bytes.Equal(again.body, r.body) {
 		t.Errorf("replay: %d %s", again.status, again.body)
 	}
-	dup := telemetryJSON(batch1, trip, vehicle, []string{sampleJSON("2026-10-23T15:00:00Z", 1)}, nil)
-	if got := ackOf(t, m.sendTelemetry(dup, "")); got != "duplicate a=3/3 d=1/1" {
+	if got := ackOf(t, m.sendTelemetry(body, "")); got != "duplicate a=3/3 d=1/1" {
 		t.Errorf("duplicate ack = %s", got)
+	}
+	dup := telemetryJSON(batch1, trip, vehicle, []string{sampleJSON("2026-10-23T15:00:00Z", 1)}, nil)
+	if r := m.sendTelemetry(dup, ""); r.status != http.StatusUnprocessableEntity {
+		t.Errorf("other content: %d %s", r.status, r.body)
 	}
 	if n := len(objects.Keys()); n != 1 {
 		t.Errorf("objects after duplicate = %d", n)

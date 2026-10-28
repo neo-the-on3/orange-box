@@ -54,6 +54,10 @@ type TelemetryBatch struct {
 	// BodyBytes is the decompressed request body size.
 	BodyBytes int
 	Events    []TelemetryEvent
+	// Fingerprint is the SHA-256 of the batch's normalised content (nil:
+	// unknown). A clientBatchId stored with another fingerprint is
+	// BatchConflict.
+	Fingerprint []byte
 }
 
 // BatchOutcome says what happened to an uploaded batch.
@@ -72,6 +76,12 @@ const (
 	// BatchVehicleNotFound means vehicleId is not one of the member's
 	// live vehicles; nothing is stored.
 	BatchVehicleNotFound
+	// BatchVehicleMismatch means the trip exists with another vehicle;
+	// nothing is stored.
+	BatchVehicleMismatch
+	// BatchConflict means the member already stored this clientBatchId
+	// with other content; nothing is stored.
+	BatchConflict
 )
 
 // SampleBatch is a stored batch that holds samples, for read-back.
@@ -89,8 +99,10 @@ type Telemetry interface {
 	// CheckBatch reports, without locking or writing, what StoreBatch
 	// would most likely do (a cheap pre-check before writing to object
 	// storage): BatchTripDeleted, BatchVehicleNotFound, BatchDuplicate
-	// (with the stored counts) or BatchAccepted, in that order.
-	CheckBatch(ctx context.Context, member, clientBatch, clientTrip, vehicle uuid.UUID) (BatchOutcome, BatchCounts, error)
+	// (with the stored counts) or BatchConflict (stored with a fingerprint
+	// other than fingerprint; nil matches any), BatchVehicleMismatch or
+	// BatchAccepted, in that order.
+	CheckBatch(ctx context.Context, member, clientBatch, clientTrip, vehicle uuid.UUID, fingerprint []byte) (BatchOutcome, BatchCounts, error)
 	// StoreBatch stores b in one transaction, deciding the outcome as
 	// CheckBatch does but under locks, so it can't race a trip or vehicle
 	// delete. Only for BatchAccepted is anything stored.
