@@ -87,6 +87,7 @@ fun SettingsRoute(
             onPickApp = viewModel::loadApps,
             onAppChosen = viewModel::onQuickLaunchAppChosen,
             onOverspeedChanged = viewModel::onOverspeedChanged,
+            onSpeedometerOffsetChanged = viewModel::onSpeedometerOffsetChanged,
             onAutoShowChanged = viewModel::onAutoShowDashboardChanged,
             onOpenFullScreenSettings = {
                 runCatching { context.startActivity(io.github.neotheon3.orangebox.core.driving.FullScreenIntents.settingsIntent(context)) }

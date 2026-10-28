@@ -58,6 +58,7 @@ data class DashboardSettingsActions(
     val onPickApp: () -> Unit = {},
     val onAppChosen: (String) -> Unit = {},
     val onOverspeedChanged: (Int) -> Unit = {},
+    val onSpeedometerOffsetChanged: (Int) -> Unit = {},
     val onAutoShowChanged: (Boolean) -> Unit = {},
     val onOpenFullScreenSettings: () -> Unit = {},
 )
@@ -106,6 +107,7 @@ fun DashboardSettingsSection(
             )
         }
         OverspeedSlider(prefs.overspeedKph, actions.onOverspeedChanged, units)
+        SpeedometerOffsetSlider(prefs.speedometerOffsetPercent, actions.onSpeedometerOffsetChanged)
         ListItem(
             headlineContent = { Text(stringResource(R.string.settings_auto_show)) },
             supportingContent = { Text(stringResource(R.string.settings_auto_show_summary)) },
@@ -218,6 +220,42 @@ private fun OverspeedSlider(kph: Int, onChanged: (Int) -> Unit, units: io.github
                 .fillMaxWidth()
                 .semantics { contentDescription = summary; stateDescription = "${shownIn(shown)} $label" }
                 .testTag("settings_overspeed"),
+        )
+    }
+}
+
+/**
+ * "Speedometer offset" (#210): Orange Box shows the true (ECU/GPS) speed, which is a few % below the car's
+ * speedometer. Optionally show the speed that much higher on the dashboard; display only.
+ */
+@Composable
+private fun SpeedometerOffsetSlider(percent: Int, onChanged: (Int) -> Unit) {
+    var value by remember(percent) { mutableFloatStateOf(percent.toFloat()) }
+    val shown = value.roundToInt()
+    val summary = stringResource(R.string.settings_speedometer_offset_summary)
+    Column {
+        ListItem(
+            headlineContent = { Text(stringResource(R.string.settings_speedometer_offset)) },
+            supportingContent = { Text(summary) },
+            trailingContent = {
+                Text(
+                    if (shown == 0) stringResource(R.string.settings_speedometer_offset_off) else stringResource(R.string.settings_speedometer_offset_value, shown),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.testTag("settings_speedometer_offset_value"),
+                )
+            },
+        )
+        val max = DashboardPreferences.MAX_SPEEDOMETER_OFFSET_PERCENT
+        Slider(
+            value = value,
+            onValueChange = { value = it },
+            onValueChangeFinished = { onChanged(value.roundToInt()) },
+            valueRange = 0f..max.toFloat(),
+            steps = max - 1,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = summary; stateDescription = "+$shown %" }
+                .testTag("settings_speedometer_offset"),
         )
     }
 }

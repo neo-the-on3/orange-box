@@ -21,6 +21,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
+import androidx.compose.foundation.verticalScroll
 
 /** Robolectric screenshots of the M7/M8 Settings sections, written to build/outputs/settings/. */
 @RunWith(RobolectricTestRunner::class)
@@ -72,6 +73,21 @@ class SettingsScreenshotTest {
         androidx.compose.foundation.layout.Column {
             DashboardSettingsSection(DashboardSettingsState(), null, DashboardSettingsActions(), UnitPreferences.forCountry("US"))
             SwitchRow(R.string.settings_diagnostics_prompt, R.string.settings_diagnostics_prompt_summary, true, "d") {}
+        }
+    }
+
+    // --- RDF2 (build/outputs/settings/rdf2/) ---
+
+    @Test fun rdf2PetrolBlend() = shot("settings_units_petrol_blend", dir = "build/outputs/settings/rdf2") {
+        UnitsSettingsSection(UnitPreferences(), io.github.neotheon3.orangebox.core.model.PetrolBlend.E20) {}
+    }
+
+    @Test fun rdf2SpeedometerOffset() = shot("settings_dashboard_speedometer_offset", dir = "build/outputs/settings/rdf2") {
+        androidx.compose.foundation.layout.Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState(400))) {
+            DashboardSettingsSection(
+                DashboardSettingsState(io.github.neotheon3.orangebox.core.model.DashboardPreferences(speedometerOffsetPercent = 4)),
+                null, DashboardSettingsActions(), UnitPreferences(),
+            )
         }
     }
 

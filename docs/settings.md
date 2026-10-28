@@ -10,8 +10,8 @@ Top to bottom:
 |---|---|---|
 | Car and dongle | **Vehicles** list (#61), OBD dongle, permissions, start when the dongle connects | — / off |
 | | **Check the car when a drive starts**: M6's "Car Diagnosing…" scan and prompt | on |
-| Driving dashboard | bottom-left button (hazard with emergency number, or quick launcher), overspeed warning, show dashboard automatically | hazard, country number, 120 km/h, off |
-| Units (#58) | distance and speed, fuel economy, temperature | from the device country |
+| Driving dashboard | bottom-left button (hazard with emergency number, or quick launcher), overspeed warning, speedometer offset (#210), show dashboard automatically | hazard, country number, 120 km/h, 0 %, off |
+| Units (#58) | distance and speed, fuel economy, temperature, petrol blend (#208) | from the device country (E20 in India) |
 | Driving alerts (#59) | overspeed, harsh accel/brake, long idling, check-engine; tone; voice | on, on, on (3 min), on; tone on; voice off |
 | Crash detection (M7 + #60) | detection on/off, impact threshold, countdown, emergency contact | off, 4.0 g, 30 s, none |
 | Server (advanced) (#62) | backend mode Off / Fake / Remote, https base URL | Off |
@@ -25,6 +25,15 @@ country (`DeviceCountry`): US/PR → mi, mph, mpg (US), °F; LR/MM → mi, mpg (
 trip list / detail / charts / stats, the recording notification and the overspeed slider label. The
 overspeed threshold itself is stored and stepped in km/h. Warnings (coolant, overspeed) always use
 the metric values.
+
+**Petrol blend (#208):** E0 / E10 / E20 for the fuel estimate (litres, km/L, CO₂); see `docs/telemetry.md`.
+Until picked it follows the device country (E20 in India, E0 elsewhere).
+
+## Speedometer offset (#210)
+Orange Box shows the car's true speed (PID 0D, which matched GPS within about 1 % in RDF2). Car speedometers are
+built to read high, typically 3–8 %, so the dashboard reads lower than the car's own gauge. The setting (0–10 %,
+default 0) shows the dashboard and Home card speed that much higher. It is display only: the overspeed warning,
+alerts, trips, stats and exports keep the true speed.
 
 ## Driving alerts (#59)
 `AlertMonitor` (app lifetime, active only while connected) feeds live telemetry to `AlertPolicy`
