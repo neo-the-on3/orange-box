@@ -53,8 +53,19 @@ and validated. Implemented so far:
   `app.os` ≤ 32, `app.osVersion` ≤ 128, `speedBands` ≤ 32 items, each `dtc`
   list ≤ 128 codes; a trip is at most 16 KiB of JSON, and a page of trips
   ends early (with a cursor) before 512 KiB.
-- `Idempotency-Key` on every operation that declares it (`POST /v1/vehicles`
-  and `POST /v1/trips/batch` so far): a retry with the same key and
+- DTC reports (#112), on Postgres: `POST /v1/vehicles/{vehicleId}/dtc-reports`
+  (`201`, or `200` with the stored report, unchanged, when the member already
+  has one with this `clientReportId`) and `GET` (newest `readAt` first, then
+  id, with an opaque cursor). The vehicle must be the caller's live vehicle,
+  otherwise `404`. A list left out stays out and `[]` stays empty. A
+  `kind=cleared` report (mode 04) must have `mil: null` and no `permanent`
+  list; otherwise `422` with a pointer to each. `readAt` is stored to the
+  microsecond and returned in UTC. A cascade vehicle delete removes the
+  vehicle's reports in the same transaction (an upload share-locks the
+  vehicle, so none is left behind). Without `DATABASE_URL` they answer `501`.
+- `Idempotency-Key` on every operation that declares it (`POST /v1/vehicles`,
+  `POST /v1/trips/batch` and `POST /v1/vehicles/{vehicleId}/dtc-reports` so
+  far): a retry with the same key and
   request gets the stored response, another request under the key `422
   idempotency_key_reused`, a retry while the first runs `409
   idempotency_in_flight` (also on uploads, where a different upload in flight
@@ -66,8 +77,8 @@ and validated. Implemented so far:
 Postgres storage (#105): the schema, goose migrations and sqlc queries for
 members, vehicles, trips with deletion tombstones and sync watermarks,
 telemetry batch metadata and events, DTC reports and idempotency keys are
-in `internal/db` (see [Database](#database)). Members, vehicles, trips and
-idempotency keys are stored in Postgres when `DATABASE_URL` is set; the
+in `internal/db` (see [Database](#database)). Members, vehicles, trips, DTC
+reports and idempotency keys are stored in Postgres when `DATABASE_URL` is set; the
 handlers for the other resources are still `501` and will use the queries as
 they land. Nothing purges tombstones or expired idempotency keys yet (the
 queries exist; the job is to come).
@@ -103,7 +114,7 @@ curl -s -X POST localhost:8080/v1/auth/token -H 'Content-Type: application/json'
 Without `JWT_PRIVATE_KEY` the server generates a signing key at startup (only
 allowed when `ENV` is `local`, `ci` or `sandbox`), so tokens stop working when
 it restarts. Without `DATABASE_URL`, members are kept in memory and lost on
-restart, and the vehicle operations answer `501`; see [Database](#database)
+restart, and the vehicle, trip and DTC report operations answer `501`; see [Database](#database)
 to use Postgres.
 
 Test-mode guessing limits (all test addresses share one code): asking for a
@@ -138,7 +149,7 @@ up to `SHUTDOWN_TIMEOUT`; a second Ctrl-C exits at once.
 | `ANON_READ_CONCURRENCY` | `1024`  | Anonymous requests with a body in flight, reading included (1–65536); bounds buffered anonymous bodies to 16 MiB. Beyond it, `503 server_busy` at once. |
 | `UPLOAD_READ_TIMEOUT` | `10s`     | How long an upload body may take to arrive once it has a slot; then `408 request_timeout`. Send large batches gzipped (1 MiB max). |
 | `GOMEMLIMIT`         | `400MiB` in the image | Go runtime soft memory limit. Keep it ~80% of the host's memory and raise `UPLOAD_CONCURRENCY` only with it. |
-| `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members and `501` for vehicles (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
+| `DATABASE_URL`     | none         | Postgres URL. Empty means in-memory members and `501` for vehicles, trips and DTC reports (only allowed when `ENV` is `local`, `ci` or `sandbox`). The server refuses to start if the schema is behind (`server migrate up`) or ahead of the binary. |
 | `SYNC_TOKEN_KEY`   | none         | Base64 secret (at least 32 bytes) that signs trip sync tokens and page cursors. Required unless `ENV` is `local`/`ci`/`sandbox`, where a missing one is generated at startup (tokens then die with the process). Rotating it expires every client's token: they do one full walk. |
 | `SYNC_DEPLOYMENT_ID` | `dev-<ENV>` in `local`/`ci`/`sandbox` | Names this deployment of the database in sync tokens and cursors, together with the cluster's `system_identifier` (`[A-Za-z0-9._:-]`, up to 64, e.g. `prod-2026-10-25`). Required unless `ENV` is `local`/`ci`/`sandbox`. **Change it after every restore, PITR or branch reset**, with a full restart (see "Restoring the database"). The `dev-<ENV>` default is for dev environments only and never changes, so a restore of a dev database onto the same cluster goes undetected unless you set one (the server warns at startup when it uses the default). |
 | `SYNC_IDENTITY_SOURCE` | `cluster_and_deployment_id` | What sync tokens bind. `cluster_and_deployment_id`: the cluster's `system_identifier` and `SYNC_DEPLOYMENT_ID`; the role must be allowed to run `pg_control_system()`, or the server doesn't start, and the server refuses to serve if the endpoint starts reaching another cluster. `deployment_id_only`: `SYNC_DEPLOYMENT_ID` only, for roles that can't (`system_identifier` isn't read, and cluster switches go unnoticed: change `SYNC_DEPLOYMENT_ID` and restart on any cluster change). Every instance must use the same value. |
@@ -157,8 +168,8 @@ a sync token key: `openssl rand -base64 32`.
 | `internal/api`           | **Generated** strict server + models (`api.gen.go`) and 501 stubs (`stubs.gen.go`) |
 | `internal/httpapi`       | Router, middleware, OpenAPI validation, handlers |
 | `internal/auth`          | ES256 access tokens, member store interface, test-mode codes |
-| `internal/store`         | Storage interfaces and domain types the handlers use (vehicles, trips, idempotency keys) |
-| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member, vehicle, trip and idempotency stores |
+| `internal/store`         | Storage interfaces and domain types the handlers use (vehicles, trips, DTC reports, idempotency keys) |
+| `internal/db`            | Postgres: pool, embedded goose migrations (`migrations/`), sqlc queries (`queries/`), the Postgres member, vehicle, trip, DTC report and idempotency stores |
 | `internal/synctoken`     | HMAC-signed sync tokens and page cursors |
 | `internal/db/dbgen`      | **Generated** by sqlc from `queries/` and `migrations/` (`sqlc.yaml`) |
 | `internal/db/dbtest`     | Throwaway databases for integration tests |
