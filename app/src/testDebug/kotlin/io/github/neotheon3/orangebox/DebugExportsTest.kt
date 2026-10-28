@@ -113,13 +113,15 @@ class DebugExportsTest {
 
     @Test fun `connection log export has a header and the buffered lines and the share intent grants read`() = runTest {
         ConnectionLog.enabled = true
-        ConnectionLog.record("TX", "010C")
-        ConnectionLog.record("RX", "41 0C 1A F8 (38ms)")
+        ConnectionLog.newSession("sim")
+        ConnectionLog.pin("protocol", "ISO_15765_4_CAN_11_500")
+        ConnectionLog.record("TR", "010C > 41 0C 1A F8 (38ms)")
         val f = exports.exportConnectionLog()
         val text = f.readText()
         assertTrue(text.startsWith("# Orange Box connection log"))
-        assertTrue(text.contains(" TX 010C\n"))
-        assertTrue(text.contains(" RX 41 0C 1A F8 (38ms)\n"))
+        assertTrue(text.contains(" TR 010C > 41 0C 1A F8 (38ms)\n"))
+        assertTrue(text.contains("\n#   protocol: ISO_15765_4_CAN_11_500\n"))
+        assertTrue(text.indexOf("# session 1 started") < text.indexOf(" TR 010C"))
         val chooser = exports.shareIntent(listOf(f), "log")
         val send = chooser.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)!!
         assertEquals(Intent.ACTION_SEND, send.action)

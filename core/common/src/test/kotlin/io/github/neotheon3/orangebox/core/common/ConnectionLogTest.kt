@@ -27,9 +27,32 @@ class ConnectionLogTest {
         ConnectionLog.maxChars = 2_000
         repeat(1_000) { ConnectionLog.record("TX", "line-$it") }
         val lines = ConnectionLog.snapshot()
-        assertTrue(lines.sumOf { it.length + 1 } <= 2_000)
+        // Stored compactly ("0 TX line-n"), so the cap counts that, not the formatted line.
+        assertTrue(lines.sumOf { it.substringAfter(' ').length + 3 } <= 2_000)
         assertTrue(lines.last().endsWith("line-999"))
         val out = StringWriter().also { ConnectionLog.writeTo(it) }.toString()
         assertTrue(out.startsWith("# ${1_000 - lines.size} older lines dropped"))
+    }
+
+    @Test fun `session headers survive the ring buffer and keep the last three`() {
+        ConnectionLog.maxChars = 500
+        ConnectionLog.pin("vehicle", "fuel=petrol", sticky = true)
+        repeat(4) { n ->
+            ConnectionLog.newSession("bt")
+            ConnectionLog.pin("adapter", "ELM327 v1.5")
+            ConnectionLog.pin("protocol", "ISO_15765_4_CAN_11_500 #$n")
+            repeat(200) { ConnectionLog.record("TR", "010D1 > 410D00 (50ms)") }
+        }
+        val out = StringWriter().also { ConnectionLog.writeTo(it) }.toString().lines()
+        val header = out.takeWhile { it.startsWith("#") }
+        assertEquals(listOf(2, 3, 4), header.filter { it.startsWith("# session") }.map { it.substringAfter("# session ").substringBefore(' ').toInt() })
+        assertTrue(header.contains("#   protocol: ISO_15765_4_CAN_11_500 #3"))
+        assertEquals(3, header.count { it == "#   vehicle: fuel=petrol" })
+        assertTrue(header.last().contains("older lines dropped"))
+    }
+
+    @Test fun `reply trims the prompt and line breaks`() {
+        assertEquals("410D00", ConnectionLog.reply("410D00\r\r>"))
+        assertEquals("SEARCHING...\\r41 00 BE", ConnectionLog.reply("\rSEARCHING...\r41 00 BE\r\r>"))
     }
 }

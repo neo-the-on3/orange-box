@@ -26,9 +26,9 @@ class LoggingObdTransportTest {
         val k = kinds()
         assertEquals("OPEN bt start", k[0])
         assertTrue(k[1].matches(Regex("OPEN bt ok \\d+ms")))
-        assertEquals("TX ATZ", k[2])
-        assertTrue(k[3], k[3].matches(Regex("""RX \\r\\rELM327 v1\.5 \(\d+ms\)""")))
-        assertEquals("CLOSE bt", k[4])
+        assertTrue(k[2], k[2].matches(Regex("""TR ATZ > ELM327 v1\.5 \(\d+ms\)""")))
+        assertEquals("CLOSE bt", k[3])
+        assertTrue(ConnectionLog.headerLines().first().matches(Regex("""# session 1 started .* \(bt\)""")))
         assertEquals(listOf("ATZ"), fake.written)
         assertEquals(1, fake.closeCount)
     }
@@ -43,6 +43,8 @@ class LoggingObdTransportTest {
         val k = kinds()
         assertTrue(k.any { it.startsWith("OPEN bt failed") && it.contains("Io(socket closed)") })
         assertTrue(k.any { it.startsWith("ERR read after") && it.contains("timeout 5ms") && it.contains("Timeout") })
+        // A request without a reply is still logged, before its error.
+        assertEquals("TX 010C", k[k.indexOfFirst { it.startsWith("ERR read after") } - 1])
     }
 
     @Test fun `wrapping is skipped while the log is disabled`() {

@@ -5,6 +5,7 @@ import io.github.neotheon3.orangebox.core.obd.ObdConnectionState
 import io.github.neotheon3.orangebox.core.obd.MonitorStatus
 import io.github.neotheon3.orangebox.core.obd.ObdError
 import io.github.neotheon3.orangebox.core.obd.Elm327Session
+import io.github.neotheon3.orangebox.core.common.ConnectionLog
 import io.github.neotheon3.orangebox.core.common.OrangeLog
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -127,6 +128,11 @@ class PidPoller(
             OrangeLog.Areas.TELEMETRY, "polling_started",
             "supported" to supported.all.size, "fast" to fast.size, "slow" to slow.size,
             "period_ms" to config.fastIntervalMillis,
+        )
+        fun List<ObdPid>.hex() = joinToString(",") { "%02X".format(it.pid) }
+        ConnectionLog.pin(
+            "poll_plan",
+            "priority=${priority.hex()} fast=${rest.hex()} slow=${slow.hex()} slow_every=${config.slowEvery} period_ms=${config.fastIntervalMillis} monitor=${config.monitorStatus && MONITOR_STATUS_PID in supported}",
         )
         val values = LinkedHashMap<ObdPid, Double>()
         val misses = HashMap<ObdPid, Int>()
