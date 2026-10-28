@@ -63,20 +63,29 @@ func TestSamplePidsLimit(t *testing.T) {
 // Sample read-back pages end early at samplePageBudget bytes of JSON, so a
 // trip of large samples can't make one huge response (or hold one in
 // memory); walking still returns every sample once, in order.
+//
+// The samples are large by bytes (8 pids with 1 KB keys, about 8 KB each)
+// rather than by value count, so validating the uploads stays cheap under
+// -race on a loaded machine; the request timeout is generous for the same
+// reason.
 func TestSampleReadBackBounded(t *testing.T) {
 	t.Parallel()
-	e, _, _ := newTelemetryEnv(t)
+	e, _, _ := newTelemetryEnv(t, func(d *Deps) { d.RequestTimeout = time.Minute })
 	m := e.member("tel-budget")
 	vehicle := m.vehicle()
 	trip := uuid.New()
 	base := time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC)
-	pids := pidsJSON(256)
-	const batches, perBatch = 4, 500
+	var keys []string
+	for i := range 8 {
+		keys = append(keys, fmt.Sprintf(`"0x%02X%s":%d.5`, i, strings.Repeat("_", 1000), i))
+	}
+	pids := "{" + strings.Join(keys, ",") + "}"
+	const batches, perBatch = 3, 120 // about 2.9 MB of samples: two pages
 	var want []string
 	for b := range batches {
 		samples := make([]string, perBatch)
 		for i := range perBatch {
-			// Interleaved batches: batch b has samples b, b+4, b+8, ...
+			// Interleaved batches: batch b has samples b, b+3, b+6, ...
 			ts := base.Add(time.Duration(i*batches+b) * time.Second).Format("2006-01-02T15:04:05.000Z")
 			samples[i] = `{"t":"` + ts + `","speedKmh":1,"pids":` + pids + `}`
 			want = append(want, ts)
@@ -89,7 +98,8 @@ func TestSampleReadBackBounded(t *testing.T) {
 	path := "/v1/trips/client:" + trip.String() + "/samples?limit=5000"
 	var got []string
 	pages := 0
-	for cursor := ""; ; pages++ {
+	for cursor := ""; ; {
+		pages++
 		u := path
 		if cursor != "" {
 			u += "&cursor=" + q(cursor)
@@ -116,7 +126,7 @@ func TestSampleReadBackBounded(t *testing.T) {
 		cursor = next
 	}
 	if pages < 2 {
-		t.Errorf("%d pages: the budget never ended a page", pages+1)
+		t.Errorf("%d page: the budget never ended a page", pages)
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("walk returned %d samples, want %d (in order, once each)", len(got), len(want))

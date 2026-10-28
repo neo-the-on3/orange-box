@@ -51,8 +51,9 @@ func (f *flakyObjects) Delete(ctx context.Context, key string) error {
 	return f.Memory.Delete(ctx, key)
 }
 
-// newTelemetryEnv is newDBTestEnv with access to the object store.
-func newTelemetryEnv(t *testing.T) (*testEnv, *flakyObjects, *pgxpool.Pool) {
+// newTelemetryEnv is newDBTestEnv with access to the object store; adjust
+// (optional) changes the Deps further.
+func newTelemetryEnv(t *testing.T, adjust ...func(*Deps)) (*testEnv, *flakyObjects, *pgxpool.Pool) {
 	t.Helper()
 	pool := dbtest.New(t)
 	trips, err := db.NewTrips(t.Context(), pool, "test-deployment")
@@ -68,6 +69,9 @@ func newTelemetryEnv(t *testing.T) (*testEnv, *flakyObjects, *pgxpool.Pool) {
 		d.Objects = objects
 		d.Idempotency = db.NewIdempotency(pool)
 		d.ClassifyError = db.Classify
+		for _, a := range adjust {
+			a(d)
+		}
 	})
 	return e, objects, pool
 }
