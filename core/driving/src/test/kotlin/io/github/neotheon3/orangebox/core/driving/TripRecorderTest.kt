@@ -279,4 +279,34 @@ class TripRecorderTest {
         assertEquals(3.0, rows[0].durationS!!, 1e-9)
         assertEquals(2.0, rows[1].durationS!!, 1e-9)
     }
+
+    @Test fun `fuel cuts less than 1,5 s apart are one event, and ones under 1 s are dropped (#207)`() = runTest {
+        val r = rig()
+        fun step(n: Int, speed: Double, rpm: Double, throttle: Double) = repeat(n) {
+            r.scope.advanceTimeBy(500)
+            r.source.feed(VehicleSample(r.scope.testScheduler.currentTime, mapOf(ObdPid.SPEED to speed, ObdPid.RPM to rpm, ObdPid.MAF to 8.0, ObdPid.THROTTLE to throttle)))
+            r.scope.runCurrent()
+        }
+        step(6, 0.0, 800.0, 5.0) // idle: learns the closed throttle at 5 %
+        step(4, 60.0, 2000.0, 20.0)
+        val firstCut = r.scope.testScheduler.currentTime + 500
+        step(6, 55.0, 1900.0, 5.0) // 3 s cut
+        step(2, 50.0, 1800.0, 20.0) // 1 s blip: continues it
+        step(4, 45.0, 1700.0, 5.0) // 2 s cut, ends at firstCut + 6 s
+        step(6, 45.0, 1700.0, 20.0) // 3 s on: written
+        step(1, 45.0, 1700.0, 5.0) // a 0.5 s flicker: dropped
+        step(6, 45.0, 1700.0, 20.0)
+        step(4, 40.0, 1600.0, 5.0) // 2 s cut still running at the stop: written
+        r.recorder.stop(TripRecorder.END_USER)
+
+        val cuts = r.trips.events.filter { it.type == TripRecorder.EVENT_FUEL_CUT }.sortedBy { it.timestampMillis }
+        assertEquals(2, cuts.size)
+        assertEquals(firstCut, cuts[0].timestampMillis)
+        assertEquals(55.0, cuts[0].value!!, 1e-9)
+        assertEquals(6.0, cuts[0].durationS!!, 1e-9)
+        assertEquals(1.5, cuts[1].durationS!!, 1e-9)
+        // The trip's fuel-cut time is the engine's own total, not the merged rows.
+        val trip = r.trips.rows.values.single()
+        assertEquals(3.0 + 2.0 + 0.5 + 2.0, trip.fuelCutS, 1.1)
+    }
 }
