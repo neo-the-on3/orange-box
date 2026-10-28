@@ -68,7 +68,8 @@ with 3 leading pad bytes. The VIN must be 17 characters from `A–H J–N P R–
 (position 9) is reported as `checkDigitValid` but is not enforced, because it is only mandatory in North America.
 
 **Polling (#193).** Fast PIDs are 0D, 0C (read first), then 10, 04, 11, 5E, 49 (accelerator pedal, for fuel cut and
-the Detailed Info grid) and 03 (fuel system status, for fuel cut, #194). Ticks run on a 500 ms period measured from
+the Detailed Info grid), 03 (fuel system status, for fuel cut, #194) and 44 (commanded λ, for the fuel estimate in
+open loop, #208; only when the car announces it). Ticks run on a 500 ms period measured from
 the start of the tick. Each tick reads speed and rpm, emits the sample right away (so they are about one request old
 on screen), then makes as many *secondary* reads as fit in the rest of the period (at least one), and sleeps for what
 is left. Secondary reads take turns through a *round*: the other fast PIDs, then that round's share of the slow PIDs
@@ -98,7 +99,9 @@ Intervals between consecutive samples are integrated with the trapezoid rule. In
 
 **Fuel flow (L/h)**, in order of preference:
 1. PID 5E engine fuel rate.
-2. MAF: `flow = MAF[g/s] · 3600 / (AFR_stoich · λ · ρ_fuel[g/L])`, where λ comes from PID 44 (default 1).
+2. MAF: `flow = MAF[g/s] · 3600 / (AFR_stoich · λ · ρ_fuel[g/L])`. λ comes from PID 44 when the car reports it;
+   otherwise 0.85 (`openLoopLambda`) while PID 03 says open loop (0x04) and the foot is on the pedal, i.e. power
+   enrichment (#208; in drive 2 of RDF2 that was about 15 % of the fuel-burning air), else 1.
 3. Speed-density, when there is no MAF:
    `MAF = RPM/120 · V_d[m³] · VE · (MAP[Pa] · M_air / (R · T_intake[K])) · 1000`,
    with M_air = 0.0289647 kg/mol, R = 8.314462618 J/(mol·K), V_d from the vehicle (else 1.6 L) and VE by load
@@ -115,13 +118,21 @@ bi-fuel PID 51 codes (0x09–0x0D) to know which fuel is in use. That touches se
 
 | Fuel | AFR_stoich | ρ (g/L) | CO₂ (g/L) |
 |---|---|---|---|
-| Gasoline (default) | 14.7 | 745 | 2310 |
+| Gasoline E0 (default) | 14.7 | 745 | 2310 |
+| Petrol E10 | 14.1 | 749 | 2230 |
+| Petrol E20 (default in India) | 13.5 | 754 | 2150 |
 | Diesel | 14.5 | 832 | 2640 |
 | LPG | 15.5 | 540 | 1640 |
 | Ethanol/E85, methanol | 9.8 | 785 | 1610 |
 
 The CO₂ factors are approximate tank-to-tailpipe values (EU/EPA order of magnitude). The fuel comes from PID 51
 if the car reports it, otherwise from `TelemetryConfig.defaultFuelType`.
+
+**Petrol blend (#208).** Petrol is E0, E10 or E20 (Settings → Units → Petrol blend); until the user picks one it
+follows the device country: E20 in India, E0 elsewhere. Blends mix E0 with ethanol (AFR 9.0, 789 g/L, 1510 g CO₂/L):
+density and CO₂ by volume, the stoichiometric AFR by mass. For the same MAF, E20 is about 7.5 % more litres than E0,
+which is most of the gap Kiran saw against tank-to-tank figures. The blend is part of the vehicle profile and so of
+the connection log header.
 
 **Economy.** Instant economy is `flow / speed · 100` L/100 km, and only above 5 km/h. Trip economy is
 `fuel / distance · 100`, from 0.1 km of distance onwards. Distance is `∫ speed dt`, fuel is `∫ flow dt`,

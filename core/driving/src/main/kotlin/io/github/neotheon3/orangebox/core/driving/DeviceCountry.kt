@@ -27,4 +27,8 @@ class DeviceCountry @Inject constructor(@ApplicationContext private val context:
     /** The display units: the user's choice, else the country's defaults (miles in the US and UK). */
     fun units(prefs: io.github.neotheon3.orangebox.core.model.AppPreferences): io.github.neotheon3.orangebox.core.model.UnitPreferences =
         prefs.units ?: io.github.neotheon3.orangebox.core.model.UnitPreferences.forCountry(iso())
+
+    /** The petrol blend for the fuel estimate: the user's choice, else the country's default (E20 in India). */
+    fun petrolBlend(prefs: io.github.neotheon3.orangebox.core.model.AppPreferences): io.github.neotheon3.orangebox.core.model.PetrolBlend =
+        prefs.petrolBlend ?: io.github.neotheon3.orangebox.core.model.PetrolBlend.forCountry(iso())
 }

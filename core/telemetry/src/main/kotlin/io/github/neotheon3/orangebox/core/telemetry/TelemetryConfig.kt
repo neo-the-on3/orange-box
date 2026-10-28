@@ -13,6 +13,25 @@ data class FuelProperties(
 ) {
     companion object {
         val GASOLINE = FuelProperties(14.7, 745.0, 2310.0)
+        /** Pure ethanol: AFR 9.0, 789 g/L, 1,510 g CO₂/L. */
+        val ETHANOL_E100 = FuelProperties(9.0, 789.0, 1510.0)
+
+        /**
+         * Petrol with [ethanolPercent] % ethanol by volume (E10, E20; #208). Density and CO₂ mix by volume; the
+         * stoichiometric AFR mixes by mass. E20: AFR 13.5, 754 g/L, 2,150 g CO₂/L.
+         */
+        fun petrol(ethanolPercent: Int): FuelProperties {
+            if (ethanolPercent <= 0) return GASOLINE
+            val v = ethanolPercent.coerceAtMost(100) / 100.0
+            val g = GASOLINE; val e = ETHANOL_E100
+            val density = (1 - v) * g.densityGramsPerLitre + v * e.densityGramsPerLitre
+            val massEthanol = v * e.densityGramsPerLitre / density
+            return FuelProperties(
+                stoichAfr = (1 - massEthanol) * g.stoichAfr + massEthanol * e.stoichAfr,
+                densityGramsPerLitre = density,
+                co2GramsPerLitre = (1 - v) * g.co2GramsPerLitre + v * e.co2GramsPerLitre,
+            )
+        }
         val DIESEL = FuelProperties(14.5, 832.0, 2640.0)
         val LPG = FuelProperties(15.5, 540.0, 1640.0)
         val E85 = FuelProperties(9.8, 785.0, 1610.0)
@@ -62,6 +81,11 @@ data class TelemetryConfig(
     val fuelCutPedalAboveRestPercent: Double = 2.0,
     /** Idle pedal readings above this % aren't learned as "at rest". */
     val pedalRestMaxPercent: Double = 30.0,
+    /**
+     * λ assumed in open-loop enrichment (PID 03 = 4 while the pedal is pressed) when the car doesn't report its
+     * commanded equivalence ratio (PID 44) (#208). In RDF2 that was 15 % of the fuel-burning air.
+     */
+    val openLoopLambda: Double = 0.85,
     /** Eco driving: RPM ≤ this … */
     val ecoMaxRpm: Double = 2_500.0,
     /** … and |acceleration| ≤ this m/s² while moving. */

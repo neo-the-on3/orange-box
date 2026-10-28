@@ -22,4 +22,6 @@ data class AppPreferences(
     val alerts: AlertPreferences = AlertPreferences(),
     /** Read trouble codes when a drive starts and show the "Car Diagnosing…" prompt (M6). On by default. */
     val diagnosticsPromptEnabled: Boolean = true,
+    /** Ethanol blend of the petrol the user buys (#208). Null until picked: then the device country's default applies. */
+    val petrolBlend: PetrolBlend? = null,
 )

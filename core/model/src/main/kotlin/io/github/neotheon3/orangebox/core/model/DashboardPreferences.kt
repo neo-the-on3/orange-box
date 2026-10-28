@@ -20,8 +20,19 @@ data class DashboardPreferences(
     val overspeedKph: Int = DEFAULT_OVERSPEED_KPH,
     /** Bring the dashboard up on dongle connect, including over the lock screen. Off by default. */
     val autoShowDashboard: Boolean = false,
+    /**
+     * Display-only speed offset, % (#210). Orange Box shows the car's true (ECU) speed; car speedometers read a few
+     * percent high by design. 0 by default. Overspeed, trips and stats always use the true speed.
+     */
+    val speedometerOffsetPercent: Int = 0,
 ) {
+    /** [trueKph] as shown on the dashboard, with the speedometer offset applied. */
+    fun displaySpeed(trueKph: Double): Double = trueKph * (1 + speedometerOffsetPercent / 100.0)
+
     companion object {
+        const val MAX_SPEEDOMETER_OFFSET_PERCENT = 10
+        fun clampSpeedometerOffset(percent: Int) = percent.coerceIn(0, MAX_SPEEDOMETER_OFFSET_PERCENT)
+
         const val DEFAULT_OVERSPEED_KPH = 120
         const val MIN_OVERSPEED_KPH = 40
         const val MAX_OVERSPEED_KPH = 200

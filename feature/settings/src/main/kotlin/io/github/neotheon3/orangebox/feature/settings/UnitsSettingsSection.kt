@@ -16,12 +16,21 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.neotheon3.orangebox.core.model.DistanceUnit
 import io.github.neotheon3.orangebox.core.model.EconomyUnit
+import io.github.neotheon3.orangebox.core.model.PetrolBlend
 import io.github.neotheon3.orangebox.core.model.TemperatureUnit
 import io.github.neotheon3.orangebox.core.model.UnitPreferences
 
-/** "Units" (#58): distance and speed, fuel economy, temperature. Applies app-wide at once. */
+/**
+ * "Units" (#58): distance and speed, fuel economy, temperature. Applies app-wide at once. Also the petrol blend
+ * (#208), which the fuel estimate needs: E20 burns about 7.5 % more litres than E0 for the same air.
+ */
 @Composable
-fun UnitsSettingsSection(units: UnitPreferences, onChanged: (UnitPreferences) -> Unit) {
+fun UnitsSettingsSection(
+    units: UnitPreferences,
+    petrolBlend: PetrolBlend = PetrolBlend.E0,
+    onPetrolBlendChanged: (PetrolBlend) -> Unit = {},
+    onChanged: (UnitPreferences) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.settings_units_section), style = MaterialTheme.typography.titleMedium)
         Choice(
@@ -36,6 +45,15 @@ fun UnitsSettingsSection(units: UnitPreferences, onChanged: (UnitPreferences) ->
             stringResource(R.string.settings_units_temperature), TemperatureUnit.entries, units.temperature,
             label = { it.label }, tag = "settings_units_temperature",
         ) { onChanged(units.copy(temperature = it)) }
+        Choice(
+            stringResource(R.string.settings_petrol_blend), PetrolBlend.entries, petrolBlend,
+            label = { it.name }, tag = "settings_petrol_blend",
+        ) { onPetrolBlendChanged(it) }
+        Text(
+            stringResource(R.string.settings_petrol_blend_summary),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

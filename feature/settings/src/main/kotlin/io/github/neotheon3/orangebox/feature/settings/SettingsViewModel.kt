@@ -52,6 +52,8 @@ data class SettingsUiState(
     val crash: CrashSettingsState = CrashSettingsState(),
     /** M6's drive-start "Car Diagnosing…" prompt. */
     val diagnosticsPrompt: Boolean = true,
+    /** Petrol blend in effect for the fuel estimate (#208): the user's choice, else the country's default. */
+    val petrolBlend: io.github.neotheon3.orangebox.core.model.PetrolBlend = io.github.neotheon3.orangebox.core.model.PetrolBlend.E0,
 )
 
 /** The "Driving dashboard" section. */
@@ -105,7 +107,7 @@ class SettingsViewModel @Inject constructor(
     private val contactError = MutableStateFlow(false)
 
     private val general = combine(prefs.preferences, contactDraft, contactError) { p, draft, error ->
-        SettingsUiState(units = country.units(p), alerts = p.alerts, crash = CrashSettingsState(p.crash, draft, error), diagnosticsPrompt = p.diagnosticsPromptEnabled)
+        SettingsUiState(units = country.units(p), alerts = p.alerts, crash = CrashSettingsState(p.crash, draft, error), diagnosticsPrompt = p.diagnosticsPromptEnabled, petrolBlend = country.petrolBlend(p))
     }.distinctUntilChanged()
 
     private val backend = combine(repository.config, urlDraft, urlResult) { config, draft, result -> Triple(config, draft, result) }
@@ -212,6 +214,13 @@ class SettingsViewModel @Inject constructor(
         updateDashboard { it.copy(button = DashboardButton.QUICK_LAUNCHER, quickLaunchPackage = packageName) }
 
     fun onOverspeedChanged(kph: Int) = updateDashboard { it.copy(overspeedKph = DashboardPreferences.clampOverspeed(kph)) }
+
+    fun onSpeedometerOffsetChanged(percent: Int) =
+        updateDashboard { it.copy(speedometerOffsetPercent = DashboardPreferences.clampSpeedometerOffset(percent)) }
+
+    fun onPetrolBlendChanged(blend: io.github.neotheon3.orangebox.core.model.PetrolBlend) {
+        viewModelScope.launch { prefs.setPetrolBlend(blend) }
+    }
 
     fun onAutoShowDashboardChanged(enabled: Boolean) {
         updateDashboard { it.copy(autoShowDashboard = enabled) }

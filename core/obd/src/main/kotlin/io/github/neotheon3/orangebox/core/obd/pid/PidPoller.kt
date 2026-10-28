@@ -46,6 +46,8 @@ data class PollingConfig(
         ObdPid.ACCELERATOR_PEDAL_D,
         // Fuel cut is confirmed by the ECU's "open loop / decel fuel cut" status (#194); one byte, so cheap.
         ObdPid.FUEL_SYSTEM_STATUS,
+        // Commanded λ, when announced: the real enrichment in open loop instead of an assumed one (#208).
+        ObdPid.COMMANDED_EQUIVALENCE_RATIO,
     ),
     val slow: List<ObdPid> = listOf(
         ObdPid.COOLANT_TEMP, ObdPid.FUEL_LEVEL, ObdPid.CONTROL_MODULE_VOLTAGE, ObdPid.INTAKE_TEMP,
