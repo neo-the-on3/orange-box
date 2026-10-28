@@ -8502,6 +8502,25 @@ func (response ListDtcReports429ApplicationProblemPlusJSONResponse) VisitListDtc
 	return err
 }
 
+type ListDtcReports503ApplicationProblemPlusJSONResponse struct {
+	ServiceUnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response ListDtcReports503ApplicationProblemPlusJSONResponse) VisitListDtcReportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListDtcReportsdefaultApplicationProblemPlusJSONResponse struct {
 	Body       Problem
 	Headers    InternalErrorResponseHeaders
@@ -10356,18 +10375,18 @@ var swaggerSpec = []string{
 	"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",
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
