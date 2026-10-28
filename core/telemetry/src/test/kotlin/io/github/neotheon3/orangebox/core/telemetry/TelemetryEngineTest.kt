@@ -246,4 +246,48 @@ class TelemetryEngineTest {
         val big = TelemetryEngine().also { it.vehicle = VehicleProfile(null, 3.2) }.onSample(sd).instant.fuelFlowLph!!
         assertEquals(2.0, big / small, 1e-9)
     }
+
+    @Test fun `ECU-reported fuel cut with the foot off counts below 20 km-h (#209)`() {
+        val e = TelemetryEngine()
+        e.onSample(s(0, ObdPid.SPEED to 0.0, ObdPid.RPM to 760.0, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 3.5))
+        val cut = FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT.toDouble()
+        val slow = e.onSample(s(500, ObdPid.SPEED to 12.0, ObdPid.RPM to 1300.0, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 4.0, ObdPid.FUEL_SYSTEM_STATUS to cut)).instant
+        assertTrue("decel cut at 12 km/h, foot off", slow.fuelCut)
+        assertEquals(0.0, slow.fuelFlowLph!!, 0.0)
+        val lowRpm = e.onSample(s(1_000, ObdPid.SPEED to 8.0, ObdPid.RPM to 950.0, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 4.0, ObdPid.FUEL_SYSTEM_STATUS to cut)).instant
+        assertFalse("below 1000 rpm the ECU resumes fuel", lowRpm.fuelCut)
+        val closedLoop = e.onSample(s(1_500, ObdPid.SPEED to 12.0, ObdPid.RPM to 1300.0, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 4.0, ObdPid.FUEL_SYSTEM_STATUS to 2.0)).instant
+        assertFalse("no ECU cut, under 20 km/h", closedLoop.fuelCut)
+        val pressed = e.onSample(s(2_000, ObdPid.SPEED to 12.0, ObdPid.RPM to 1300.0, ObdPid.ACCELERATOR_PEDAL_D to 40.0, ObdPid.MAF to 4.0, ObdPid.FUEL_SYSTEM_STATUS to cut)).instant
+        assertFalse("open loop with the pedal pressed is enrichment", pressed.fuelCut)
+        val stopped = e.onSample(s(2_500, ObdPid.SPEED to 0.0, ObdPid.RPM to 1300.0, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 4.0, ObdPid.FUEL_SYSTEM_STATUS to cut)).instant
+        assertFalse("not moving", stopped.fuelCut)
+    }
+
+    @Test fun `open-loop enrichment burns more fuel, PID 44 wins when reported (#208)`() {
+        val e = TelemetryEngine()
+        e.onSample(s(0, ObdPid.SPEED to 0.0, ObdPid.RPM to 760.0, ObdPid.ACCELERATOR_PEDAL_D to 13.7, ObdPid.MAF to 3.5))
+        val base = e.onSample(s(500, ObdPid.SPEED to 80.0, ObdPid.RPM to 3500.0, ObdPid.ACCELERATOR_PEDAL_D to 60.0, ObdPid.MAF to 40.0, ObdPid.FUEL_SYSTEM_STATUS to 2.0)).instant
+        val rich = e.onSample(s(1_000, ObdPid.SPEED to 80.0, ObdPid.RPM to 3500.0, ObdPid.ACCELERATOR_PEDAL_D to 60.0, ObdPid.MAF to 40.0, ObdPid.FUEL_SYSTEM_STATUS to 4.0)).instant
+        assertEquals("λ 0.85 assumed", 1 / 0.85, rich.fuelFlowLph!! / base.fuelFlowLph!!, 1e-9)
+        val reported = e.onSample(s(1_500, ObdPid.SPEED to 80.0, ObdPid.RPM to 3500.0, ObdPid.ACCELERATOR_PEDAL_D to 60.0, ObdPid.MAF to 40.0,
+            ObdPid.FUEL_SYSTEM_STATUS to 4.0, ObdPid.COMMANDED_EQUIVALENCE_RATIO to 0.9)).instant
+        assertEquals(1 / 0.9, reported.fuelFlowLph!! / base.fuelFlowLph!!, 1e-9)
+    }
+
+    @Test fun `petrol blends mix ethanol by volume and AFR by mass (#208)`() {
+        val e20 = FuelProperties.petrol(20)
+        assertEquals(13.5, e20.stoichAfr, 0.05)
+        assertEquals(753.8, e20.densityGramsPerLitre, 0.05)
+        assertEquals(2150.0, e20.co2GramsPerLitre, 0.5)
+        assertEquals(14.1, FuelProperties.petrol(10).stoichAfr, 0.05)
+        assertEquals(FuelProperties.GASOLINE, FuelProperties.petrol(0))
+        val maf = s(0, ObdPid.MAF to 10.0, ObdPid.RPM to 2000.0, ObdPid.SPEED to 50.0, ObdPid.THROTTLE to 20.0)
+        val e0Flow = TelemetryEngine().onSample(maf).instant.fuelFlowLph!!
+        val e20Flow = TelemetryEngine().also { it.vehicle = VehicleProfile(FuelType.GASOLINE, null, petrolEthanolPercent = 20) }.onSample(maf).instant.fuelFlowLph!!
+        assertEquals("E20 ≈ 7.5 % more litres for the same air", 1.075, e20Flow / e0Flow, 0.005)
+        val diesel = TelemetryEngine().also { it.vehicle = VehicleProfile(FuelType.DIESEL, null, petrolEthanolPercent = 20) }.onSample(maf).instant.fuelFlowLph!!
+        val dieselE0 = TelemetryEngine().also { it.vehicle = VehicleProfile(FuelType.DIESEL, null) }.onSample(maf).instant.fuelFlowLph!!
+        assertEquals("blend only applies to petrol", dieselE0, diesel, 1e-12)
+    }
 }

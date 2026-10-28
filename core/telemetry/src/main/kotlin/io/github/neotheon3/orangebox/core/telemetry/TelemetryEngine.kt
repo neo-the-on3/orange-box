@@ -4,6 +4,7 @@ import io.github.neotheon3.orangebox.core.obd.pid.FuelSystemStatus
 import io.github.neotheon3.orangebox.core.obd.pid.FuelType
 import io.github.neotheon3.orangebox.core.obd.pid.ObdPid
 import io.github.neotheon3.orangebox.core.obd.pid.VehicleSample
+import io.github.neotheon3.orangebox.core.common.ConnectionLog
 import io.github.neotheon3.orangebox.core.common.OrangeLog
 import kotlin.math.abs
 
@@ -336,8 +337,20 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
 
     /** The user's vehicle (M3 setup). The car's own PID 51 report still wins for fuel type. */
     @Volatile var vehicle: VehicleProfile? = null
+        set(value) {
+            field = value
+            // Session header of the connection log (#200); carried into every later session.
+            ConnectionLog.pin(
+                "vehicle",
+                value?.let { "fuel=${it.fuelType?.name ?: "?"} petrol_ethanol=E${it.petrolEthanolPercent} displacement_l=${it.displacementLitres ?: "?"}" } ?: "none",
+                sticky = true,
+            )
+        }
 
-    private fun props(): FuelProperties = FuelProperties.of(reportedFuelType ?: vehicle?.fuelType ?: config.defaultFuelType)
+    private fun props(): FuelProperties {
+        val type = reportedFuelType ?: vehicle?.fuelType ?: config.defaultFuelType
+        return if (type == FuelType.GASOLINE) FuelProperties.petrol(vehicle?.petrolEthanolPercent ?: 0) else FuelProperties.of(type)
+    }
 
     /**
      * Fuel flow, L/h, in order of preference: PID 5E (engine fuel rate), MAF (PID 10),
@@ -349,7 +362,12 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
         val fuel = props()
         val maf = sample[ObdPid.MAF]?.also { noteFuelSource("maf") }
             ?: speedDensityMaf(sample, rpm)?.also { noteFuelSource("speed_density") } ?: return null
-        val lambda = sample[ObdPid.COMMANDED_EQUIVALENCE_RATIO]?.takeIf { it in 0.5..2.0 } ?: 1.0
+        val lambda = sample[ObdPid.COMMANDED_EQUIVALENCE_RATIO]?.takeIf { it in 0.5..2.0 }
+            ?: if (sample[ObdPid.FUEL_SYSTEM_STATUS]?.toInt() == FuelSystemStatus.OPEN_LOOP_LOAD_OR_DECEL_CUT && footOff(sample) != true) {
+                config.openLoopLambda // power enrichment: fuel cut has already returned 0 before this
+            } else {
+                1.0
+            }
         return maf * 3600.0 / (fuel.stoichAfr * lambda * fuel.densityGramsPerLitre)
     }
 
@@ -421,4 +439,9 @@ class TelemetryEngine(private val config: TelemetryConfig = TelemetryConfig()) {
 }
 
 /** What the engine needs to know about the car when the ECU doesn't say. */
-data class VehicleProfile(val fuelType: FuelType?, val displacementLitres: Double?)
+data class VehicleProfile(
+    val fuelType: FuelType?,
+    val displacementLitres: Double?,
+    /** Ethanol % of the petrol (E0/E10/E20, #208); used whenever the fuel is gasoline. */
+    val petrolEthanolPercent: Int = 0,
+)

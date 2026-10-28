@@ -53,6 +53,20 @@ class AppPreferencesRepositoryTest {
         assertEquals(null, d.quickLaunchPackage)
     }
 
+    @Test fun `speedometer offset and petrol blend persist, the offset clamped (#208, #210)`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = DataStoreAppPreferencesRepository(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("o.preferences_pb").also { it.delete() } },
+        )
+        assertEquals(0, repo.preferences.first().dashboard.speedometerOffsetPercent)
+        assertEquals("follows the country until picked", null, repo.preferences.first().petrolBlend)
+        repo.setDashboard(io.github.neotheon3.orangebox.core.model.DashboardPreferences(speedometerOffsetPercent = 4))
+        assertEquals(4, repo.preferences.first().dashboard.speedometerOffsetPercent)
+        repo.setDashboard(io.github.neotheon3.orangebox.core.model.DashboardPreferences(speedometerOffsetPercent = 40))
+        assertEquals(10, repo.preferences.first().dashboard.speedometerOffsetPercent)
+        repo.setPetrolBlend(io.github.neotheon3.orangebox.core.model.PetrolBlend.E10)
+        assertEquals(io.github.neotheon3.orangebox.core.model.PetrolBlend.E10, repo.preferences.first().petrolBlend)
+    }
+
     @Test fun `crash settings default off, persist and clamp`() = runTest(UnconfinedTestDispatcher()) {
         val repo = DataStoreAppPreferencesRepository(
             PreferenceDataStoreFactory.create(scope = backgroundScope) { tmp.newFile("c.preferences_pb").also { it.delete() } },

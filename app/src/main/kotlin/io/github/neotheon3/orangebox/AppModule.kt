@@ -46,17 +46,24 @@ object TelemetryModule {
         poller: io.github.neotheon3.orangebox.core.obd.pid.PidPoller,
         vehicles: io.github.neotheon3.orangebox.core.database.VehicleRepository,
         prefs: io.github.neotheon3.orangebox.core.datastore.AppPreferencesRepository,
+        country: io.github.neotheon3.orangebox.core.driving.DeviceCountry,
     ): io.github.neotheon3.orangebox.core.telemetry.TelemetrySource =
         io.github.neotheon3.orangebox.core.telemetry.LiveTelemetry(
             scope, connection, poller,
-            vehicle = vehicles.activeVehicle.map { it?.let(VehicleProfiles::of) },
+            vehicle = kotlinx.coroutines.flow.combine(
+                vehicles.activeVehicle,
+                prefs.preferences.map { country.petrolBlend(it) }.distinctUntilChanged(),
+            ) { v, blend -> v?.let { VehicleProfiles.of(it, blend) } },
             overspeedKph = prefs.preferences.map { it.dashboard.overspeedKph.toDouble() }.distinctUntilChanged(),
         )
 }
 
 /** Maps the user's car to what the fuel estimate needs. */
 object VehicleProfiles {
-    fun of(v: io.github.neotheon3.orangebox.core.model.Vehicle) = io.github.neotheon3.orangebox.core.telemetry.VehicleProfile(
+    fun of(
+        v: io.github.neotheon3.orangebox.core.model.Vehicle,
+        blend: io.github.neotheon3.orangebox.core.model.PetrolBlend = io.github.neotheon3.orangebox.core.model.PetrolBlend.E0,
+    ) = io.github.neotheon3.orangebox.core.telemetry.VehicleProfile(
         fuelType = when (v.fuel) {
             io.github.neotheon3.orangebox.core.model.VehicleFuel.PETROL -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.GASOLINE
             io.github.neotheon3.orangebox.core.model.VehicleFuel.DIESEL -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.DIESEL
@@ -65,6 +72,7 @@ object VehicleProfiles {
             io.github.neotheon3.orangebox.core.model.VehicleFuel.ETHANOL -> io.github.neotheon3.orangebox.core.obd.pid.FuelType.ETHANOL
         },
         displacementLitres = v.displacementCc?.let { it / 1000.0 },
+        petrolEthanolPercent = blend.ethanolPercent,
     )
 }
 

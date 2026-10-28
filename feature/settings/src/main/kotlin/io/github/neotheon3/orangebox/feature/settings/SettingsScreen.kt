@@ -94,6 +94,7 @@ fun SettingsRoute(
         ),
         actions = SettingsActions(
             onUnitsChanged = viewModel::onUnitsChanged,
+            onPetrolBlendChanged = viewModel::onPetrolBlendChanged,
             onAlertsChanged = viewModel::onAlertsChanged,
             onDiagnosticsPromptChanged = viewModel::onDiagnosticsPromptChanged,
             crash = CrashSettingsActions(
@@ -134,6 +135,7 @@ fun SettingsRoute(
 /** Callbacks of the sections M7/M8 added (units, alerts, crash, diagnostics). */
 data class SettingsActions(
     val onUnitsChanged: (io.github.neotheon3.orangebox.core.model.UnitPreferences) -> Unit = {},
+    val onPetrolBlendChanged: (io.github.neotheon3.orangebox.core.model.PetrolBlend) -> Unit = {},
     val onAlertsChanged: (io.github.neotheon3.orangebox.core.model.AlertPreferences) -> Unit = {},
     val crash: CrashSettingsActions = CrashSettingsActions(),
     val onDiagnosticsPromptChanged: (Boolean) -> Unit = {},
@@ -200,7 +202,7 @@ fun SettingsScreen(
             HorizontalDivider()
             DashboardSettingsSection(state.dashboard, launchableApps, dashboardActions, state.units)
             HorizontalDivider()
-            UnitsSettingsSection(state.units, actions.onUnitsChanged)
+            UnitsSettingsSection(state.units, state.petrolBlend, actions.onPetrolBlendChanged, actions.onUnitsChanged)
             HorizontalDivider()
             AlertsSettingsSection(state.alerts, actions.onAlertsChanged)
             HorizontalDivider()

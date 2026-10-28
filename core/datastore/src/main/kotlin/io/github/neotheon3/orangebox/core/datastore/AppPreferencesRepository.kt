@@ -42,6 +42,8 @@ interface AppPreferencesRepository {
     suspend fun setUnits(units: UnitPreferences)
     suspend fun setAlerts(alerts: io.github.neotheon3.orangebox.core.model.AlertPreferences)
     suspend fun setDiagnosticsPromptEnabled(enabled: Boolean)
+    /** Stores the petrol blend (#208); from then on it no longer follows the device country. */
+    suspend fun setPetrolBlend(blend: io.github.neotheon3.orangebox.core.model.PetrolBlend)
 }
 
 @Singleton
@@ -62,6 +64,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                 quickLaunchPackage = p[DASH_LAUNCH],
                 overspeedKph = DashboardPreferences.clampOverspeed(p[DASH_OVERSPEED] ?: DashboardPreferences.DEFAULT_OVERSPEED_KPH),
                 autoShowDashboard = p[DASH_AUTO_SHOW] ?: false,
+                speedometerOffsetPercent = DashboardPreferences.clampSpeedometerOffset(p[DASH_SPEEDO_OFFSET] ?: 0),
             ),
             mapTilesEnabled = p[MAP_TILES] ?: true,
             crash = CrashPreferences(
@@ -89,6 +92,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
                 )
             },
             diagnosticsPromptEnabled = p[DIAGNOSTICS_PROMPT] ?: true,
+            petrolBlend = io.github.neotheon3.orangebox.core.model.PetrolBlend.entries.firstOrNull { it.name == p[PETROL_BLEND] },
         )
     }.distinctUntilChanged()
 
@@ -150,7 +154,12 @@ class DataStoreAppPreferencesRepository @Inject constructor(
             if (dashboard.quickLaunchPackage == null) it.remove(DASH_LAUNCH) else it[DASH_LAUNCH] = dashboard.quickLaunchPackage!!
             it[DASH_OVERSPEED] = DashboardPreferences.clampOverspeed(dashboard.overspeedKph)
             it[DASH_AUTO_SHOW] = dashboard.autoShowDashboard
+            it[DASH_SPEEDO_OFFSET] = DashboardPreferences.clampSpeedometerOffset(dashboard.speedometerOffsetPercent)
         }
+    }
+
+    override suspend fun setPetrolBlend(blend: io.github.neotheon3.orangebox.core.model.PetrolBlend) {
+        dataStore.edit { it[PETROL_BLEND] = blend.name }
     }
 
     internal companion object {
@@ -159,6 +168,8 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val DASH_LAUNCH = stringPreferencesKey("dashboard_quick_launch_package")
         val DASH_OVERSPEED = intPreferencesKey("dashboard_overspeed_kph")
         val DASH_AUTO_SHOW = booleanPreferencesKey("dashboard_auto_show")
+        val DASH_SPEEDO_OFFSET = intPreferencesKey("dashboard_speedometer_offset_percent")
+        val PETROL_BLEND = stringPreferencesKey("petrol_blend")
         val MAP_TILES = booleanPreferencesKey("map_tiles_enabled")
         val CRASH_ENABLED = booleanPreferencesKey("crash_detection_enabled")
         val CRASH_THRESHOLD = doublePreferencesKey("crash_threshold_g")
