@@ -105,24 +105,48 @@ func TestDirAbandonedPutLeavesNothing(t *testing.T) {
 func TestDirInflightLimit(t *testing.T) {
 	t.Parallel()
 	d, release := hangingDir(t)
-	d.sem = make(chan struct{}, 3)
-	for range 3 {
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
-		_, _ = d.Get(ctx, "k")
-		cancel()
+	const slots = 3
+	d.sem = make(chan struct{}, slots)
+	// A short store timeout: the filling calls return quickly (still
+	// holding their slots, as their file system calls hang), and if a
+	// slot were wrongly free an operation below fails in 100ms rather
+	// than after dirOpTimeout.
+	d.timeout = 100 * time.Millisecond
+	// The hook reports each call that has taken a slot and reached the
+	// file system, so the slots are filled deterministically, with no
+	// deadline that could pass before a call takes its slot.
+	entered := make(chan struct{}, 16)
+	hang := d.hook
+	d.hook = func() {
+		entered <- struct{}{}
+		hang()
 	}
-	start := time.Now()
-	for name, err := range map[string]error{
-		"put":    d.Put(t.Context(), "k", []byte("v")),
-		"get":    func() error { _, err := d.Get(t.Context(), "k"); return err }(),
-		"delete": d.Delete(t.Context(), "k"),
+	for i := range slots {
+		if _, err := d.Get(context.Background(), "k"); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("filling slot %d: %v", i, err)
+		}
+	}
+	for i := range slots {
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("only %d of %d hung calls started", i, slots)
+		}
+	}
+	if n := len(d.sem); n != slots {
+		t.Fatalf("%d of %d slots held", n, slots)
+	}
+	for name, op := range map[string]func() error{
+		"put":    func() error { return d.Put(t.Context(), "k", []byte("v")) },
+		"get":    func() error { _, err := d.Get(t.Context(), "k"); return err },
+		"delete": func() error { return d.Delete(t.Context(), "k") },
 	} {
-		if !errors.Is(err, ErrBusy) {
+		if err := op(); !errors.Is(err, ErrBusy) {
 			t.Errorf("%s with every slot hung: %v", name, err)
 		}
 	}
-	if time.Since(start) > time.Second {
-		t.Errorf("busy operations took %v; they should fail at once", time.Since(start))
+	if n := len(entered); n != 0 {
+		t.Errorf("%d busy operations reached the file system", n)
 	}
 	release()
 	d.wait()
