@@ -206,7 +206,7 @@ func (s *Server) UploadTelemetryBatch(ctx context.Context, req api.UploadTelemet
 		events, counts.DroppedEvents = normaliseEvents(*in.Events)
 	}
 	counts.AcceptedSamples, counts.AcceptedEvents = len(samples), len(events)
-	fingerprint, err := batchFingerprint(in, samples, events)
+	fingerprint, err := batchFingerprint(in, vehicle, samples, events)
 	if err != nil {
 		return nil, err
 	}
@@ -245,15 +245,22 @@ func (s *Server) UploadTelemetryBatch(ctx context.Context, req api.UploadTelemet
 
 // batchFingerprint is the SHA-256 of a batch's normalised content: what
 // a clientBatchId stands for. Resending the same content (re-encoded,
-// reordered or with sub-millisecond digits) gives the same fingerprint.
-func batchFingerprint(in *api.TelemetryBatch, samples []api.Sample, events []store.TelemetryEvent) ([]byte, error) {
+// reordered, with sub-millisecond digits or IDs in another letter case)
+// gives the same fingerprint. IDs go in as parsed UUIDs; a vehicleId that
+// isn't one (vehicle is uuid.Nil) never gets as far as a comparison
+// (404), but is lower-cased all the same.
+func batchFingerprint(in *api.TelemetryBatch, vehicle uuid.UUID, samples []api.Sample, events []store.TelemetryEvent) ([]byte, error) {
+	vehicleKey := vehicle.String()
+	if vehicle == uuid.Nil {
+		vehicleKey = strings.ToLower(in.VehicleId)
+	}
 	b, err := json.Marshal(struct {
 		V            int                    `json:"v"`
 		ClientTripID uuid.UUID              `json:"clientTripId"`
 		VehicleID    string                 `json:"vehicleId"`
 		Samples      []api.Sample           `json:"samples"`
 		Events       []store.TelemetryEvent `json:"events"`
-	}{1, in.ClientTripId, in.VehicleId, samples, events})
+	}{1, in.ClientTripId, vehicleKey, samples, events})
 	if err != nil {
 		return nil, err
 	}

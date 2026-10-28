@@ -3,6 +3,7 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -108,5 +109,27 @@ func TestTelemetryBatchIDReused(t *testing.T) {
 	r := m.call(http.MethodGet, "/v1/trips/client:"+trip.String()+"/events", "")
 	if r.status != http.StatusOK || len(r.json(t)["items"].([]any)) != 0 {
 		t.Errorf("events: %d %s", r.status, r.body)
+	}
+}
+
+// IDs are compared as UUIDs, not strings: the same batch resent with the
+// vehicleId (or clientTripId) in another letter case is a duplicate.
+func TestTelemetryBatchIDCase(t *testing.T) {
+	t.Parallel()
+	e, _, _ := newTelemetryEnv(t)
+	m := e.member("tel-case")
+	vehicle := m.vehicle()
+	trip, batch := uuid.New(), uuid.New()
+	samples := []string{sampleJSON("2026-10-23T14:00:00.000Z", 1)}
+	upper := telemetryJSON(batch, trip, strings.ToUpper(vehicle), samples, nil)
+	upper = strings.Replace(upper, trip.String(), strings.ToUpper(trip.String()), 1)
+	if got := ackOf(t, m.sendTelemetry(upper, "")); got != "accepted a=1/0 d=0/0" {
+		t.Fatalf("upper case: %s", got)
+	}
+	if got := ackOf(t, m.sendTelemetry(telemetryJSON(batch, trip, vehicle, samples, nil), "")); got != "duplicate a=1/0 d=0/0" {
+		t.Errorf("lower case: %s", got)
+	}
+	if got := ackOf(t, m.sendTelemetry(upper, "")); got != "duplicate a=1/0 d=0/0" {
+		t.Errorf("upper case again: %s", got)
 	}
 }
