@@ -62,7 +62,8 @@ func (s *Server) CreateDtcReport(ctx context.Context, req api.CreateDtcReportReq
 	if err != nil {
 		return nil, err
 	}
-	// No Location: the spec has no URL for a single report (see #112).
+	// No Location: there is no URL for a single report, and the spec
+	// declares none for these responses.
 	switch outcome {
 	case store.DtcCreated:
 		return api.CreateDtcReport201JSONResponse{Body: toAPIDtcReport(r)}, nil
