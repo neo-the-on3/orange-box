@@ -128,3 +128,40 @@ func tripWithEnd(clientID uuid.UUID, vehicle, endedAt string) string {
 	return fmt.Sprintf(`{"clientTripId":%q,"vehicleId":%q,"state":"completed","startedAt":"2026-10-23T14:00:00Z","endedAt":%q,`+
 		`"snapshotAt":"2026-10-23T14:00:00Z","distanceKm":1,"durationS":60,"maxRpm":3000}`, clientID, vehicle, endedAt)
 }
+
+// /v1/me has no client-supplied instant: createdAt and updatedAt are
+// read-only and a PATCH carrying them is rejected before anything is
+// stored, and the instants it answers with come from the server and pass
+// the shared range check.
+func TestMeTimestampsRange(t *testing.T) {
+	t.Parallel()
+	e := newDBTestEnv(t)
+	m := e.member("me-range")
+	inRange := func(where string, v any) {
+		t.Helper()
+		s, _ := v.(string)
+		if err := validateDateTimeFormat(s); err != nil {
+			t.Errorf("%s %q: %v", where, s, err)
+		}
+	}
+	for _, at := range outOfRangeInstants {
+		for _, field := range []string{"createdAt", "updatedAt"} {
+			r := m.call(http.MethodPatch, "/v1/me", `{"displayName":"Kiran",`+fmt.Sprintf("%q:%q", field, at)+`}`, "If-Match", "*")
+			if r.status != http.StatusUnprocessableEntity || r.problemCode(t) != "validation_failed" {
+				t.Errorf("%s %s: %d %s", field, at, r.status, r.body)
+			}
+		}
+	}
+	r := m.call(http.MethodGet, "/v1/me", "")
+	if r.status != http.StatusOK || r.json(t)["displayName"] == "Kiran" {
+		t.Fatalf("get: %d %s", r.status, r.body)
+	}
+	inRange("createdAt", r.json(t)["createdAt"])
+	inRange("updatedAt", r.json(t)["updatedAt"])
+	r = m.call(http.MethodDelete, "/v1/me", "")
+	if r.status != http.StatusAccepted {
+		t.Fatalf("delete: %d %s", r.status, r.body)
+	}
+	inRange("requestedAt", r.json(t)["requestedAt"])
+	inRange("completeBy", r.json(t)["completeBy"])
+}
