@@ -22,7 +22,14 @@ and validated. Implemented so far:
   `/token`; `grantType=refresh_token` answers `501`.
 - Profile (#107), on Postgres: `GET /v1/me`, `PATCH /v1/me` (JSON merge
   patch; `If-Match` required, `428` when missing, `412` when stale; a patch
-  that changes nothing keeps the `ETag`) and `DELETE /v1/me`. Until the
+  that changes nothing keeps the `ETag`; repeated `If-Match` or
+  `If-None-Match` lines are combined into one list, RFC 9110 §5.3, on every
+  operation) and `DELETE /v1/me`. `displayName` is trimmed and must not be
+  blank or contain control or format characters (bidi overrides,
+  zero-width spaces) or line separators; U+200D is allowed inside emoji
+  sequences. `regionCode` is ISO 3166-2 (`IN-KA`) and its country part must
+  equal `countryCode` in the patched profile (`422` at `/regionCode`, or
+  at `/countryCode` when the patch changed only the country). Until the
   member sets a `displayName`, `GET` shows `Driver <6 hex>`, derived from a
   hash of the member id and never stored. `DELETE` answers `202`
   (`status=scheduled`, `completeBy` = `requestedAt` + 30 days): in one
@@ -30,8 +37,9 @@ and validated. Implemented so far:
   as a new, empty member), sets `deleted_at` and `tokens_valid_after`.
   **Every authenticated request** checks the member's state in Postgres
   (one primary-key read), so a deleted member's tokens get `401
-  invalid_token` at once; a check that fails answers `503`/`500`, never
-  lets the request through. **The erasure job isn't built yet** (see the storage
+  invalid_token` at once; a check that fails answers `503` with
+  `Retry-After` (`server_busy` or `service_unavailable`), never lets the
+  request through. **The erasure job isn't built yet** (see the storage
   note below). Without `DATABASE_URL` they answer `501` and nothing is
   checked.
 - Vehicles (#108), on Postgres: `GET`/`POST /v1/vehicles` and
@@ -86,7 +94,11 @@ handlers for the other resources are still `501` and will use the queries as
 they land. Nothing erases deleted members yet: `DELETE /v1/me` schedules erasure, but
 the job that runs `ListMembersPendingErasure` and `EraseMember` (and
 deletes the member's R2 objects, #179) is still to come, so deleted
-members' rows and data stay in Postgres until it lands. Nothing purges
+members' rows and data stay in Postgres until it lands (#218). Requests
+that passed the token check just before `DELETE` committed can still write
+afterwards, so that job must erase by member id when it runs (the cascade),
+not from rows or keys listed earlier, and must erase the member's stored
+idempotency responses too (they can hold personal data such as a VIN). Nothing purges
 tombstones or expired idempotency keys yet either (#184; the
 queries exist; the job is to come).
 
