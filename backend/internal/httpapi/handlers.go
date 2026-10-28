@@ -42,6 +42,7 @@ type Server struct {
 	vehicles   store.Vehicles   // nil without a database
 	trips      store.Trips      // nil without a database
 	dtcReports store.DtcReports // nil without a database
+	profiles   store.Profiles   // nil without a database
 	sync       *synctoken.Codec
 }
 

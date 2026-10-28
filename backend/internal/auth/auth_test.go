@@ -331,3 +331,25 @@ func TestMemoryMembers(t *testing.T) {
 		t.Errorf("third id %q", m3.ID)
 	}
 }
+
+// VerifyIssued also returns iat (whole seconds), which the auth middleware
+// compares with the member's tokensValidAfter.
+func TestVerifyIssuedAt(t *testing.T) {
+	t.Parallel()
+	tk := newTokens(t)
+	at := time.Now().Add(-time.Minute).Truncate(time.Second).Add(700 * time.Millisecond)
+	tk.now = func() time.Time { return at }
+	member := uuid.NewString()
+	raw, _, err := tk.Issue(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk.now = time.Now
+	got, iat, err := tk.VerifyIssued(raw)
+	if err != nil || got != member || !iat.Equal(at.Truncate(time.Second)) || iat.Location() != time.UTC {
+		t.Fatalf("VerifyIssued = %q %v %v, want %q %v", got, iat, err, member, at.Truncate(time.Second))
+	}
+	if _, _, err := tk.VerifyIssued(raw + "x"); err == nil {
+		t.Fatal("tampered token verified")
+	}
+}

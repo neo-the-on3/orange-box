@@ -41,6 +41,7 @@ func newDBTestEnvPool(t *testing.T) (*testEnv, *pgxpool.Pool) {
 	}
 	return newTestEnvWith(t, true, func(d *Deps) {
 		d.Members = db.NewMembers(pool)
+		d.Profiles = db.NewMembers(pool)
 		d.Vehicles = db.NewVehicles(pool)
 		d.Trips = trips
 		d.DtcReports = db.NewDtcReports(pool)
