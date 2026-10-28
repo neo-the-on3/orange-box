@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/neo-the-on3/orange-box/backend/internal/problem"
 	"github.com/neo-the-on3/orange-box/backend/internal/reqctx"
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
+	"github.com/neo-the-on3/orange-box/backend/internal/timeutil"
 )
 
 // Request body limits (REQUIREMENTS.md §7, proposal).
@@ -60,6 +62,29 @@ func init() {
 	// Formats used by the spec that kin-openapi doesn't validate by default.
 	openapi3.DefineStringFormatValidator("uuid", openapi3.NewRegexpFormatValidator(openapi3.FormatOfStringForUUIDOfRFC9562))
 	openapi3.DefineStringFormatValidator("email", openapi3.NewCallbackValidator(validateEmailFormat))
+	// date-time also has to be a real instant within the range the API can
+	// store and write back out (timeutil.InRange), for every body field and
+	// query parameter: a body field out of range is a 422 at its pointer,
+	// a parameter a 400, before any handler runs or anything is saved.
+	openapi3.DefineStringFormatValidator("date-time", openapi3.NewCallbackValidator(validateDateTimeFormat))
+}
+
+var dateTimeShape = regexp.MustCompile(openapi3.FormatOfStringDateTime)
+
+// errDateTimeFormat never contains the value.
+var errDateTimeFormat = errors.New("not an RFC 3339 date-time")
+
+// validateDateTimeFormat accepts an RFC 3339 date-time (upper-case T and Z)
+// whose UTC instant falls within years 0001 to 9999.
+func validateDateTimeFormat(s string) error {
+	if !dateTimeShape.MatchString(s) {
+		return errDateTimeFormat
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return errDateTimeFormat
+	}
+	return timeutil.CheckRange(t)
 }
 
 // errEmailFormat never contains the address.
@@ -746,7 +771,11 @@ func walkSchemaErrors(err error, out *[]problem.FieldError, depth int) {
 			walkSchemaErrors(e.Origin, out, depth+1)
 			return
 		}
-		*out = append(*out, problem.FieldError{Pointer: pointer(e.JSONPointer()), Detail: describeField(e.SchemaField, e.Schema)})
+		detail := describeField(e.SchemaField, e.Schema)
+		if e.SchemaField == "format" && errors.Is(e.Origin, timeutil.ErrOutOfRange) {
+			detail = timeutil.ErrOutOfRange.Error()
+		}
+		*out = append(*out, problem.FieldError{Pointer: pointer(e.JSONPointer()), Detail: detail})
 	default:
 		if u := errors.Unwrap(err); u != nil {
 			walkSchemaErrors(u, out, depth+1)
@@ -826,6 +855,9 @@ func describe(k jsonschema.ErrorKind) string {
 	case *kind.Type:
 		return "must be of type " + strings.Join(k.Want, " or ")
 	case *kind.Format:
+		if errors.Is(k.Err, timeutil.ErrOutOfRange) {
+			return timeutil.ErrOutOfRange.Error()
+		}
 		return "must be a valid " + k.Want
 	case *kind.Pattern:
 		return "has an invalid format"
