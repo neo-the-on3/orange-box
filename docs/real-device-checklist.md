@@ -63,12 +63,24 @@ before a release, and after changes to Bluetooth, polling, telemetry or sync.
 - [ ] The connection log has a `fuel_source` line (`fuel_rate`, `maf` or `speed_density`). On the SX4 expect
       `maf`. No phantom fuel after `ecu_silent`.
 - [ ] Compare the trip's fuel economy with a tank-to-tank fill (fuel pump litres ÷ trip km) or the car's MID/trip
-      computer. Note both figures in the report.
+      computer. Note both figures in the report. Settings → Units → Petrol blend shows E20 in India (#208); set it to
+      what the pump sells.
+- [ ] Low-speed fuel cut (#209): rolling in gear to a stop with the foot off, the FUEL-CUT lamp stays lit down to about
+      1,000 rpm (below 20 km/h), and goes out when the clutch goes in or the idle speed returns.
+- [ ] Trip detail lists far fewer fuel cuts than before (#207): a cut with a brief pedal blip is one row, no rows under 1 s.
+- [ ] The exported connection log starts with `# session N started …` headers (#200) listing the adapter, protocol,
+      PID bitmaps, supported PIDs, poll plan and vehicle (fuel, petrol blend, displacement); no MAC or VIN. A full
+      day's drives fit (the last 3 connections' headers are kept).
 
 ## 4. Trips
 - [ ] A drive of a few minutes appears in Trips with its distance, time, economy, eco time and events. The route map
       shows OpenStreetMap tiles.
 - [ ] The month summary and Stats (weekly / monthly) add up the trips.
+- [ ] Trip detail → ⋮ → *Exclude from stats* (#211): the trip stays listed, marked *Excluded from stats*, and the month
+      summary and Stats drop it. *Include in stats* puts it back. *Delete trip* asks first.
+- [ ] Settings → Driving dashboard → *Speedometer offset* (#210): at +N %, the dashboard and Home card speed read N %
+      higher; the overspeed warning and trips don't change.
+- [ ] If map tiles fail, the log's `map_tiles_unavailable` line has `status=` (HTTP) or `error=` (exception) (#212).
 - [ ] Kill the app during a drive: the trip is closed and kept on the next launch, not lost.
 
 ## 5. Alerts and voice (M8)
