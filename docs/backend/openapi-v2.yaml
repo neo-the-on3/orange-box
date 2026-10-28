@@ -1746,7 +1746,7 @@ components:
       properties:
         grantType: {type: string, const: email_otp}
         email: {type: string, format: email, maxLength: 254, description: 'The address the code was sent to (same normalisation as `POST /v1/auth/otp`). In test mode only (ENV local, ci or sandbox; never in production), addresses ending in `@test.orangebox.invalid` accept the static `AUTH_TEST_CODE`; with test mode off they are rejected with `422` (`test_address_rejected`).'}
-        code: {type: string, pattern: '^[0-9]{6}$', description: '6-digit one-time code from the e-mail. Sent as a string to keep leading zeros.'}
+        code: {type: string, maxLength: 6, pattern: '^[0-9]{6}$', description: '6-digit one-time code from the e-mail. Sent as a string to keep leading zeros.'}
         device:
           type: object
           description: Optional. Stored with the refresh-token family for support and a possible future session list; no endpoint exposes it in v1. No hardware identifiers.
@@ -1778,10 +1778,10 @@ components:
       required: [id, displayName, email, createdAt, updatedAt]
       properties:
         id: {type: string, readOnly: true}
-        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Shown on leaderboards. Legacy memberNm. Leading and trailing white space is trimmed; the trimmed name must not be empty and must not contain control or format characters (Unicode Cc and Cf, e.g. bidi overrides and zero-width spaces) or line/paragraph separators (Zl, Zp). Exception: U+200D (zero-width joiner) is allowed between two other characters, for emoji sequences. Otherwise `422`.'}
+        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Shown on leaderboards. Legacy memberNm. Leading and trailing white space is trimmed; the trimmed name must not be empty and must not contain control or format characters (Unicode Cc and Cf, e.g. bidi overrides and zero-width spaces), line/paragraph separators (Zl, Zp) or characters that render as nothing (Other_Default_Ignorable_Code_Point, e.g. Hangul fillers, and U+2800 braille blank). Exceptions: U+200D (zero-width joiner) between two other characters, for emoji sequences; U+200C (zero-width non-joiner) after a letter or mark and before a letter, for Persian and Indic spellings; and emoji tag sequences (U+1F3F4, tag digits or lower-case tag letters, U+E007F), for subdivision flags. Otherwise `422`.'}
         email: {type: string, format: email, readOnly: true, description: 'Verified sign-in e-mail address (verified by the one-time code), normalised to lower case and unique per member. Used to sign in; never accepted as an identifier in requests.'}
-        countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$', description: 'ISO 3166-1 alpha-2. Legacy countryCd.'}
-        regionCode: {type: [string, 'null'], pattern: '^[A-Z]{2}-[A-Z0-9]{1,3}$', description: 'ISO 3166-2 subdivision code, e.g. `IN-KA`. Its country part must equal `countryCode`: a `regionCode` needs a `countryCode`, and a `PATCH` that leaves the two inconsistent is `422`. Legacy localCd.'}
+        countryCode: {type: [string, 'null'], maxLength: 2, pattern: '^[A-Z]{2}$', description: 'ISO 3166-1 alpha-2. Legacy countryCd.'}
+        regionCode: {type: [string, 'null'], maxLength: 6, pattern: '^[A-Z]{2}-[A-Z0-9]{1,3}$', description: 'ISO 3166-2 subdivision code, e.g. `IN-KA`. Its country part must equal `countryCode`: a `regionCode` needs a `countryCode`, and a `PATCH` that leaves the two inconsistent is `422`. Legacy localCd.'}
         rankingOptIn: {type: boolean, default: false}
         authProvider: {type: string, readOnly: true, enum: [email_otp], description: 'Sign-in method. Only `email_otp` in v1; new values may be added. Replaces the legacy joinRouteCd social-login values, which are not carried over.'}
         createdAt: {type: string, format: date-time, readOnly: true}
@@ -1791,9 +1791,9 @@ components:
       additionalProperties: false
       minProperties: 1
       properties:
-        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Leading and trailing white space is trimmed; the trimmed name must not be empty and must not contain control or format characters (Unicode Cc and Cf, e.g. bidi overrides and zero-width spaces) or line/paragraph separators (Zl, Zp). Exception: U+200D (zero-width joiner) is allowed between two other characters, for emoji sequences. Otherwise `422`.'}
-        countryCode: {type: [string, 'null'], pattern: '^[A-Z]{2}$'}
-        regionCode: {type: [string, 'null'], pattern: '^[A-Z]{2}-[A-Z0-9]{1,3}$', description: 'ISO 3166-2 subdivision code, e.g. `IN-KA`. Its country part must equal `countryCode`: a `regionCode` needs a `countryCode`, and a `PATCH` that leaves the two inconsistent is `422`.'}
+        displayName: {type: string, minLength: 1, maxLength: 40, description: 'Leading and trailing white space is trimmed; the trimmed name must not be empty and must not contain control or format characters (Unicode Cc and Cf, e.g. bidi overrides and zero-width spaces), line/paragraph separators (Zl, Zp) or characters that render as nothing (Other_Default_Ignorable_Code_Point, e.g. Hangul fillers, and U+2800 braille blank). Exceptions: U+200D (zero-width joiner) between two other characters, for emoji sequences; U+200C (zero-width non-joiner) after a letter or mark and before a letter, for Persian and Indic spellings; and emoji tag sequences (U+1F3F4, tag digits or lower-case tag letters, U+E007F), for subdivision flags. Otherwise `422`.'}
+        countryCode: {type: [string, 'null'], maxLength: 2, pattern: '^[A-Z]{2}$'}
+        regionCode: {type: [string, 'null'], maxLength: 6, pattern: '^[A-Z]{2}-[A-Z0-9]{1,3}$', description: 'ISO 3166-2 subdivision code, e.g. `IN-KA`. Its country part must equal `countryCode`: a `regionCode` needs a `countryCode`, and a `PATCH` that leaves the two inconsistent is `422`.'}
         rankingOptIn: {type: boolean}
     AccountDeletion:
       type: object
@@ -1805,6 +1805,7 @@ components:
 
     CountryCode:
       type: string
+      maxLength: 2
       pattern: '^[A-Z]{2}$'
       description: ISO 3166-1 alpha-2
     FuelType:
@@ -1844,7 +1845,7 @@ components:
         engineDisplacementCc: {type: [integer, 'null'], minimum: 0, maximum: 10000}
         modelYear: {type: [integer, 'null'], minimum: 1980, maximum: 2100}
         plateNumber: {type: [string, 'null'], maxLength: 16, description: 'Optional; personal data. Legacy carPlateNo.'}
-        vin: {type: [string, 'null'], pattern: '^[A-HJ-NPR-Z0-9]{17}$', description: Optional; personal data.}
+        vin: {type: [string, 'null'], maxLength: 17, pattern: '^[A-HJ-NPR-Z0-9]{17}$', description: Optional; personal data.}
         odometerKm: {type: [integer, 'null'], minimum: 0}
         idleStopGo: {type: boolean, description: 'Legacy isgYn'}
         obdAdapter: {$ref: '#/components/schemas/ObdAdapterInfo'}
@@ -1960,6 +1961,7 @@ components:
         seconds: {type: number, format: double, minimum: 0}
     DtcCode:
       type: string
+      maxLength: 5
       pattern: '^[PCBU][0-9A-F]{4}$'
     DtcSet:
       type: object
@@ -2121,11 +2123,12 @@ components:
         active: {type: boolean, default: true, description: 'Warning started (true) or cleared (false). Legacy ThreeState Y/N.'}
         lat: {type: [number, 'null'], format: double, minimum: -90, maximum: 90}
         lon: {type: [number, 'null'], format: double, minimum: -180, maximum: 180}
-        dtc: {type: [string, 'null'], pattern: '^[PCBU][0-9A-F]{4}$'}
+        dtc: {type: [string, 'null'], maxLength: 5, pattern: '^[PCBU][0-9A-F]{4}$'}
         value: {type: [number, 'null'], format: double, description: 'Measured value that triggered the event (e.g. g-force, km/h, V)'}
     UtcInstant:
       type: string
       format: date-time
+      maxLength: 30
       pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$'
       description: |
         Telemetry timestamp: RFC 3339 in UTC with a `Z` suffix and 0 to 9 fractional-second digits, which matches
@@ -2189,7 +2192,7 @@ components:
             kind: {type: string, enum: [read, cleared]}
             readAt: {type: string, format: date-time}
             mil: {type: [boolean, 'null'], description: 'Malfunction indicator lamp on (`true`) or off (`false`), or `null` when unknown (not read, or a `cleared` report). Nullable since 1.0.0-draft.9; never send `false` for unknown.'}
-            vin: {type: [string, 'null'], pattern: '^[A-HJ-NPR-Z0-9]{17}$'}
+            vin: {type: [string, 'null'], maxLength: 17, pattern: '^[A-HJ-NPR-Z0-9]{17}$'}
             clientTripId: {type: [string, 'null'], format: uuid}
             odometerKm: {type: [integer, 'null']}
             distanceSinceMilKm: {type: [integer, 'null'], description: 'PID 0x21'}
@@ -2252,7 +2255,7 @@ components:
           properties:
             amount: {type: number, format: double}
             saved: {type: number, format: double}
-            currency: {type: string, pattern: '^[A-Z]{3}$'}
+            currency: {type: string, maxLength: 3, pattern: '^[A-Z]{3}$'}
     RankingEntry:
       type: object
       required: [rank, displayName, value, isMe]

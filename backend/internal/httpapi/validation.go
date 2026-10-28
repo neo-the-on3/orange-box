@@ -675,8 +675,11 @@ func setBody(r *http.Request, body []byte) {
 // validator messages can echo them (e-mail addresses, VINs, codes).
 func mapValidationError(err error) *problem.Problem {
 	var reqErrs []*openapi3filter.RequestError
-	var multi openapi3.MultiError
-	if errors.As(err, &multi) {
+	// Only a MultiError at the top is the list of request errors (the
+	// MultiError pass). errors.As would also find one nested inside a
+	// fail-fast RequestError (a nullable field's type list), whose items
+	// are schema errors, and the request would become a 400.
+	if multi, ok := err.(openapi3.MultiError); ok { //nolint:errorlint // only the top-level list, see above
 		for _, e := range multi {
 			var re *openapi3filter.RequestError
 			if errors.As(e, &re) {

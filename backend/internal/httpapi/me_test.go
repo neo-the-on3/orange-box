@@ -274,6 +274,22 @@ func TestMeDisplayNameContent(t *testing.T) {
 		{"lone joiner", `\u200dKiran`},
 		{"trailing joiner", `Kiran\u200d`},
 		{"ideographic space only", `\u3000`},
+		{"braille blank only", `\u2800`},
+		{"braille blank inside", `Ki\u2800ran`},
+		{"Hangul filler", `\u3164`},
+		{"Hangul choseong filler", `\u115f`},
+		{"Hangul jungseong filler", `\u1160`},
+		{"halfwidth Hangul filler", `\uffa0`},
+		{"combining grapheme joiner", `Ki\u034fran`},
+		{"leading non-joiner", `\u200cKiran`},
+		{"trailing non-joiner", `Kiran\u200c`},
+		{"non-joiner next to a space", `Ki \u200cran`},
+		{"doubled non-joiner", `Ki\u200c\u200cran`},
+		{"non-joiner between digits", `12\u200c34`},
+		{"tag characters without a flag", `Kiran\udb40\udc67\udb40\udc62\udb40\udc7f`},
+		{"flag tags without cancel tag", `\ud83c\udff4\udb40\udc67\udb40\udc62`},
+		{"flag with upper-case tag", `\ud83c\udff4\udb40\udc47\udb40\udc7f`},
+		{"lone cancel tag", `Kiran\udb40\udc7f`},
 	} {
 		r := m.call(http.MethodPatch, "/v1/me", `{"displayName":"`+c.value+`"}`, "If-Match", "*")
 		if r.status != http.StatusUnprocessableEntity || r.problemCode(t) != "validation_failed" || !strings.Contains(string(r.body), `"pointer":"/displayName"`) {
@@ -285,6 +301,14 @@ func TestMeDisplayNameContent(t *testing.T) {
 		{"inner spaces kept", `Kiran  B`, "Kiran  B"},
 		{"emoji ZWJ sequence", `\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67`, "\U0001F468\u200d\U0001F469\u200d\U0001F467"},
 		{"accents and scripts", `Kíran ಕಿರಣ್`, "Kíran ಕಿರಣ್"},
+		{"Persian non-joiner", `می\u200cخواهم`, "می\u200cخواهم"},
+		{"non-joiner after virama", `क्\u200cष`, "क्\u200cष"},
+		{"England flag", `\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f`,
+			"\U0001F3F4\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F"},
+		{"flag next to a name", `Kiran \ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc73\udb40\udc63\udb40\udc74\udb40\udc7f`,
+			"Kiran \U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F"},
+		{"black flag", `\ud83c\udff4`, "\U0001F3F4"},
+		{"emoji variation selector", `Kiran \u2764\ufe0f`, "Kiran \u2764\ufe0f"},
 	} {
 		r := m.call(http.MethodPatch, "/v1/me", `{"displayName":"`+c.value+`"}`, "If-Match", "*")
 		if r.status != http.StatusOK || r.json(t)["displayName"] != c.want {
@@ -292,7 +316,7 @@ func TestMeDisplayNameContent(t *testing.T) {
 		}
 	}
 	// No-op detection works on the trimmed value.
-	etag := m.call(http.MethodGet, "/v1/me", "").header.Get("ETag")
+	etag := m.call(http.MethodPatch, "/v1/me", `{"displayName":"Kíran ಕಿರಣ್"}`, "If-Match", "*").header.Get("ETag")
 	if r := m.call(http.MethodPatch, "/v1/me", `{"displayName":" Kíran ಕಿರಣ್ "}`, "If-Match", etag); r.header.Get("ETag") != etag {
 		t.Errorf("trimmed duplicate bumped the ETag: %v", r.header)
 	}

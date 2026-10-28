@@ -26,8 +26,10 @@ and validated. Implemented so far:
   `If-None-Match` lines are combined into one list, RFC 9110 §5.3, on every
   operation) and `DELETE /v1/me`. `displayName` is trimmed and must not be
   blank or contain control or format characters (bidi overrides,
-  zero-width spaces) or line separators; U+200D is allowed inside emoji
-  sequences. `regionCode` is ISO 3166-2 (`IN-KA`) and its country part must
+  zero-width spaces), line separators or invisible fillers (Hangul
+  fillers, U+2800); U+200D is allowed inside emoji sequences, U+200C
+  between letters (Persian, Indic) and tag characters in subdivision
+  flags. `regionCode` is ISO 3166-2 (`IN-KA`) and its country part must
   equal `countryCode` in the patched profile (`422` at `/regionCode`, or
   at `/countryCode` when the patch changed only the country). Until the
   member sets a `displayName`, `GET` shows `Driver <6 hex>`, derived from a
