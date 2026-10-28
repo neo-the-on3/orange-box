@@ -149,7 +149,7 @@ class RoomSyncStore(private val dao: SyncDao, private val clock: () -> Long, pri
         } else {
             val sync = dao.tripSync(local.id)
             // Our own trips keep their local summary (they have the samples); pulled ones take the newer copy.
-            if (sync?.remoteOrigin == true) dao.updateTrip(remoteToEntity(trip, vehicleId).copy(id = local.id, accountId = local.accountId))
+            if (sync?.remoteOrigin == true) dao.updateTrip(remoteToEntity(trip, vehicleId).copy(id = local.id, accountId = local.accountId, excludedFromStats = local.excludedFromStats))
             local.id
         }
         val row = dao.tripSync(tripId) ?: TripSyncEntity(tripId, remoteOrigin = local == null)

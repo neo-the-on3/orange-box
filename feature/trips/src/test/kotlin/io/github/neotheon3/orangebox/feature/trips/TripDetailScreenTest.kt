@@ -146,6 +146,56 @@ class TripDetailScreenTest {
         assertEquals(listOf(false), changes)
     }
 
+    @Test fun `#211 - the menu excludes a trip from stats and deletes it after a confirmation`() {
+        val excluded = mutableListOf<Boolean>()
+        var deletes = 0
+        val detail = DetailFixture.detail()
+        compose.setContent {
+            OrangeBoxTheme {
+                TripDetailScreen(
+                    TripDetailUiState(loading = false, detail = detail), fakeTiles, locale = Locale.UK,
+                    trip = TripActions(onExcludedChanged = { excluded += it }, onDelete = { deletes++ }),
+                )
+            }
+        }
+        compose.onNodeWithTag("trip_detail_more").performClick()
+        compose.onNodeWithText("Exclude from stats").assertIsDisplayed()
+        renderPopup("trip-detail-menu", androidx.compose.ui.test.isPopup())
+        compose.onNodeWithTag("trip_detail_exclude_toggle").performClick()
+        assertEquals(listOf(true), excluded)
+
+        compose.onNodeWithTag("trip_detail_more").performClick()
+        compose.onNodeWithTag("trip_detail_delete").performClick()
+        compose.onNodeWithTag("trip_detail_delete_dialog").assertIsDisplayed()
+        assertEquals("nothing deleted before the confirmation", 0, deletes)
+        renderPopup("trip-detail-delete-confirm", androidx.compose.ui.test.isDialog())
+        compose.onNodeWithTag("trip_detail_delete_confirm").performClick()
+        assertEquals(1, deletes)
+    }
+
+    @Test fun `#211 - an excluded trip offers Include in stats, a trip still recording has no trip actions`() {
+        val detail = DetailFixture.detail()
+        show(TripDetailUiState(loading = false, detail = detail.copy(header = detail.header.copy(excludedFromStats = true))), fakeTiles)
+        compose.onNodeWithTag("trip_detail_more").performClick()
+        compose.onNodeWithText("Include in stats").assertIsDisplayed()
+        compose.onAllNodesWithTag("trip_detail_delete").assertCountEquals(1)
+    }
+
+    @Test fun `#211 - no trip actions while recording`() {
+        val detail = DetailFixture.detail()
+        show(TripDetailUiState(loading = false, detail = detail.copy(header = detail.header.copy(end = null))), fakeTiles)
+        compose.onNodeWithTag("trip_detail_more").performClick()
+        compose.onAllNodesWithTag("trip_detail_exclude_toggle").assertCountEquals(0)
+        compose.onAllNodesWithTag("trip_detail_delete").assertCountEquals(0)
+    }
+
+    /** A menu popup or dialog window, for the docs screenshots. */
+    private fun renderPopup(name: String, window: androidx.compose.ui.test.SemanticsMatcher) {
+        compose.waitForIdle()
+        val bitmap = compose.onNode(window).captureToImage().asAndroidBitmap()
+        File("build/outputs/trips/$name.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
     @Test fun `deleted trip`() {
         show(TripDetailUiState(loading = false, notFound = true))
         compose.onNodeWithTag("trip_detail_not_found").assertIsDisplayed()

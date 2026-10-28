@@ -24,6 +24,14 @@
     <string name="trip_detail_gps_points">%1$d GPS points · %2$d speed readings</string>
     <string name="trip_detail_more">More options</string>
     <string name="trip_detail_map_tiles">Map tiles (OpenStreetMap)</string>
+    <string name="trip_detail_exclude_from_stats">Exclude from stats</string>
+    <string name="trip_detail_include_in_stats">Include in stats</string>
+    <string name="trip_detail_delete">Delete trip</string>
+    <string name="trip_detail_delete_title">Delete this trip?</string>
+    <string name="trip_detail_delete_message">The trip, its route and its events are deleted from this phone, and from your account if it was synced. This can\'t be undone. To keep it but leave it out of your totals, use Exclude from stats.</string>
+    <string name="trip_detail_delete_confirm">Delete</string>
+    <string name="trip_detail_delete_cancel">Cancel</string>
+    <string name="trips_excluded_from_stats">Excluded from stats</string>
     <string name="trip_detail_report_map_issue">Report a map issue</string>
     <string name="trip_detail_map_description">Route map, %1$d recorded positions</string>
     <string name="trip_detail_no_location">No route for this trip</string>

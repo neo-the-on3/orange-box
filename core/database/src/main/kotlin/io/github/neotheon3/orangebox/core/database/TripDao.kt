@@ -20,10 +20,15 @@ interface TripDao {
         if (samples.isNotEmpty()) insertSamples(samples)
         if (events.isNotEmpty()) insertEvents(events)
         // The account stamp belongs to sign-in and "Merge", not to the recorder's in-memory copy.
-        updateTrip(trip.copy(accountId = accountOf(trip.id)))
+        // Likewise "Exclude from stats" (#211).
+        updateTrip(trip.copy(accountId = accountOf(trip.id), excludedFromStats = excludedOf(trip.id) ?: false))
     }
 
     @Query("SELECT accountId FROM trips WHERE id = :id") suspend fun accountOf(id: Long): String?
+    @Query("SELECT excludedFromStats FROM trips WHERE id = :id") suspend fun excludedOf(id: Long): Boolean?
+
+    /** "Exclude from stats" / "Include in stats" (#211). */
+    @Query("UPDATE trips SET excludedFromStats = :excluded WHERE id = :id") suspend fun setExcludedFromStats(id: Long, excluded: Boolean)
 
     /** The signed-in account (see [ACCOUNT_STATE_KEY]), null when signed out. */
     @Query("SELECT value FROM sync_state WHERE `key` = '" + ACCOUNT_STATE_KEY + "'") suspend fun currentAccount(): String?
@@ -37,13 +42,16 @@ interface TripDao {
     @Query("SELECT * FROM trip_samples WHERE tripId IN (:tripIds) ORDER BY tripId, timestampMillis") suspend fun samplesOf(tripIds: List<Long>): List<TripSampleEntity>
     @Query("SELECT * FROM trip_events WHERE tripId IN (:tripIds) ORDER BY tripId, timestampMillis") suspend fun eventsOf(tripIds: List<Long>): List<TripEventEntity>
 
-    /** Totals of finished trips that started in [fromMillis, toMillis) (#46). A trip still recording is left out. */
+    /**
+     * Totals of finished trips that started in [fromMillis, toMillis) (#46). A trip still recording is left out,
+     * and so is one the user excluded from stats (#211).
+     */
     @Query(
         """SELECT COUNT(*) AS trips, COALESCE(SUM(distanceKm), 0) AS distanceKm, COALESCE(SUM(durationS), 0) AS durationS,
         COALESCE(SUM(fuelLitres), 0) AS fuelLitres, COALESCE(SUM(ecoS), 0) AS ecoS, COALESCE(SUM(idleS), 0) AS idleS,
         COALESCE(SUM(harshAccelCount), 0) AS harshAccel, COALESCE(SUM(harshBrakeCount), 0) AS harshBrake,
         COALESCE(SUM(overspeedCount), 0) AS overspeed, COALESCE(MAX(maxSpeedKph), 0) AS maxSpeedKph
-        FROM trips WHERE endedAtMillis IS NOT NULL AND startedAtMillis >= :fromMillis AND startedAtMillis < :toMillis""",
+        FROM trips WHERE endedAtMillis IS NOT NULL AND excludedFromStats = 0 AND startedAtMillis >= :fromMillis AND startedAtMillis < :toMillis""",
     )
     suspend fun totals(fromMillis: Long, toMillis: Long): TripPeriodTotals
 

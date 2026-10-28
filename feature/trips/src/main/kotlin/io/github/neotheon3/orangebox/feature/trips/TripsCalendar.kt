@@ -23,6 +23,8 @@ data class TripListItem(
     val economyKmPerL: Double?,
     val harshEvents: Int,
     val overspeedEvents: Int,
+    /** Left out of the totals and stats by the user (#211). */
+    val excludedFromStats: Boolean = false,
 ) {
     val recording: Boolean get() = end == null
 }
@@ -65,6 +67,7 @@ object TripsCalendar {
         economyKmPerL = TripFormat.economyKmPerL(trip),
         harshEvents = trip.harshAccelCount + trip.harshBrakeCount,
         overspeedEvents = trip.overspeedCount,
+        excludedFromStats = trip.excludedFromStats,
     )
 
     /** Trips per local start day. */
@@ -97,7 +100,10 @@ object TripsCalendar {
             days = grid(month, firstDayOfWeek, tripsPerDay(inMonth, zone), today),
             selectedDay = day,
             trips = shown.map { item(it, zone) },
-            summary = MonthSummary(inMonth.size, inMonth.sumOf { it.distanceKm }, inMonth.sumOf { it.durationS }),
+            // Excluded trips stay listed but don't count (#211).
+            summary = inMonth.filterNot { it.excludedFromStats }.let { counted ->
+                MonthSummary(counted.size, counted.sumOf { it.distanceKm }, counted.sumOf { it.durationS })
+            },
         )
     }
 }
