@@ -376,7 +376,15 @@ func decodeSampleCursor(c string) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	return time.UnixMilli(ms).UTC(), true
+	return cursorInstant(ms)
+}
+
+// cursorInstant is a cursor's unix ms time. One outside timeutil's range
+// was never issued (no stored sample or event time is outside it) and
+// would fail in Postgres, so it makes the cursor invalid (#219).
+func cursorInstant(ms int64) (time.Time, bool) {
+	t := time.UnixMilli(ms).UTC()
+	return t, timeutil.InRange(t)
 }
 
 func encodeEventCursor(p store.EventPos) string {
@@ -401,7 +409,11 @@ func decodeEventCursor(c string) (store.EventPos, bool) {
 	if err1 != nil || err2 != nil {
 		return store.EventPos{}, false
 	}
-	return store.EventPos{T: time.UnixMilli(ms).UTC(), ID: id}, true
+	t, ok := cursorInstant(ms)
+	if !ok {
+		return store.EventPos{}, false
+	}
+	return store.EventPos{T: t, ID: id}, true
 }
 
 func invalidCursor() *problem.Problem {
