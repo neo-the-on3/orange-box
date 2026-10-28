@@ -5,12 +5,15 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/google/uuid"
 
+	"github.com/neo-the-on3/orange-box/backend/internal/api"
 	"github.com/neo-the-on3/orange-box/backend/internal/store"
 )
 
@@ -97,9 +100,11 @@ func TestMeDelete(t *testing.T) {
 	t.Parallel()
 	e := newDBTestEnv(t)
 	m, bystander := e.member("leaving"), e.member("staying")
-	if r := m.call(http.MethodPost, "/v1/vehicles", i20); r.status != http.StatusCreated {
-		t.Fatalf("vehicle: %d %s", r.status, r.body)
+	v := m.call(http.MethodPost, "/v1/vehicles", i20)
+	if v.status != http.StatusCreated {
+		t.Fatalf("vehicle: %d %s", v.status, v.body)
 	}
+	vehicle := v.json(t)["id"].(string)
 
 	before := time.Now().Add(-time.Second)
 	r := m.call(http.MethodDelete, "/v1/me", "")
@@ -113,11 +118,14 @@ func TestMeDelete(t *testing.T) {
 		!completeBy.Equal(requested.Add(30*24*time.Hour)) || !strings.HasSuffix(d["requestedAt"].(string), "Z") {
 		t.Fatalf("deletion: %s", r.body)
 	}
-	// The token is revoked at once, on every operation; a retry gets 401.
-	for _, c := range []struct{ method, path string }{
-		{http.MethodGet, "/v1/me"}, {http.MethodDelete, "/v1/me"}, {http.MethodGet, "/v1/vehicles"}, {http.MethodGet, "/v1/trips"},
-	} {
-		r := m.call(c.method, c.path, "")
+	// The token is revoked at once, on every authenticated operation in the
+	// spec (so new ones are covered as they land); a retry gets 401.
+	ops := authenticatedOperations(t, vehicle)
+	if len(ops) < 10 {
+		t.Fatalf("only %d authenticated operations found", len(ops))
+	}
+	for _, c := range ops {
+		r := m.call(c.method, c.path, "{}", "If-Match", "*", "Idempotency-Key", uuid.NewString())
 		if r.status != http.StatusUnauthorized || r.problemCode(t) != "invalid_token" || !strings.Contains(r.header.Get("WWW-Authenticate"), `error="invalid_token"`) {
 			t.Errorf("%s %s after delete: %d %v %s", c.method, c.path, r.status, r.header, r.body)
 		}
@@ -339,4 +347,57 @@ func TestMeRegionCode(t *testing.T) {
 	if r := m.call(http.MethodPatch, "/v1/me", `{"regionCode":"IN-KA"}`, "If-Match", `"v1"`); r.status != http.StatusPreconditionFailed {
 		t.Errorf("stale and inconsistent: %d", r.status)
 	}
+}
+
+// Every /v1/me operation can answer 503 (the revocation check and the
+// store), so the spec has to say so.
+func TestMeOperationsDeclare503(t *testing.T) {
+	t.Parallel()
+	doc, err := api.GetSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := doc.Paths.Find("/v1/me")
+	if item == nil {
+		t.Fatal("no /v1/me path")
+	}
+	for method, op := range map[string]*openapi3.Operation{"GET": item.Get, "PATCH": item.Patch, "DELETE": item.Delete} {
+		if op == nil || op.Responses.Status(http.StatusServiceUnavailable) == nil {
+			t.Errorf("%s /v1/me doesn't declare 503", method)
+		}
+	}
+}
+
+type operation struct{ method, path string }
+
+// authenticatedOperations lists every operation of the spec that needs a
+// bearer token, with {vehicleId} set to vehicle and any other path
+// parameter to a fresh UUID.
+func authenticatedOperations(t *testing.T, vehicle string) []operation {
+	t.Helper()
+	doc, err := api.GetSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	param := regexp.MustCompile(`\{[^}]+\}`)
+	var ops []operation
+	for _, path := range doc.Paths.InMatchingOrder() {
+		for method, op := range doc.Paths.Value(path).Operations() {
+			sec := doc.Security
+			if op.Security != nil {
+				sec = *op.Security
+			}
+			if len(sec) == 0 {
+				continue
+			}
+			concrete := param.ReplaceAllStringFunc(path, func(p string) string {
+				if p == "{vehicleId}" {
+					return vehicle
+				}
+				return uuid.NewString()
+			})
+			ops = append(ops, operation{method, concrete})
+		}
+	}
+	return ops
 }
